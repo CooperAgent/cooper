@@ -104,6 +104,9 @@ const AVAILABLE_MODELS: ModelInfo[] = [
   { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', multiplier: 3 },
 ]
 
+// Commands that should include their subcommand for granular permission control
+const SUBCOMMAND_EXECUTABLES = ['git', 'npm', 'yarn', 'pnpm', 'docker', 'kubectl']
+
 // Extract all executables from a shell command
 function extractExecutables(command: string): string[] {
   const executables: string[] = []
@@ -139,7 +142,11 @@ function extractExecutables(command: string): string[] {
     const parts = trimmed.split(/\s+/)
     const prefixes = ['sudo', 'env', 'nohup', 'nice', 'time', 'command']
     
-    for (const part of parts) {
+    let foundExec: string | null = null
+    let subcommand: string | null = null
+    
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
       // Skip environment variable assignments
       if (part.includes('=') && !part.startsWith('-')) continue
       // Skip flags
@@ -154,10 +161,34 @@ function extractExecutables(command: string): string[] {
       // Found potential executable - remove path prefix
       const exec = part.replace(/^.*\//, '')
       // Validate it looks like a command (alphanumeric, dashes, underscores)
-      if (exec && /^[a-zA-Z0-9_-]+$/.test(exec) && !executables.includes(exec)) {
-        executables.push(exec)
+      if (exec && /^[a-zA-Z0-9_-]+$/.test(exec)) {
+        if (!foundExec) {
+          foundExec = exec
+          // Check if this needs subcommand handling
+          if (SUBCOMMAND_EXECUTABLES.includes(exec)) {
+            // Look for subcommand in next non-flag part
+            for (let j = i + 1; j < parts.length; j++) {
+              const nextPart = parts[j]
+              if (nextPart.startsWith('-')) continue
+              if (nextPart.includes('=')) continue
+              if (/^[a-zA-Z0-9_-]+$/.test(nextPart)) {
+                subcommand = nextPart
+                break
+              }
+              break // Stop if we hit something unexpected
+            }
+          }
+        }
+        break
       }
-      break // Only first word of each segment
+    }
+    
+    if (foundExec) {
+      // Combine executable with subcommand for granular control
+      const execId = subcommand ? `${foundExec} ${subcommand}` : foundExec
+      if (!executables.includes(execId)) {
+        executables.push(execId)
+      }
     }
   }
   
