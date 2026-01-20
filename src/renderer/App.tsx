@@ -168,7 +168,13 @@ const App: React.FC = () => {
   // Save open sessions with models and cwd whenever tabs change
   useEffect(() => {
     if (tabs.length > 0) {
-      const openSessions = tabs.map(t => ({ sessionId: t.id, model: t.model, cwd: t.cwd }))
+      const openSessions = tabs.map(t => ({ 
+        sessionId: t.id, 
+        model: t.model, 
+        cwd: t.cwd,
+        editedFiles: t.editedFiles,
+        alwaysAllowed: t.alwaysAllowed
+      }))
       window.electronAPI.copilot.saveOpenSessions(openSessions)
     }
   }, [tabs])
@@ -265,8 +271,8 @@ const App: React.FC = () => {
         hasUnreadCompletion: false,
         pendingConfirmation: null,
         needsTitle: !s.name,  // Only need title if no name provided
-        alwaysAllowed: [],
-        editedFiles: [],
+        alwaysAllowed: s.alwaysAllowed || [],
+        editedFiles: s.editedFiles || [],
         currentIntent: null
       }))
       
@@ -406,8 +412,21 @@ const App: React.FC = () => {
       
       setTabs(prev => prev.map(tab => {
         if (tab.id !== sessionId) return tab
+        
+        // Track edited/created files at start time (we have reliable input here)
+        const isFileOperation = name === 'edit' || name === 'create'
+        let newEditedFiles = tab.editedFiles
+        if (isFileOperation && input) {
+          const path = input.path as string | undefined
+          if (path && !tab.editedFiles.includes(path)) {
+            newEditedFiles = [...tab.editedFiles, path]
+            console.log(`[Tool Start] Added to editedFiles:`, newEditedFiles)
+          }
+        }
+        
         return {
           ...tab,
+          editedFiles: newEditedFiles,
           activeTools: [...tab.activeTools, { toolCallId: id, toolName: name, status: 'running', input }]
         }
       }))
@@ -429,23 +448,8 @@ const App: React.FC = () => {
         const activeTool = tab.activeTools.find(t => t.toolCallId === toolCallId)
         const toolInput = input || activeTool?.input
         
-        console.log(`[Tool End] Looking for file op: name=${name}, toolInput=`, toolInput, 'activeTool=', activeTool)
-        
-        // Track edited/created files
-        const isFileOperation = name === 'edit' || name === 'create'
-        let newEditedFiles = tab.editedFiles
-        if (isFileOperation && toolInput) {
-          const path = toolInput.path as string | undefined
-          console.log(`[Tool End] File operation detected: path=${path}`)
-          if (path && !tab.editedFiles.includes(path)) {
-            newEditedFiles = [...tab.editedFiles, path]
-            console.log(`[Tool End] Added to editedFiles:`, newEditedFiles)
-          }
-        }
-        
         return {
           ...tab,
-          editedFiles: newEditedFiles,
           activeTools: tab.activeTools.map(t => 
             t.toolCallId === toolCallId 
               ? { ...t, status: 'done' as const, input: toolInput || t.input, output } 
@@ -453,8 +457,6 @@ const App: React.FC = () => {
           )
         }
       }))
-      
-      // Tools are now kept visible during processing and cleared on idle
     })
 
     // Listen for permission requests
@@ -597,17 +599,38 @@ const App: React.FC = () => {
     }
   }
 
+  const [isGeneratingMessage, setIsGeneratingMessage] = useState(false)
+  
   const handleOpenCommitModal = async () => {
     if (!activeTab || activeTab.editedFiles.length === 0) return
     
     setCommitError(null)
     setIsCommitting(false)
-    
-    // Generate a commit message based on edited files
-    const fileNames = activeTab.editedFiles.map(f => f.split('/').pop()).join(', ')
-    const defaultMessage = `Update ${fileNames}`
-    setCommitMessage(defaultMessage)
     setShowCommitModal(true)
+    
+    // Start with placeholder while generating
+    setCommitMessage('Generating commit message...')
+    setIsGeneratingMessage(true)
+    
+    try {
+      // Get diff for edited files
+      const diffResult = await window.electronAPI.git.getDiff(activeTab.cwd, activeTab.editedFiles)
+      if (diffResult.success && diffResult.diff) {
+        // Generate AI commit message from diff
+        const message = await window.electronAPI.git.generateCommitMessage(diffResult.diff)
+        setCommitMessage(message)
+      } else {
+        // Fallback to simple message
+        const fileNames = activeTab.editedFiles.map(f => f.split('/').pop()).join(', ')
+        setCommitMessage(`Update ${fileNames}`)
+      }
+    } catch (error) {
+      console.error('Failed to generate commit message:', error)
+      const fileNames = activeTab.editedFiles.map(f => f.split('/').pop()).join(', ')
+      setCommitMessage(`Update ${fileNames}`)
+    } finally {
+      setIsGeneratingMessage(false)
+    }
   }
 
   const handleCommitAndPush = async () => {
@@ -802,8 +825,8 @@ const App: React.FC = () => {
         hasUnreadCompletion: false,
         pendingConfirmation: null,
         needsTitle: !prevSession.name,
-        alwaysAllowed: [],
-        editedFiles: [],
+        alwaysAllowed: result.alwaysAllowed || [],
+        editedFiles: result.editedFiles || [],
         currentIntent: null
       }
       
@@ -1631,16 +1654,22 @@ const App: React.FC = () => {
               </div>
               
               {/* Commit message */}
-              <div className="mb-3">
+              <div className="mb-3 relative">
                 <label className="text-xs text-[#8b949e] mb-2 block">Commit message:</label>
                 <textarea
                   value={commitMessage}
                   onChange={(e) => setCommitMessage(e.target.value)}
-                  className="w-full bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-sm text-[#e6edf3] placeholder-[#484f58] focus:border-[#58a6ff] outline-none resize-none"
+                  className={`w-full bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-sm text-[#e6edf3] placeholder-[#484f58] focus:border-[#58a6ff] outline-none resize-none ${isGeneratingMessage ? 'opacity-50' : ''}`}
                   rows={3}
                   placeholder="Enter commit message..."
                   autoFocus
+                  disabled={isGeneratingMessage}
                 />
+                {isGeneratingMessage && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="w-4 h-4 border-2 border-[#58a6ff]/30 border-t-[#58a6ff] rounded-full animate-spin"></span>
+                  </div>
+                )}
               </div>
               
               {/* Error message */}
@@ -1661,7 +1690,7 @@ const App: React.FC = () => {
                 </button>
                 <button
                   onClick={handleCommitAndPush}
-                  disabled={!commitMessage.trim() || isCommitting}
+                  disabled={!commitMessage.trim() || isCommitting || isGeneratingMessage}
                   className="px-3 py-1.5 bg-[#238636] hover:bg-[#2ea043] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors flex items-center gap-2"
                 >
                   {isCommitting ? (

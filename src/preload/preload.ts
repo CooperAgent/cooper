@@ -38,15 +38,15 @@ const electronAPI = {
     switchSession: (sessionId: string): Promise<{ sessionId: string; model: string }> => {
       return ipcRenderer.invoke('copilot:switchSession', sessionId)
     },
-    saveOpenSessions: (sessions: { sessionId: string; model: string; cwd: string }[]): Promise<{ success: boolean }> => {
+    saveOpenSessions: (sessions: { sessionId: string; model: string; cwd: string; editedFiles?: string[]; alwaysAllowed?: string[] }[]): Promise<{ success: boolean }> => {
       return ipcRenderer.invoke('copilot:saveOpenSessions', sessions)
     },
-    resumePreviousSession: (sessionId: string): Promise<{ sessionId: string; model: string; cwd: string; alreadyOpen: boolean }> => {
+    resumePreviousSession: (sessionId: string): Promise<{ sessionId: string; model: string; cwd: string; alreadyOpen: boolean; editedFiles?: string[]; alwaysAllowed?: string[] }> => {
       return ipcRenderer.invoke('copilot:resumePreviousSession', sessionId)
     },
     
-    onReady: (callback: (data: { sessions: { sessionId: string; model: string; cwd: string; name?: string }[]; previousSessions: { sessionId: string; name?: string; modifiedTime: string }[]; models: { id: string; name: string; multiplier: number }[] }) => void): (() => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { sessions: { sessionId: string; model: string; cwd: string; name?: string }[]; previousSessions: { sessionId: string; name?: string; modifiedTime: string }[]; models: { id: string; name: string; multiplier: number }[] }): void => callback(data)
+    onReady: (callback: (data: { sessions: { sessionId: string; model: string; cwd: string; name?: string; editedFiles?: string[]; alwaysAllowed?: string[] }[]; previousSessions: { sessionId: string; name?: string; modifiedTime: string }[]; models: { id: string; name: string; multiplier: number }[] }) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { sessions: { sessionId: string; model: string; cwd: string; name?: string; editedFiles?: string[]; alwaysAllowed?: string[] }[]; previousSessions: { sessionId: string; name?: string; modifiedTime: string }[]; models: { id: string; name: string; multiplier: number }[] }): void => callback(data)
       ipcRenderer.on('copilot:ready', handler)
       return () => ipcRenderer.removeListener('copilot:ready', handler)
     },
@@ -130,6 +130,9 @@ const electronAPI = {
     },
     commitAndPush: (cwd: string, files: string[], message: string): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:commitAndPush', { cwd, files, message })
+    },
+    generateCommitMessage: (diff: string): Promise<string> => {
+      return ipcRenderer.invoke('git:generateCommitMessage', { diff })
     }
   }
 }

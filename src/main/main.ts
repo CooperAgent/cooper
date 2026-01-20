@@ -29,6 +29,8 @@ interface StoredSession {
   sessionId: string
   model: string
   cwd: string
+  editedFiles?: string[]
+  alwaysAllowed?: string[]
 }
 
 const store = new Store({
@@ -372,7 +374,7 @@ async function initCopilot(): Promise<void> {
       .filter(s => !openSessionIds.includes(s.sessionId))
       .map(s => ({ sessionId: s.sessionId, name: s.summary || undefined, modifiedTime: s.modifiedTime.toISOString() }))
     
-    let resumedSessions: { sessionId: string; model: string; cwd: string; name?: string }[] = []
+    let resumedSessions: { sessionId: string; model: string; cwd: string; name?: string; editedFiles?: string[]; alwaysAllowed?: string[] }[] = []
     
     // Resume only our open sessions with their stored models and cwd
     for (const sessionId of sessionsToResume) {
@@ -381,6 +383,7 @@ async function initCopilot(): Promise<void> {
       try {
         const sessionModel = storedSession?.model || store.get('model') as string || 'gpt-5.2'
         const sessionCwd = storedSession?.cwd || defaultCwd
+        const storedAlwaysAllowed = storedSession?.alwaysAllowed || []
         
         // Get or create client for this session's cwd
         const client = await getClientForCwd(sessionCwd)
@@ -420,12 +423,16 @@ async function initCopilot(): Promise<void> {
           }
         })
         
-        sessions.set(sessionId, { session, client, model: sessionModel, cwd: sessionCwd, alwaysAllowed: new Set() })
+        // Restore alwaysAllowed set from stored data
+        const alwaysAllowedSet = new Set(storedAlwaysAllowed)
+        sessions.set(sessionId, { session, client, model: sessionModel, cwd: sessionCwd, alwaysAllowed: alwaysAllowedSet })
         resumedSessions.push({ 
           sessionId, 
           model: sessionModel,
           cwd: sessionCwd,
-          name: meta.summary || undefined
+          name: meta.summary || undefined,
+          editedFiles: storedSession?.editedFiles || [],
+          alwaysAllowed: storedAlwaysAllowed
         })
         console.log(`Resumed session ${sessionId} with model ${sessionModel} in ${sessionCwd}${meta.summary ? ` (${meta.summary})` : ''}`)
       } catch (err) {
@@ -586,6 +593,36 @@ ipcMain.handle('copilot:generateTitle', async (_event, data: { conversation: str
   } catch (error) {
     console.error('Failed to generate title:', error)
     return 'Untitled'
+  }
+})
+
+// Generate commit message from diff using AI
+ipcMain.handle('git:generateCommitMessage', async (_event, data: { diff: string }) => {
+  const defaultClient = await getClientForCwd(process.cwd())
+  
+  try {
+    const tempSession = await defaultClient.createSession({
+      model: 'gpt-5-mini',
+      systemMessage: {
+        mode: 'append',
+        content: 'You are a git commit message generator. Write concise, conventional commit messages. Use format: type(scope): description. Types: feat, fix, refactor, style, docs, test, chore. Keep under 72 chars. No quotes around the message.'
+      }
+    })
+    
+    const sessionId = tempSession.sessionId
+    // Truncate diff if too long
+    const truncatedDiff = data.diff.length > 4000 ? data.diff.slice(0, 4000) + '\n... (truncated)' : data.diff
+    const prompt = `Generate a commit message for these changes:\n\n${truncatedDiff}\n\nRespond with ONLY the commit message, nothing else.`
+    const response = await tempSession.sendAndWait({ prompt })
+    
+    await tempSession.destroy()
+    await defaultClient.deleteSession(sessionId)
+    
+    const message = (response?.data?.content || 'Update files').trim().replace(/^["']|["']$/g, '').slice(0, 100)
+    return message
+  } catch (error) {
+    console.error('Failed to generate commit message:', error)
+    return 'Update files'
   }
 })
 
