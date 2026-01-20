@@ -20,8 +20,17 @@ const electronAPI = {
     },
     
     // Session management
-    createSession: (): Promise<{ sessionId: string; model: string; cwd: string }> => {
-      return ipcRenderer.invoke('copilot:createSession')
+    createSession: (options?: { cwd?: string }): Promise<{ sessionId: string; model: string; cwd: string }> => {
+      return ipcRenderer.invoke('copilot:createSession', options)
+    },
+    getCwd: (): Promise<string> => {
+      return ipcRenderer.invoke('copilot:getCwd')
+    },
+    pickFolder: (): Promise<{ canceled: boolean; path: string | null }> => {
+      return ipcRenderer.invoke('copilot:pickFolder')
+    },
+    checkDirectoryTrust: (dir: string): Promise<{ trusted: boolean; decision: string }> => {
+      return ipcRenderer.invoke('copilot:checkDirectoryTrust', dir)
     },
     closeSession: (sessionId: string): Promise<{ success: boolean; remainingSessions: number }> => {
       return ipcRenderer.invoke('copilot:closeSession', sessionId)
@@ -108,6 +117,9 @@ const electronAPI = {
     },
     close: (): void => {
       ipcRenderer.send('window:close')
+    },
+    quit: (): void => {
+      ipcRenderer.send('window:quit')
     }
   }
 }

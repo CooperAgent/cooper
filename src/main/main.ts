@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import { join } from 'path'
 import { CopilotClient, CopilotSession, PermissionRequest, PermissionRequestResult } from '@github/copilot-sdk'
 import Store from 'electron-store'
@@ -30,7 +30,8 @@ interface StoredSession {
 const store = new Store({
   defaults: {
     model: 'gpt-5.2',
-    openSessions: [] as StoredSession[]  // Sessions that were open in our app with their models and cwd
+    openSessions: [] as StoredSession[],  // Sessions that were open in our app with their models and cwd
+    trustedDirectories: [] as string[]  // Directories that are always trusted
   }
 })
 
@@ -278,16 +279,14 @@ async function initCopilot(): Promise<void> {
       }
     }
     
-    // If no sessions were resumed, create a new one
+    // If no sessions were resumed, don't create one automatically
+    // The frontend will trigger creation which includes trust check
     if (resumedSessions.length === 0) {
-      const sessionId = await createNewSession()
-      const sessionState = sessions.get(sessionId)!
-      resumedSessions.push({ sessionId, model: sessionState.model, cwd: sessionState.cwd })
-      // Save this new session as open
-      store.set('openSessions', [{ sessionId, model: sessionState.model, cwd: sessionState.cwd }])
+      // Signal to frontend that it needs to create an initial session
+      activeSessionId = null
+    } else {
+      activeSessionId = resumedSessions[0].sessionId
     }
-    
-    activeSessionId = resumedSessions[0].sessionId
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('copilot:ready', { 
@@ -498,11 +497,69 @@ ipcMain.handle('copilot:getModels', async () => {
   return { models: AVAILABLE_MODELS, current: currentModel }
 })
 
+// Get current working directory
+ipcMain.handle('copilot:getCwd', async () => {
+  return process.cwd()
+})
+
 // Create a new session (for new tabs)
-ipcMain.handle('copilot:createSession', async () => {
-  const sessionId = await createNewSession()
+ipcMain.handle('copilot:createSession', async (_event, options?: { cwd?: string }) => {
+  const sessionId = await createNewSession(undefined, options?.cwd)
   const sessionState = sessions.get(sessionId)!
   return { sessionId, model: sessionState.model, cwd: sessionState.cwd }
+})
+
+// Pick a folder dialog
+ipcMain.handle('copilot:pickFolder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openDirectory'],
+    title: 'Select Working Directory'
+  })
+  
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true, path: null }
+  }
+  
+  return { canceled: false, path: result.filePaths[0] }
+})
+
+// Check if a directory is trusted and optionally request trust
+ipcMain.handle('copilot:checkDirectoryTrust', async (_event, dir: string) => {
+  // Check if already always-trusted (persisted)
+  const alwaysTrusted = store.get('trustedDirectories') as string[] || []
+  if (alwaysTrusted.includes(dir)) {
+    return { trusted: true, decision: 'already-trusted' }
+  }
+  
+  // Check if subdirectory of always-trusted
+  for (const trusted of alwaysTrusted) {
+    if (dir.startsWith(trusted + '/') || dir.startsWith(trusted + '\\')) {
+      return { trusted: true, decision: 'already-trusted' }
+    }
+  }
+  
+  // Show trust dialog
+  const result = await dialog.showMessageBox(mainWindow!, {
+    type: 'question',
+    title: 'Trust Folder',
+    message: `Do you trust the files in this folder?`,
+    detail: `${dir}\n\nCopilot will be able to read, write, and execute files in this directory.`,
+    buttons: ['Trust Once', 'Always Trust', 'Don\'t Trust'],
+    defaultId: 0,
+    cancelId: 2
+  })
+  
+  switch (result.response) {
+    case 0: // Trust Once - just return trusted, don't cache (next session will ask again)
+      return { trusted: true, decision: 'once' }
+    case 1: // Always Trust - persist
+      if (!alwaysTrusted.includes(dir)) {
+        store.set('trustedDirectories', [...alwaysTrusted, dir])
+      }
+      return { trusted: true, decision: 'always' }
+    default: // Don't Trust
+      return { trusted: false, decision: 'denied' }
+  }
 })
 
 // Close a session (when closing a tab)
@@ -625,6 +682,10 @@ ipcMain.on('window:maximize', () => {
 
 ipcMain.on('window:close', () => {
   mainWindow?.close()
+})
+
+ipcMain.on('window:quit', () => {
+  app.quit()
 })
 
 // App lifecycle - enforce single instance

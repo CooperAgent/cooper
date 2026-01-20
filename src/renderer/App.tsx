@@ -122,10 +122,47 @@ const App: React.FC = () => {
 
   // Set up IPC listeners
   useEffect(() => {
-    const unsubscribeReady = window.electronAPI.copilot.onReady((data) => {
+    const unsubscribeReady = window.electronAPI.copilot.onReady(async (data) => {
       console.log('Copilot ready with sessions:', data.sessions.length, 'previous:', data.previousSessions.length)
       setStatus('connected')
       setAvailableModels(data.models)
+      setPreviousSessions(data.previousSessions)
+      
+      // If no sessions exist, we need to create one (with trust check)
+      if (data.sessions.length === 0) {
+        // Check trust for current directory
+        const cwd = await window.electronAPI.copilot.getCwd()
+        const trustResult = await window.electronAPI.copilot.checkDirectoryTrust(cwd)
+        if (!trustResult.trusted) {
+          // User declined trust and no sessions to show - quit the app
+          window.electronAPI.window.quit()
+          return
+        }
+        
+        // Create initial session
+        try {
+          const result = await window.electronAPI.copilot.createSession()
+          const newTab: TabState = {
+            id: result.sessionId,
+            name: generateTabName(),
+            messages: [],
+            model: result.model,
+            cwd: result.cwd,
+            isProcessing: false,
+            activeTools: [],
+            hasUnreadCompletion: false,
+            pendingConfirmation: null,
+            needsTitle: true,
+            alwaysAllowed: []
+          }
+          setTabs([newTab])
+          setActiveTabId(result.sessionId)
+        } catch (error) {
+          console.error('Failed to create initial session:', error)
+          setStatus('error')
+        }
+        return
+      }
       
       // Create tabs for all resumed/created sessions
       const initialTabs: TabState[] = data.sessions.map((s, idx) => ({
@@ -147,7 +184,6 @@ const App: React.FC = () => {
       
       setTabs(initialTabs)
       setActiveTabId(data.sessions[0]?.sessionId || null)
-      setPreviousSessions(data.previousSessions)
       
       // Load message history for each session
       for (const s of data.sessions) {
@@ -435,10 +471,17 @@ const App: React.FC = () => {
     }
   }
 
-  const handleNewTab = async () => {
+  const handleNewTab = async (cwd?: string) => {
+    // Check trust for the directory
+    const dirToCheck = cwd || await window.electronAPI.copilot.getCwd()
+    const trustResult = await window.electronAPI.copilot.checkDirectoryTrust(dirToCheck)
+    if (!trustResult.trusted) {
+      return // User declined to trust, don't create session
+    }
+    
     setStatus('connecting')
     try {
-      const result = await window.electronAPI.copilot.createSession()
+      const result = await window.electronAPI.copilot.createSession(cwd ? { cwd } : undefined)
       const newTab: TabState = {
         id: result.sessionId,
         name: generateTabName(),
@@ -457,6 +500,54 @@ const App: React.FC = () => {
       setStatus('connected')
     } catch (error) {
       console.error('Failed to create new tab:', error)
+      setStatus('connected')
+    }
+  }
+
+  const handleChangeDirectory = async () => {
+    if (!activeTab) return
+    
+    try {
+      const result = await window.electronAPI.copilot.pickFolder()
+      if (result.canceled || !result.path) return
+      
+      // Check trust for the selected directory
+      const trustResult = await window.electronAPI.copilot.checkDirectoryTrust(result.path)
+      if (!trustResult.trusted) {
+        return // User declined to trust, don't change directory
+      }
+      
+      // If current session is empty, replace it; otherwise create new
+      if (activeTab.messages.length === 0) {
+        setStatus('connecting')
+        // Close old session and create new one in selected directory
+        await window.electronAPI.copilot.closeSession(activeTab.id)
+        const newSession = await window.electronAPI.copilot.createSession({ cwd: result.path })
+        
+        setTabs(prev => {
+          const updated = prev.filter(t => t.id !== activeTab.id)
+          return [...updated, {
+            id: newSession.sessionId,
+            name: activeTab.name,
+            messages: [],
+            model: newSession.model,
+            cwd: newSession.cwd,
+            isProcessing: false,
+            activeTools: [],
+            hasUnreadCompletion: false,
+            pendingConfirmation: null,
+            needsTitle: true,
+            alwaysAllowed: []
+          }]
+        })
+        setActiveTabId(newSession.sessionId)
+        setStatus('connected')
+      } else {
+        // Session has messages, create a new tab
+        await handleNewTab(result.path)
+      }
+    } catch (error) {
+      console.error('Failed to change directory:', error)
       setStatus('connected')
     }
   }
@@ -730,7 +821,7 @@ const App: React.FC = () => {
         <div className="w-48 bg-[#0d1117] border-r border-[#30363d] flex flex-col shrink-0">
           {/* New Tab Button */}
           <button
-            onClick={handleNewTab}
+            onClick={() => handleNewTab()}
             className="flex items-center gap-2 px-3 py-2 text-xs text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors border-b border-[#30363d]"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1031,9 +1122,24 @@ const App: React.FC = () => {
               </div>
               
               {/* Working Directory */}
-              <div className="px-3 py-2 border-b border-[#21262d]">
-                <div className="text-[10px] text-[#6e7681] uppercase tracking-wide mb-1">Working Directory</div>
-                <div className="text-xs text-[#8b949e] font-mono truncate" title={activeTab?.cwd}>
+              <div className="px-3 py-2 border-b border-[#21262d] group relative">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-[10px] text-[#6e7681] uppercase tracking-wide">Working Directory</div>
+                  <button
+                    onClick={handleChangeDirectory}
+                    className="text-[10px] text-[#58a6ff] hover:text-[#79c0ff] transition-colors"
+                    title="Open new session in different directory"
+                  >
+                    Change
+                  </button>
+                </div>
+                <div 
+                  className="text-xs text-[#8b949e] font-mono truncate hover:text-[#e6edf3] transition-colors cursor-help"
+                >
+                  {activeTab?.cwd || 'Unknown'}
+                </div>
+                {/* Full path tooltip on hover */}
+                <div className="hidden group-hover:block absolute left-2 right-2 mt-1 px-2 py-1.5 bg-[#161b22] border border-[#30363d] rounded text-xs text-[#e6edf3] font-mono break-all z-50 shadow-lg max-w-[200px]">
                   {activeTab?.cwd || 'Unknown'}
                 </div>
               </div>
