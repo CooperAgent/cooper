@@ -53,6 +53,8 @@ interface TabState {
   pendingConfirmation: PendingConfirmation | null
   needsTitle: boolean  // True if we should generate AI title on next idle
   alwaysAllowed: string[]  // Executables that are always allowed for this session
+  editedFiles: string[]  // Files edited/created in this session
+  currentIntent: string | null  // Current agent intent from report_intent tool
 }
 
 let messageIdCounter = 0
@@ -60,6 +62,57 @@ const generateId = () => `msg-${++messageIdCounter}-${Date.now()}`
 
 let tabCounter = 0
 const generateTabName = () => `Session ${++tabCounter}`
+
+// Format tool output into a summary string like CLI does
+const formatToolOutput = (toolName: string, input: Record<string, unknown>, output: unknown): string => {
+  const out = output as Record<string, unknown> | string | undefined
+  
+  if (toolName === 'grep') {
+    if (typeof out === 'object' && out?.output) {
+      const lines = String(out.output).split('\n').filter(l => l.trim()).length
+      return lines > 0 ? `${lines} lines found` : 'No matches found'
+    }
+    return 'No matches found'
+  }
+  
+  if (toolName === 'glob') {
+    if (typeof out === 'object' && out?.output) {
+      const files = String(out.output).split('\n').filter(l => l.trim()).length
+      return `${files} files found`
+    }
+    return 'No files found'
+  }
+  
+  if (toolName === 'view') {
+    const range = input.view_range as number[] | undefined
+    if (range) {
+      return `${range[1] - range[0] + 1} lines read`
+    }
+    return 'File read'
+  }
+  
+  if (toolName === 'edit') {
+    return 'File edited'
+  }
+  
+  if (toolName === 'create') {
+    return 'File created'
+  }
+  
+  if (toolName === 'bash') {
+    if (typeof out === 'object' && out?.output) {
+      const lines = String(out.output).split('\n').filter(l => l.trim()).length
+      return `${lines} lines...`
+    }
+    return 'Completed'
+  }
+  
+  if (toolName === 'web_fetch') {
+    return 'Page fetched'
+  }
+  
+  return 'Done'
+}
 
 // Previous session type (from history, not yet opened)
 interface PreviousSession {
@@ -79,6 +132,7 @@ const App: React.FC = () => {
   const [showPreviousSessions, setShowPreviousSessions] = useState(false)
   const [showRightPanel, setShowRightPanel] = useState(false)
   const [showAlwaysAllowed, setShowAlwaysAllowed] = useState(false)
+  const [showEditedFiles, setShowEditedFiles] = useState(true)
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -171,7 +225,9 @@ const App: React.FC = () => {
             hasUnreadCompletion: false,
             pendingConfirmation: null,
             needsTitle: true,
-            alwaysAllowed: []
+            alwaysAllowed: [],
+            editedFiles: [],
+            currentIntent: null
           }
           setTabs([newTab])
           setActiveTabId(result.sessionId)
@@ -194,7 +250,9 @@ const App: React.FC = () => {
         hasUnreadCompletion: false,
         pendingConfirmation: null,
         needsTitle: !s.name,  // Only need title if no name provided
-        alwaysAllowed: []
+        alwaysAllowed: [],
+        editedFiles: [],
+        currentIntent: null
       }))
       
       // Update tab counter to avoid duplicate names
@@ -299,6 +357,7 @@ const App: React.FC = () => {
             ...tab,
             isProcessing: false,
             activeTools: [],
+            currentIntent: null,
             // Mark as unread if this tab is not currently active
             hasUnreadCompletion: tab.id !== activeTabIdRef.current,
             messages: tab.messages
@@ -314,8 +373,19 @@ const App: React.FC = () => {
       const name = toolName || 'unknown'
       const id = toolCallId || generateId()
       
-      // Skip internal tools
-      if (name === 'report_intent' || name === 'update_todo') return
+      // Capture intent from report_intent tool
+      if (name === 'report_intent') {
+        const intent = input?.intent as string | undefined
+        if (intent) {
+          setTabs(prev => prev.map(tab => 
+            tab.id === sessionId ? { ...tab, currentIntent: intent } : tab
+          ))
+        }
+        return
+      }
+      
+      // Skip other internal tools
+      if (name === 'update_todo') return
       
       setTabs(prev => prev.map(tab => {
         if (tab.id !== sessionId) return tab
@@ -327,7 +397,7 @@ const App: React.FC = () => {
     })
 
     const unsubscribeToolEnd = window.electronAPI.copilot.onToolEnd((data) => {
-      const { sessionId, toolCallId, toolName, output } = data
+      const { sessionId, toolCallId, toolName, input, output } = data
       const name = toolName || 'unknown'
       
       // Skip internal tools
@@ -335,25 +405,27 @@ const App: React.FC = () => {
       
       setTabs(prev => prev.map(tab => {
         if (tab.id !== sessionId) return tab
+        
+        // Track edited/created files
+        const isFileOperation = name === 'edit' || name === 'create'
+        let newEditedFiles = tab.editedFiles
+        if (isFileOperation && input) {
+          const path = input.path as string | undefined
+          if (path && !tab.editedFiles.includes(path)) {
+            newEditedFiles = [...tab.editedFiles, path]
+          }
+        }
+        
         return {
           ...tab,
+          editedFiles: newEditedFiles,
           activeTools: tab.activeTools.map(t => 
             t.toolCallId === toolCallId ? { ...t, status: 'done' as const, output } : t
           )
         }
       }))
       
-      // Remove completed tools after a delay (longer for edit/create to see details)
-      const isFileOperation = name === 'edit' || name === 'create'
-      setTimeout(() => {
-        setTabs(prev => prev.map(tab => {
-          if (tab.id !== sessionId) return tab
-          return {
-            ...tab,
-            activeTools: tab.activeTools.filter(t => t.toolCallId !== toolCallId)
-          }
-        }))
-      }, isFileOperation ? 4000 : 2000)
+      // Tools are now kept visible during processing and cleared on idle
     })
 
     // Listen for permission requests
@@ -518,7 +590,9 @@ const App: React.FC = () => {
         hasUnreadCompletion: false,
         pendingConfirmation: null,
         needsTitle: true,
-        alwaysAllowed: []
+        alwaysAllowed: [],
+        editedFiles: [],
+        currentIntent: null
       }
       setTabs(prev => [...prev, newTab])
       setActiveTabId(result.sessionId)
@@ -562,7 +636,9 @@ const App: React.FC = () => {
             hasUnreadCompletion: false,
             pendingConfirmation: null,
             needsTitle: true,
-            alwaysAllowed: []
+            alwaysAllowed: [],
+            editedFiles: [],
+            currentIntent: null
           }]
         })
         setActiveTabId(newSession.sessionId)
@@ -597,7 +673,9 @@ const App: React.FC = () => {
           hasUnreadCompletion: false,
           pendingConfirmation: null,
           needsTitle: true,
-          alwaysAllowed: []
+          alwaysAllowed: [],
+          editedFiles: [],
+          currentIntent: null
         }
         setTabs([newTab])
         setActiveTabId(result.sessionId)
@@ -654,7 +732,9 @@ const App: React.FC = () => {
         hasUnreadCompletion: false,
         pendingConfirmation: null,
         needsTitle: !prevSession.name,
-        alwaysAllowed: []
+        alwaysAllowed: [],
+        editedFiles: [],
+        currentIntent: null
       }
       
       setTabs(prev => [...prev, newTab])
@@ -710,7 +790,9 @@ const App: React.FC = () => {
           hasUnreadCompletion: false,
           pendingConfirmation: null,
           needsTitle: true,
-          alwaysAllowed: []
+          alwaysAllowed: [],
+          editedFiles: [],
+          currentIntent: null
         }
         setTabs(prev => [...prev, newTab])
         setActiveTabId(modelResult.sessionId)
@@ -734,7 +816,9 @@ const App: React.FC = () => {
           hasUnreadCompletion: false,
           pendingConfirmation: null,
           needsTitle: true,
-          alwaysAllowed: []
+          alwaysAllowed: [],
+          editedFiles: [],
+          currentIntent: null
         }]
       })
       setActiveTabId(result.sessionId)
@@ -948,7 +1032,10 @@ const App: React.FC = () => {
           </div>
         )}
         
-        {(activeTab?.messages || []).filter(m => m.role !== 'system').map((message) => (
+        {(activeTab?.messages || [])
+          .filter(m => m.role !== 'system')
+          .filter(m => m.role === 'user' || m.content.trim() || m.isStreaming)
+          .map((message) => (
           <div 
             key={message.id}
             className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -1008,7 +1095,7 @@ const App: React.FC = () => {
                       <span className="w-2 h-2 bg-[#58a6ff] rounded-full animate-bounce [animation-delay:-0.15s]"></span>
                       <span className="w-2 h-2 bg-[#58a6ff] rounded-full animate-bounce"></span>
                     </span>
-                    Thinking...
+                    {activeTab?.currentIntent || 'Thinking...'}
                   </span>
                 )}
                 {message.isStreaming && message.content && (
@@ -1019,98 +1106,106 @@ const App: React.FC = () => {
           </div>
         ))}
         
-        {/* Active Tools Indicator - Enhanced with file/edit details */}
-        {(activeTab?.activeTools?.length || 0) > 0 && (
+        {/* CLI-style Activity Log */}
+        {(activeTab?.isProcessing || (activeTab?.activeTools?.length || 0) > 0) && (
           <div className="flex justify-start">
-            <div className="bg-[#1c2128] rounded-lg border border-[#30363d] overflow-hidden max-w-[80%]">
-              {activeTab?.activeTools.map((tool) => {
-                const input = tool.input || {}
-                const path = input.path as string | undefined
-                const filename = path ? path.split('/').pop() : undefined
-                const isEdit = tool.toolName === 'edit'
-                const isCreate = tool.toolName === 'create'
-                const isView = tool.toolName === 'view'
-                const isBash = tool.toolName === 'bash'
-                const isGrep = tool.toolName === 'grep'
-                const isGlob = tool.toolName === 'glob'
-                
-                return (
-                  <div 
-                    key={tool.toolCallId}
-                    className="px-3 py-2 border-b border-[#30363d] last:border-b-0"
-                  >
-                    {/* Tool header */}
-                    <div className={`text-xs flex items-center gap-1.5 ${
-                      tool.status === 'done' ? 'text-[#3fb950]' : 'text-[#8b949e]'
-                    }`}>
-                      {tool.status === 'running' ? (
-                        <span className="inline-block w-2 h-2 rounded-full bg-[#d29922] animate-pulse shrink-0" />
-                      ) : (
-                        <span className="text-[#3fb950] shrink-0">✓</span>
-                      )}
-                      <span className="font-medium">{tool.toolName}</span>
-                      {filename && (
-                        <span className="text-[#58a6ff] font-mono truncate">{filename}</span>
-                      )}
-                    </div>
-                    
-                    {/* Edit details - show old/new strings */}
-                    {isEdit && input.old_str && (
-                      <div className="mt-1.5 text-[10px] font-mono">
-                        <div className="flex gap-1">
-                          <span className="text-[#f85149] shrink-0">−</span>
-                          <span className="text-[#f85149] truncate max-w-[300px]">
-                            {(input.old_str as string).split('\n')[0].slice(0, 60)}{(input.old_str as string).length > 60 ? '...' : ''}
-                          </span>
-                        </div>
-                        {input.new_str !== undefined && (
-                          <div className="flex gap-1">
-                            <span className="text-[#3fb950] shrink-0">+</span>
-                            <span className="text-[#3fb950] truncate max-w-[300px]">
-                              {(input.new_str as string).split('\n')[0].slice(0, 60)}{(input.new_str as string).length > 60 ? '...' : ''}
-                            </span>
-                          </div>
+            <div className="bg-[#1c2128] rounded-lg border border-[#30363d] overflow-hidden max-w-[85%] min-w-[300px]">
+              {/* Current Intent Header */}
+              {activeTab?.currentIntent && (
+                <div className="px-3 py-2 bg-[#161b22] border-b border-[#30363d] flex items-center gap-2">
+                  <span className="text-[#58a6ff]">●</span>
+                  <span className="text-xs text-[#e6edf3] font-medium">{activeTab.currentIntent}</span>
+                </div>
+              )}
+              
+              {/* Tool Log */}
+              <div className="max-h-64 overflow-y-auto">
+                {activeTab?.activeTools.map((tool) => {
+                  const input = tool.input || {}
+                  const path = input.path as string | undefined
+                  const isEdit = tool.toolName === 'edit'
+                  const isCreate = tool.toolName === 'create'
+                  const isBash = tool.toolName === 'bash'
+                  const isGrep = tool.toolName === 'grep'
+                  const isGlob = tool.toolName === 'glob'
+                  const isView = tool.toolName === 'view'
+                  
+                  // Build description based on tool type
+                  let description = ''
+                  if (isGrep) {
+                    description = `"${input.pattern || ''}" ${path ? `(${path.split('/').slice(-2).join('/')})` : ''}`
+                  } else if (isGlob) {
+                    description = `${input.pattern || ''}`
+                  } else if (isView || isEdit || isCreate) {
+                    description = path || ''
+                  } else if (isBash) {
+                    const cmd = (input.command as string || '').slice(0, 60)
+                    description = `$ ${cmd}${(input.command as string || '').length > 60 ? '...' : ''}`
+                  } else if (tool.toolName === 'web_fetch') {
+                    description = (input.url as string || '').slice(0, 50)
+                  }
+                  
+                  return (
+                    <div 
+                      key={tool.toolCallId}
+                      className="px-3 py-1.5 border-b border-[#21262d] last:border-b-0"
+                    >
+                      {/* Tool line */}
+                      <div className="flex items-start gap-2 text-xs">
+                        {tool.status === 'running' ? (
+                          <span className="text-[#d29922] shrink-0 mt-0.5">○</span>
+                        ) : (
+                          <span className="text-[#3fb950] shrink-0">✓</span>
                         )}
+                        <div className="flex-1 min-w-0">
+                          <span className={`font-medium ${tool.status === 'done' ? 'text-[#e6edf3]' : 'text-[#8b949e]'}`}>
+                            {tool.toolName.charAt(0).toUpperCase() + tool.toolName.slice(1)}
+                          </span>
+                          {description && (
+                            <span className="text-[#8b949e] font-mono ml-1 truncate">
+                              {description}
+                            </span>
+                          )}
+                          
+                          {/* Output summary on new line */}
+                          {tool.status === 'done' && (
+                            <div className="text-[#6e7681] mt-0.5 flex items-center gap-1">
+                              <span className="text-[#30363d]">└</span>
+                              <span>{formatToolOutput(tool.toolName, input, tool.output)}</span>
+                            </div>
+                          )}
+                          
+                          {/* Edit diff preview */}
+                          {isEdit && tool.status === 'done' && input.old_str && (
+                            <div className="mt-1 text-[10px] font-mono pl-3 border-l border-[#30363d]">
+                              <div className="text-[#f85149] truncate">
+                                − {(input.old_str as string).split('\n')[0].slice(0, 50)}
+                              </div>
+                              {input.new_str !== undefined && (
+                                <div className="text-[#3fb950] truncate">
+                                  + {(input.new_str as string).split('\n')[0].slice(0, 50)}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    )}
-                    
-                    {/* Create details - show file being created */}
-                    {isCreate && path && (
-                      <div className="mt-1 text-[10px] text-[#8b949e] font-mono truncate">
-                        Creating: {path}
-                      </div>
-                    )}
-                    
-                    {/* View details - show view range if present */}
-                    {isView && input.view_range && (
-                      <div className="mt-1 text-[10px] text-[#8b949e] font-mono">
-                        Lines {(input.view_range as number[])[0]}-{(input.view_range as number[])[1]}
-                      </div>
-                    )}
-                    
-                    {/* Bash details - show command */}
-                    {isBash && input.command && (
-                      <div className="mt-1 text-[10px] text-[#8b949e] font-mono truncate max-w-[400px]">
-                        $ {(input.command as string).slice(0, 80)}{(input.command as string).length > 80 ? '...' : ''}
-                      </div>
-                    )}
-                    
-                    {/* Grep details - show pattern */}
-                    {isGrep && input.pattern && (
-                      <div className="mt-1 text-[10px] text-[#8b949e] font-mono truncate">
-                        /{input.pattern as string}/{input.glob ? ` in ${input.glob as string}` : ''}
-                      </div>
-                    )}
-                    
-                    {/* Glob details - show pattern */}
-                    {isGlob && input.pattern && (
-                      <div className="mt-1 text-[10px] text-[#8b949e] font-mono truncate">
-                        {input.pattern as string}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+                    </div>
+                  )
+                })}
+              </div>
+              
+              {/* Running indicator if no tools but still processing */}
+              {activeTab?.isProcessing && (activeTab?.activeTools?.length || 0) === 0 && !activeTab?.currentIntent && (
+                <div className="px-3 py-2 flex items-center gap-2">
+                  <span className="flex gap-1">
+                    <span className="w-1.5 h-1.5 bg-[#58a6ff] rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                    <span className="w-1.5 h-1.5 bg-[#58a6ff] rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                    <span className="w-1.5 h-1.5 bg-[#58a6ff] rounded-full animate-bounce"></span>
+                  </span>
+                  <span className="text-xs text-[#8b949e]">Processing...</span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1293,8 +1388,55 @@ const App: React.FC = () => {
                 </div>
               </div>
               
-              {/* Always Allowed Section */}
+              {/* Edited Files Section */}
               <div className="flex-1 overflow-y-auto">
+                <button
+                  onClick={() => setShowEditedFiles(!showEditedFiles)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors border-b border-[#21262d]"
+                >
+                  <svg 
+                    width="10" height="10" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    strokeWidth="2"
+                    className={`transition-transform ${showEditedFiles ? 'rotate-90' : ''}`}
+                  >
+                    <path d="M9 18l6-6-6-6"/>
+                  </svg>
+                  <span>Edited Files</span>
+                  {(activeTab?.editedFiles.length || 0) > 0 && (
+                    <span className="ml-auto text-[#3fb950]">({activeTab?.editedFiles.length})</span>
+                  )}
+                </button>
+                {showEditedFiles && activeTab && (
+                  <div className="border-b border-[#21262d]">
+                    {activeTab.editedFiles.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-[#6e7681]">
+                        No files edited yet
+                      </div>
+                    ) : (
+                      activeTab.editedFiles.map((filePath) => {
+                        const filename = filePath.split('/').pop() || filePath
+                        return (
+                          <div 
+                            key={filePath}
+                            className="flex items-center gap-2 px-3 py-1.5 text-xs text-[#8b949e] hover:bg-[#21262d]"
+                            title={filePath}
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3fb950" strokeWidth="2" className="shrink-0">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                              <path d="M14 2v6h6"/>
+                            </svg>
+                            <span className="flex-1 truncate font-mono">{filename}</span>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                )}
+                
+                {/* Always Allowed Section */}
                 <button
                   onClick={() => setShowAlwaysAllowed(!showAlwaysAllowed)}
                   className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors border-b border-[#21262d]"

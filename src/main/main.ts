@@ -312,6 +312,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
         sessionId, 
         toolCallId: event.data.toolCallId,
         toolName: event.data.toolName,
+        input: event.data.input,  // Include tool input for tracking edited files
         output: event.data.output  // Include tool output
       })
     } else if (event.type === 'tool.confirmation_requested') {
@@ -400,6 +401,7 @@ async function initCopilot(): Promise<void> {
               sessionId, 
               toolCallId: event.data.toolCallId, 
               toolName: event.data.toolName,
+              input: event.data.input,
               output: event.data.output
             })
           }
@@ -800,6 +802,7 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
         sessionId, 
         toolCallId: event.data.toolCallId, 
         toolName: event.data.toolName,
+        input: event.data.input,
         output: event.data.output
       })
     }

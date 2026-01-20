@@ -76,8 +76,8 @@ const electronAPI = {
       ipcRenderer.on('copilot:tool-start', handler)
       return () => ipcRenderer.removeListener('copilot:tool-start', handler)
     },
-    onToolEnd: (callback: (data: { sessionId: string; toolCallId: string; toolName: string; output?: unknown }) => void): (() => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string; toolCallId: string; toolName: string; output?: unknown }): void => callback(data)
+    onToolEnd: (callback: (data: { sessionId: string; toolCallId: string; toolName: string; input?: Record<string, unknown>; output?: unknown }) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string; toolCallId: string; toolName: string; input?: Record<string, unknown>; output?: unknown }): void => callback(data)
       ipcRenderer.on('copilot:tool-end', handler)
       return () => ipcRenderer.removeListener('copilot:tool-end', handler)
     },
