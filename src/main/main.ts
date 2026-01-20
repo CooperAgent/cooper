@@ -36,11 +36,27 @@ const store = new Store({
 })
 
 let mainWindow: BrowserWindow | null = null
-let copilotClient: CopilotClient | null = null
+
+// Map of cwd -> CopilotClient (one client per unique working directory)
+const copilotClients = new Map<string, CopilotClient>()
+
+// Get or create a CopilotClient for the given cwd
+async function getClientForCwd(cwd: string): Promise<CopilotClient> {
+  if (copilotClients.has(cwd)) {
+    return copilotClients.get(cwd)!
+  }
+  
+  console.log(`Creating new CopilotClient for cwd: ${cwd}`)
+  const client = new CopilotClient({ cwd })
+  await client.start()
+  copilotClients.set(cwd, client)
+  return client
+}
 
 // Multi-session support
 interface SessionState {
   session: CopilotSession
+  client: CopilotClient  // Reference to the client for this session
   model: string
   cwd: string  // Current working directory for the session
   alwaysAllowed: Set<string>  // Per-session always-allowed executables
@@ -73,32 +89,69 @@ const AVAILABLE_MODELS: ModelInfo[] = [
   { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', multiplier: 3 },
 ]
 
-// Extract the executable name from a shell command
-function extractExecutable(command: string): string {
-  // Trim and get the first word (the executable)
-  const trimmed = command.trim()
-  // Handle common prefixes like sudo, env, etc.
-  const prefixes = ['sudo', 'env', 'nohup', 'nice', 'time']
-  const parts = trimmed.split(/\s+/)
+// Extract all executables from a shell command
+function extractExecutables(command: string): string[] {
+  const executables: string[] = []
   
-  for (const part of parts) {
-    // Skip environment variable assignments (VAR=value)
-    if (part.includes('=') && !part.startsWith('-')) continue
-    // Skip common prefixes
-    if (prefixes.includes(part)) continue
-    // This is the executable
-    return part
+  // Remove heredocs first (<<'MARKER' ... MARKER or <<MARKER ... MARKER)
+  let cleaned = command.replace(/<<['"]?(\w+)['"]?[\s\S]*?\n\1(\n|$)/g, '')
+  
+  // Also handle heredocs that might not have closing marker in view
+  cleaned = cleaned.replace(/<<['"]?\w+['"]?[\s\S]*$/g, '')
+  
+  // Remove string literals to avoid false positives
+  cleaned = cleaned
+    .replace(/"[^"]*"/g, '""')
+    .replace(/'[^']*'/g, "''")
+    .replace(/`[^`]*`/g, '``')
+  
+  // Split on shell operators and separators
+  const segments = cleaned.split(/[;&|]+/)
+  
+  for (const segment of segments) {
+    const trimmed = segment.trim()
+    if (!trimmed) continue
+    
+    // Skip if it looks like a heredoc marker line
+    if (/^[A-Z]+$/.test(trimmed)) continue
+    
+    // Get first word of segment
+    const parts = trimmed.split(/\s+/)
+    const prefixes = ['sudo', 'env', 'nohup', 'nice', 'time', 'command']
+    
+    for (const part of parts) {
+      // Skip environment variable assignments
+      if (part.includes('=') && !part.startsWith('-')) continue
+      // Skip flags
+      if (part.startsWith('-')) continue
+      // Skip common prefixes
+      if (prefixes.includes(part)) continue
+      // Skip empty or punctuation
+      if (!part || /^[<>|&;()]+$/.test(part)) continue
+      // Skip redirection targets
+      if (part.startsWith('>') || part.startsWith('<')) continue
+      
+      // Found potential executable - remove path prefix
+      const exec = part.replace(/^.*\//, '')
+      // Validate it looks like a command (alphanumeric, dashes, underscores)
+      if (exec && /^[a-zA-Z0-9_-]+$/.test(exec) && !executables.includes(exec)) {
+        executables.push(exec)
+      }
+      break // Only first word of each segment
+    }
   }
-  return parts[0] || 'unknown'
+  
+  return executables
 }
 
-// Extract executable from permission request
+// Extract executable identifier from permission request (for "always allow" tracking)
 function getExecutableIdentifier(request: PermissionRequest): string {
   const req = request as Record<string, unknown>
   
-  // For shell commands, extract executable from fullCommandText
+  // For shell commands, extract executables
   if (request.kind === 'shell' && req.fullCommandText) {
-    return extractExecutable(req.fullCommandText as string)
+    const executables = extractExecutables(req.fullCommandText as string)
+    return executables.join(', ') || 'shell'
   }
   
   // For read/write, use kind + filename
@@ -119,12 +172,51 @@ async function handlePermissionRequest(
   ourSessionId: string
 ): Promise<PermissionRequestResult> {
   const requestId = request.toolCallId || `perm-${Date.now()}`
+  const req = request as Record<string, unknown>
+  const sessionState = sessions.get(ourSessionId)
+  
+  console.log(`[${ourSessionId}] Permission request:`, request.kind)
+  
+  // For shell commands, check each executable individually
+  if (request.kind === 'shell' && req.fullCommandText) {
+    const executables = extractExecutables(req.fullCommandText as string)
+    
+    // Filter to only unapproved executables
+    const unapproved = executables.filter(exec => !sessionState?.alwaysAllowed.has(exec))
+    
+    if (unapproved.length === 0) {
+      console.log(`[${ourSessionId}] All executables already approved:`, executables)
+      return { kind: 'approved' }
+    }
+    
+    console.log(`[${ourSessionId}] Need approval for:`, unapproved)
+    
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { kind: 'denied-no-approval-rule-and-could-not-request-from-user' }
+    }
+    
+    // Log all request fields for debugging
+    console.log(`[${ourSessionId}] Full permission request:`, JSON.stringify(request, null, 2))
+    
+    // Send to renderer and wait for response - include unapproved list
+    return new Promise((resolve) => {
+      pendingPermissions.set(requestId, { resolve, request, executable: unapproved.join(', '), sessionId: ourSessionId })
+      mainWindow!.webContents.send('copilot:permission', {
+        requestId,
+        sessionId: ourSessionId,
+        executable: unapproved.join(', '),
+        executables: unapproved,  // Array of executables needing approval
+        allExecutables: executables,  // All executables in command
+        isOutOfScope: false,
+        ...request
+      })
+    })
+  }
+  
+  // Non-shell permissions
   const executable = getExecutableIdentifier(request)
   
-  console.log(`[${ourSessionId}] Permission request:`, request.kind, executable)
-  
-  // Check if this executable is always allowed for this session
-  const sessionState = sessions.get(ourSessionId)
+  // Check if already allowed
   if (sessionState?.alwaysAllowed.has(executable)) {
     console.log(`[${ourSessionId}] Auto-approved (always allow):`, executable)
     return { kind: 'approved' }
@@ -134,6 +226,21 @@ async function handlePermissionRequest(
     return { kind: 'denied-no-approval-rule-and-could-not-request-from-user' }
   }
   
+  // Check if this is an out-of-scope read (reading outside the session's cwd)
+  let isOutOfScope = false
+  if (request.kind === 'read' && req.path && sessionState) {
+    const requestPath = req.path as string
+    const sessionCwd = sessionState.cwd
+    // Check if path is outside the session's working directory
+    if (!requestPath.startsWith(sessionCwd + '/') && !requestPath.startsWith(sessionCwd + '\\') && requestPath !== sessionCwd) {
+      isOutOfScope = true
+      console.log(`[${ourSessionId}] Out-of-scope read detected:`, requestPath, 'not in', sessionCwd)
+    }
+  }
+  
+  // Log all request fields for debugging
+  console.log(`[${ourSessionId}] Full permission request:`, JSON.stringify(request, null, 2))
+  
   // Send to renderer and wait for response
   return new Promise((resolve) => {
     pendingPermissions.set(requestId, { resolve, request, executable, sessionId: ourSessionId })
@@ -141,6 +248,7 @@ async function handlePermissionRequest(
       requestId,
       sessionId: ourSessionId,
       executable,
+      isOutOfScope,
       ...request
     })
   })
@@ -148,19 +256,18 @@ async function handlePermissionRequest(
 
 // Create a new session and return its ID
 async function createNewSession(model?: string, cwd?: string): Promise<string> {
-  if (!copilotClient) {
-    throw new Error('Copilot client not initialized')
-  }
-  
-  const sessionId = `session-${++sessionCounter}`
   const sessionModel = model || store.get('model') as string
   const sessionCwd = cwd || process.cwd()
   
-  const newSession = await copilotClient.createSession({
+  // Get or create a client for this cwd
+  const client = await getClientForCwd(sessionCwd)
+  
+  const newSession = await client.createSession({
     model: sessionModel,
-    cwd: sessionCwd,
-    onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId),
+    onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, newSession.sessionId),
   })
+  
+  const sessionId = newSession.sessionId  // Use SDK's session ID
   
   // Set up event handler for this session
   newSession.on((event) => {
@@ -190,7 +297,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     }
   })
   
-  sessions.set(sessionId, { session: newSession, model: sessionModel, cwd: sessionCwd, alwaysAllowed: new Set() })
+  sessions.set(sessionId, { session: newSession, client, model: sessionModel, cwd: sessionCwd, alwaysAllowed: new Set() })
   activeSessionId = sessionId
   
   console.log(`Created session ${sessionId} with model ${sessionModel} in ${sessionCwd}`)
@@ -199,11 +306,12 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
 
 async function initCopilot(): Promise<void> {
   try {
-    copilotClient = new CopilotClient()
-    await copilotClient.start()
+    // Create a default client for the current directory to list sessions
+    const defaultCwd = process.cwd()
+    const defaultClient = await getClientForCwd(defaultCwd)
     
     // Get all available sessions and our stored open sessions with models
-    const allSessions = await copilotClient.listSessions()
+    const allSessions = await defaultClient.listSessions()
     const openSessions = store.get('openSessions') as StoredSession[] || []
     const openSessionIds = openSessions.map(s => s.sessionId)
     const openSessionMap = new Map(openSessions.map(s => [s.sessionId, s]))
@@ -232,9 +340,12 @@ async function initCopilot(): Promise<void> {
       const storedSession = openSessionMap.get(sessionId)
       try {
         const sessionModel = storedSession?.model || store.get('model') as string || 'gpt-5.2'
-        const sessionCwd = storedSession?.cwd || process.cwd()
-        const session = await copilotClient.resumeSession(sessionId, {
-          permissionHandler: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
+        const sessionCwd = storedSession?.cwd || defaultCwd
+        
+        // Get or create client for this session's cwd
+        const client = await getClientForCwd(sessionCwd)
+        const session = await client.resumeSession(sessionId, {
+          onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
         })
         
         // Set up event handler for resumed session
@@ -243,7 +354,7 @@ async function initCopilot(): Promise<void> {
           
           console.log(`[${sessionId}] Event:`, event.type)
           
-          if (event.type === 'assistant.delta') {
+          if (event.type === 'assistant.message_delta') {
             mainWindow.webContents.send('copilot:delta', { sessionId, content: event.data.deltaContent })
           } else if (event.type === 'assistant.message') {
             mainWindow.webContents.send('copilot:message', { sessionId, content: event.data.content })
@@ -256,8 +367,8 @@ async function initCopilot(): Promise<void> {
               toolCallId: event.data.toolCallId, 
               toolName: event.data.toolName 
             })
-          } else if (event.type === 'tool.execution_end') {
-            console.log(`[${sessionId}] Tool end:`, event.data.toolName)
+          } else if (event.type === 'tool.execution_complete') {
+            console.log(`[${sessionId}] Tool end:`, event.data.toolCallId)
             mainWindow.webContents.send('copilot:tool-end', { 
               sessionId, 
               toolCallId: event.data.toolCallId, 
@@ -266,7 +377,7 @@ async function initCopilot(): Promise<void> {
           }
         })
         
-        sessions.set(sessionId, { session, model: sessionModel, cwd: sessionCwd, alwaysAllowed: new Set() })
+        sessions.set(sessionId, { session, client, model: sessionModel, cwd: sessionCwd, alwaysAllowed: new Set() })
         resumedSessions.push({ 
           sessionId, 
           model: sessionModel,
@@ -405,17 +516,16 @@ ipcMain.handle('copilot:getMessages', async (_event, sessionId: string) => {
 
 // Generate a short title for a conversation using AI
 ipcMain.handle('copilot:generateTitle', async (_event, data: { conversation: string }) => {
-  if (!copilotClient) {
-    throw new Error('Copilot client not initialized')
-  }
+  // Use the default cwd client for title generation
+  const defaultClient = await getClientForCwd(process.cwd())
   
   try {
     // Create a temporary session with the cheapest model for title generation
-    const tempSession = await copilotClient.createSession({
+    const tempSession = await defaultClient.createSession({
       model: 'gpt-5-mini',
-      config: {
-        intent: 'conversation',
-        instructions: 'You are a title generator. Respond with ONLY a short title (3-6 words, no quotes, no punctuation at end).'
+      systemMessage: {
+        mode: 'append',
+        content: 'You are a title generator. Respond with ONLY a short title (3-6 words, no quotes, no punctuation at end).'
       }
     })
     
@@ -425,7 +535,7 @@ ipcMain.handle('copilot:generateTitle', async (_event, data: { conversation: str
     
     // Clean up temp session - destroy and delete to avoid polluting session list
     await tempSession.destroy()
-    await copilotClient.deleteSession(sessionId)
+    await defaultClient.deleteSession(sessionId)
     
     // Extract and clean the title
     const title = (response?.data?.content || 'Untitled').trim().replace(/^["']|["']$/g, '').slice(0, 50)
@@ -453,8 +563,12 @@ ipcMain.handle('copilot:permissionResponse', async (_event, data: {
   if (data.decision === 'always') {
     const sessionState = sessions.get(pending.sessionId)
     if (sessionState) {
-      sessionState.alwaysAllowed.add(pending.executable)
-      console.log(`[${pending.sessionId}] Added to always allow:`, pending.executable)
+      // Add each executable individually (handle comma-separated list)
+      const executables = pending.executable.split(', ').filter(e => e.trim())
+      for (const exec of executables) {
+        sessionState.alwaysAllowed.add(exec.trim())
+      }
+      console.log(`[${pending.sessionId}] Added to always allow:`, executables)
     }
   }
   
@@ -617,10 +731,6 @@ ipcMain.handle('copilot:saveOpenSessions', async (_event, openSessions: StoredSe
 
 // Resume a previous session (from the history list)
 ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string) => {
-  if (!copilotClient) {
-    throw new Error('Copilot client not initialized')
-  }
-  
   // Check if already resumed
   if (sessions.has(sessionId)) {
     const sessionState = sessions.get(sessionId)!
@@ -629,8 +739,11 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
   
   const sessionModel = store.get('model') as string || 'gpt-5.2'
   const sessionCwd = process.cwd()  // Use current cwd for resumed previous sessions
-  const session = await copilotClient.resumeSession(sessionId, {
-    permissionHandler: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
+  
+  // Get or create client for this cwd
+  const client = await getClientForCwd(sessionCwd)
+  const session = await client.resumeSession(sessionId, {
+    onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
   })
   
   // Set up event handler
@@ -639,7 +752,7 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
     
     console.log(`[${sessionId}] Event:`, event.type)
     
-    if (event.type === 'assistant.delta') {
+    if (event.type === 'assistant.message_delta') {
       mainWindow.webContents.send('copilot:delta', { sessionId, content: event.data.deltaContent })
     } else if (event.type === 'assistant.message') {
       mainWindow.webContents.send('copilot:message', { sessionId, content: event.data.content })
@@ -651,7 +764,7 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
         toolCallId: event.data.toolCallId, 
         toolName: event.data.toolName 
       })
-    } else if (event.type === 'tool.execution_end') {
+    } else if (event.type === 'tool.execution_complete') {
       mainWindow.webContents.send('copilot:tool-end', { 
         sessionId, 
         toolCallId: event.data.toolCallId, 
@@ -660,7 +773,7 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
     }
   })
   
-  sessions.set(sessionId, { session, model: sessionModel, cwd: sessionCwd, alwaysAllowed: new Set() })
+  sessions.set(sessionId, { session, client, model: sessionModel, cwd: sessionCwd, alwaysAllowed: new Set() })
   activeSessionId = sessionId
   
   console.log(`Resumed previous session ${sessionId} in ${sessionCwd}`)
@@ -723,10 +836,13 @@ app.on('window-all-closed', async () => {
   }
   sessions.clear()
   
-  if (copilotClient) {
-    await copilotClient.stop()
-    copilotClient = null
+  // Stop all clients
+  for (const [cwd, client] of copilotClients) {
+    await client.stop()
+    console.log(`Stopped client for ${cwd}`)
   }
+  copilotClients.clear()
+  
   app.quit()
 })
 
@@ -737,9 +853,10 @@ app.on('before-quit', async () => {
   }
   sessions.clear()
   
-  if (copilotClient) {
-    await copilotClient.stop()
-    copilotClient = null
+  // Stop all clients
+  for (const [cwd, client] of copilotClients) {
+    await client.stop()
   }
+  copilotClients.clear()
 })
 

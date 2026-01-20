@@ -33,6 +33,8 @@ interface PendingConfirmation {
   fullCommandText?: string
   intention?: string
   path?: string
+  isOutOfScope?: boolean  // True if reading outside session's cwd
+  content?: string  // File content for write/create operations
   [key: string]: unknown
 }
 
@@ -339,9 +341,11 @@ const App: React.FC = () => {
 
     // Listen for permission requests
     const unsubscribePermission = window.electronAPI.copilot.onPermission((data) => {
-      console.log('Permission requested:', data)
+      console.log('Permission requested (full data):', JSON.stringify(data, null, 2))
       const sessionId = data.sessionId as string
+      // Spread all data to preserve any extra fields from SDK
       const confirmation: PendingConfirmation = {
+        ...data,
         requestId: data.requestId,
         sessionId,
         kind: data.kind,
@@ -350,6 +354,8 @@ const App: React.FC = () => {
         fullCommandText: data.fullCommandText,
         intention: data.intention as string | undefined,
         path: data.path as string | undefined,
+        isOutOfScope: data.isOutOfScope as boolean | undefined,
+        content: data.content as string | undefined,
       }
       setTabs(prev => prev.map(tab => 
         tab.id === sessionId ? { ...tab, pendingConfirmation: confirmation } : tab
@@ -437,9 +443,11 @@ const App: React.FC = () => {
       
       // If "always" was selected, update the local alwaysAllowed list
       if (decision === 'always' && pendingConfirmation.executable) {
+        // Split comma-separated executables into individual entries
+        const newExecutables = pendingConfirmation.executable.split(', ').filter(e => e.trim())
         updateTab(activeTab.id, { 
           pendingConfirmation: null,
-          alwaysAllowed: [...activeTab.alwaysAllowed, pendingConfirmation.executable]
+          alwaysAllowed: [...activeTab.alwaysAllowed, ...newExecutables]
         })
         return
       }
@@ -1024,40 +1032,73 @@ const App: React.FC = () => {
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[#d29922]">⚠️</span>
                 <span className="text-[#e6edf3] text-sm">
-                  Allow <strong className="font-bold">{activeTab.pendingConfirmation.executable || activeTab.pendingConfirmation.kind}</strong>?
+                  {activeTab.pendingConfirmation.isOutOfScope ? (
+                    <>Allow reading outside workspace?</>
+                  ) : activeTab.pendingConfirmation.kind === 'write' ? (
+                    <>Allow file changes?</>
+                  ) : activeTab.pendingConfirmation.kind === 'shell' ? (
+                    <>Allow <strong className="font-bold">{activeTab.pendingConfirmation.executable || 'command'}</strong>?</>
+                  ) : (
+                    <>Allow <strong className="font-bold">{activeTab.pendingConfirmation.kind}</strong>?</>
+                  )}
                 </span>
               </div>
-              {activeTab.pendingConfirmation.intention && (
-                <div className="text-sm text-[#e6edf3] mb-2">{activeTab.pendingConfirmation.intention}</div>
+              {activeTab.pendingConfirmation.isOutOfScope && (
+                <div className="text-xs text-[#8b949e] mb-2">
+                  This path is outside your trusted workspace
+                </div>
               )}
+              {/* File path for write permissions */}
+              {activeTab.pendingConfirmation.path && (
+                <div className="text-xs text-[#58a6ff] mb-2 font-mono">📄 {activeTab.pendingConfirmation.path}</div>
+              )}
+              {/* Full command for shell permissions */}
               {activeTab.pendingConfirmation.fullCommandText && (
-                <pre className="bg-[#0d1117] rounded p-2 my-2 overflow-x-auto text-xs text-[#e6edf3] border border-[#30363d]">
+                <pre className="bg-[#0d1117] rounded p-2 my-2 overflow-x-auto text-xs text-[#e6edf3] border border-[#30363d] max-h-40">
                   <code>{activeTab.pendingConfirmation.fullCommandText}</code>
                 </pre>
               )}
-              {activeTab.pendingConfirmation.path && !activeTab.pendingConfirmation.intention && (
-                <div className="text-xs text-[#8b949e] mb-2">Path: {activeTab.pendingConfirmation.path}</div>
-              )}
               <div className="flex gap-2 mt-3">
-                <button
-                  onClick={() => handleConfirmation('approved')}
-                  className="px-3 py-1.5 rounded bg-[#238636] hover:bg-[#2ea043] text-white text-xs font-medium transition-colors"
-                >
-                  Allow Once
-                </button>
-                <button
-                  onClick={() => handleConfirmation('always')}
-                  className="px-3 py-1.5 rounded bg-[#21262d] hover:bg-[#30363d] text-[#e6edf3] text-xs font-medium border border-[#30363d] transition-colors"
-                  title={`Always allow ${activeTab.pendingConfirmation.executable || activeTab.pendingConfirmation.kind} for this session`}
-                >
-                  Always Allow
-                </button>
-                <button
-                  onClick={() => handleConfirmation('denied')}
-                  className="px-3 py-1.5 rounded bg-[#21262d] hover:bg-[#30363d] text-[#f85149] text-xs font-medium border border-[#30363d] transition-colors"
-                >
-                  Deny
-                </button>
+                {activeTab.pendingConfirmation.isOutOfScope ? (
+                  <>
+                    {/* Out of scope read: only Yes/No, no "always" option */}
+                    <button
+                      onClick={() => handleConfirmation('approved')}
+                      className="px-3 py-1.5 rounded bg-[#238636] hover:bg-[#2ea043] text-white text-xs font-medium transition-colors"
+                    >
+                      Yes
+                    </button>
+                    <button
+                      onClick={() => handleConfirmation('denied')}
+                      className="px-3 py-1.5 rounded bg-[#21262d] hover:bg-[#30363d] text-[#f85149] text-xs font-medium border border-[#30363d] transition-colors"
+                    >
+                      No
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {/* In-scope permission: Allow Once / Always Allow / Deny */}
+                    <button
+                      onClick={() => handleConfirmation('approved')}
+                      className="px-3 py-1.5 rounded bg-[#238636] hover:bg-[#2ea043] text-white text-xs font-medium transition-colors"
+                    >
+                      Allow Once
+                    </button>
+                    <button
+                      onClick={() => handleConfirmation('always')}
+                      className="px-3 py-1.5 rounded bg-[#21262d] hover:bg-[#30363d] text-[#e6edf3] text-xs font-medium border border-[#30363d] transition-colors"
+                      title={`Always allow ${activeTab.pendingConfirmation.executable || activeTab.pendingConfirmation.kind} for this session`}
+                    >
+                      Always Allow
+                    </button>
+                    <button
+                      onClick={() => handleConfirmation('denied')}
+                      className="px-3 py-1.5 rounded bg-[#21262d] hover:bg-[#30363d] text-[#f85149] text-xs font-medium border border-[#30363d] transition-colors"
+                    >
+                      Deny
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
