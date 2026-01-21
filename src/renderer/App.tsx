@@ -3,170 +3,19 @@ import ReactMarkdown from 'react-markdown'
 import logo from './assets/logo.png'
 import { useTheme } from './context/ThemeContext'
 import { Spinner } from './components/Spinner'
-
-type Status = 'connecting' | 'connected' | 'disconnected'
-
-interface Message {
-  id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  isStreaming?: boolean
-  toolName?: string
-  toolCallId?: string
-}
-
-interface ActiveTool {
-  toolCallId: string
-  toolName: string
-  status: 'running' | 'done'
-  input?: Record<string, unknown>  // Tool input (path, old_str, new_str, etc.)
-  output?: unknown  // Tool output
-}
-
-interface ModelInfo {
-  id: string
-  name: string
-  multiplier: number
-}
-
-interface PendingConfirmation {
-  requestId: string
-  sessionId: string
-  kind: string
-  executable?: string
-  toolCallId?: string
-  fullCommandText?: string
-  intention?: string
-  path?: string
-  url?: string
-  serverName?: string
-  toolName?: string
-  toolTitle?: string
-  isOutOfScope?: boolean  // True if reading outside session's cwd
-  content?: string  // File content for write/create operations
-  [key: string]: unknown
-}
-
-// Tab/Session state
-interface TabState {
-  id: string
-  name: string
-  messages: Message[]
-  model: string
-  cwd: string  // Current working directory for this session
-  isProcessing: boolean
-  activeTools: ActiveTool[]
-  hasUnreadCompletion: boolean
-  pendingConfirmations: PendingConfirmation[]  // Queue of pending permission requests
-  needsTitle: boolean  // True if we should generate AI title on next idle
-  alwaysAllowed: string[]  // Executables that are always allowed for this session
-  editedFiles: string[]  // Files edited/created in this session
-  currentIntent: string | null  // Current agent intent from report_intent tool
-  isRenaming?: boolean
-  renameDraft?: string
-}
-
-let messageIdCounter = 0
-const generateId = () => `msg-${++messageIdCounter}-${Date.now()}`
-
-let tabCounter = 0
-const generateTabName = () => `Session ${++tabCounter}`
-
-// Format tool output into a summary string like CLI does
-const formatToolOutput = (toolName: string, input: Record<string, unknown>, output: unknown): string => {
-  const out = output as Record<string, unknown> | string | undefined
-  const path = input.path as string | undefined
-  const shortPath = path ? path.split('/').slice(-2).join('/') : ''
-  
-  if (toolName === 'grep') {
-    if (typeof out === 'object' && out?.output) {
-      const lines = String(out.output).split('\n').filter(l => l.trim()).length
-      return lines > 0 ? `${lines} lines found` : 'No matches found'
-    }
-    return 'No matches found'
-  }
-  
-  if (toolName === 'glob') {
-    if (typeof out === 'object' && out?.output) {
-      const files = String(out.output).split('\n').filter(l => l.trim()).length
-      return `${files} files found`
-    }
-    return 'No files found'
-  }
-  
-  if (toolName === 'view') {
-    const range = input.view_range as number[] | undefined
-    if (range && range.length >= 2) {
-      const lineCount = range[1] === -1 ? 'rest of file' : `${range[1] - range[0] + 1} lines`
-      return shortPath ? `${shortPath} (${lineCount})` : `${lineCount} read`
-    }
-    return shortPath ? `${shortPath} read` : 'File read'
-  }
-  
-  if (toolName === 'edit') {
-    return shortPath ? `${shortPath} edited` : 'File edited'
-  }
-  
-  if (toolName === 'create') {
-    return shortPath ? `${shortPath} created` : 'File created'
-  }
-  
-  if (toolName === 'bash') {
-    if (typeof out === 'object' && out?.output) {
-      const lines = String(out.output).split('\n').filter(l => l.trim()).length
-      return `${lines} lines...`
-    }
-    return 'Completed'
-  }
-  
-  if (toolName === 'web_fetch') {
-    return 'Page fetched'
-  }
-  
-  if (toolName === 'read_bash') {
-    return 'Output read'
-  }
-  
-  if (toolName === 'write_bash') {
-    return 'Input sent'
-  }
-  
-  return 'Done'
-}
-
-// Previous session type (from history, not yet opened)
-interface PreviousSession {
-  sessionId: string
-  name?: string
-  modifiedTime: string
-}
-
-// MCP Server Configuration types
-interface MCPServerConfigBase {
-  tools: string[]
-  type?: string
-  timeout?: number
-}
-
-interface MCPLocalServerConfig extends MCPServerConfigBase {
-  type?: 'local' | 'stdio'
-  command: string
-  args: string[]
-  env?: Record<string, string>
-  cwd?: string
-}
-
-interface MCPRemoteServerConfig extends MCPServerConfigBase {
-  type: 'http' | 'sse'
-  url: string
-  headers?: Record<string, string>
-}
-
-type MCPServerConfig = MCPLocalServerConfig | MCPRemoteServerConfig
-
-interface MCPConfigFile {
-  mcpServers: Record<string, MCPServerConfig>
-}
+import {
+  Status,
+  Message,
+  ActiveTool,
+  ModelInfo,
+  PendingConfirmation,
+  TabState,
+  PreviousSession,
+  MCPServerConfig,
+  MCPLocalServerConfig,
+  MCPRemoteServerConfig,
+} from './types'
+import { generateId, generateTabName, formatToolOutput, setTabCounter } from './utils/session'
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<Status>('connecting')
@@ -353,7 +202,7 @@ const App: React.FC = () => {
       }))
       
       // Update tab counter to avoid duplicate names
-      tabCounter = data.sessions.length
+      setTabCounter(data.sessions.length)
       
       setTabs(initialTabs)
       setActiveTabId(data.sessions[0]?.sessionId || null)
@@ -547,7 +396,7 @@ const App: React.FC = () => {
         kind: data.kind,
         executable: data.executable,
         toolCallId: data.toolCallId as string | undefined,
-        fullCommandText: data.fullCommandText,
+        fullCommandText: data.fullCommandText as string | undefined,
         intention: data.intention as string | undefined,
         path: data.path as string | undefined,
         url: data.url as string | undefined,
@@ -1723,7 +1572,7 @@ const App: React.FC = () => {
                                 {formatToolOutput(tool.toolName, input, tool.output)}
                               </div>
                             )}
-                            {isEdit && tool.status === 'done' && input.old_str && (
+                            {isEdit && tool.status === 'done' && !!input.old_str && (
                               <div className="mt-1 text-[10px] font-mono pl-2 border-l border-copilot-border">
                                 <div className="text-copilot-error truncate">− {(input.old_str as string).split('\n')[0].slice(0, 35)}</div>
                                 {input.new_str !== undefined && (
