@@ -9,7 +9,21 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "start": "electron-vite dev"
+    "start": "electron-vite dev",
+    "dist": "electron-vite build && electron-builder --mac --dir && hdiutil create -volname 'Copilot UI' -srcfolder release/mac-arm64 -ov -format UDZO release/Copilot-UI-1.0.0-arm64.dmg"
+  },
+  "build": {
+    "appId": "com.idofrizler.copilot-ui",
+    "productName": "Copilot UI",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools"
+    }
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.1.13",
@@ -29,6 +43,7 @@
     "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.0",
     "electron": "^28.1.0",
+    "electron-builder": "^26.4.0",
     "electron-vite": "^2.0.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",

@@ -46,6 +46,30 @@ let mainWindow: BrowserWindow | null = null
 // Map of cwd -> CopilotClient (one client per unique working directory)
 const copilotClients = new Map<string, CopilotClient>()
 
+// Resolve CLI path for packaged apps
+function getCliPath(): string | undefined {
+  if (!app.isPackaged) {
+    return undefined  // Use default "copilot" from PATH in dev
+  }
+  
+  // When packaged, the copilot binary is in the unpacked asar
+  const platform = process.platform
+  const arch = process.arch
+  const platformArch = `${platform}-${arch}`  // e.g., "darwin-arm64"
+  
+  const cliPath = join(
+    process.resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    '@github',
+    `copilot-${platformArch}`,
+    'copilot'
+  )
+  
+  console.log(`Using packaged CLI path: ${cliPath}`)
+  return cliPath
+}
+
 // Get or create a CopilotClient for the given cwd
 async function getClientForCwd(cwd: string): Promise<CopilotClient> {
   if (copilotClients.has(cwd)) {
@@ -53,7 +77,8 @@ async function getClientForCwd(cwd: string): Promise<CopilotClient> {
   }
   
   console.log(`Creating new CopilotClient for cwd: ${cwd}`)
-  const client = new CopilotClient({ cwd })
+  const cliPath = getCliPath()
+  const client = new CopilotClient({ cwd, cliPath })
   await client.start()
   copilotClients.set(cwd, client)
   return client
@@ -319,7 +344,8 @@ async function handlePermissionRequest(
 // Create a new session and return its ID
 async function createNewSession(model?: string, cwd?: string): Promise<string> {
   const sessionModel = model || store.get('model') as string
-  const sessionCwd = cwd || process.cwd()
+  // In packaged app, process.cwd() can be '/', so default to home directory
+  const sessionCwd = cwd || (app.isPackaged ? app.getPath('home') : process.cwd())
   
   // Get or create a client for this cwd
   const client = await getClientForCwd(sessionCwd)
@@ -379,8 +405,8 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
 
 async function initCopilot(): Promise<void> {
   try {
-    // Create a default client for the current directory to list sessions
-    const defaultCwd = process.cwd()
+    // Create a default client - use home dir for packaged app since process.cwd() can be '/'
+    const defaultCwd = app.isPackaged ? app.getPath('home') : process.cwd()
     const defaultClient = await getClientForCwd(defaultCwd)
     
     // Get all available sessions and our stored open sessions with models
@@ -724,7 +750,8 @@ ipcMain.handle('copilot:getModels', async () => {
 
 // Get current working directory
 ipcMain.handle('copilot:getCwd', async () => {
-  return process.cwd()
+  // Use home dir for packaged app since process.cwd() can be '/'
+  return app.isPackaged ? app.getPath('home') : process.cwd()
 })
 
 // Create a new session (for new tabs)
@@ -890,7 +917,8 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
   }
   
   const sessionModel = store.get('model') as string || 'gpt-5.2'
-  const sessionCwd = process.cwd()  // Use current cwd for resumed previous sessions
+  // Use home dir for packaged app since process.cwd() can be '/'
+  const sessionCwd = app.isPackaged ? app.getPath('home') : process.cwd()
   
   // Get or create client for this cwd
   const client = await getClientForCwd(sessionCwd)
