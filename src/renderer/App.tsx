@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
+import logo from './assets/logo.png'
 
 type Status = 'connecting' | 'connected' | 'disconnected'
 
@@ -906,11 +907,7 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-2 ml-2">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-[#58a6ff]">
-              <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2"/>
-              <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2"/>
-              <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2"/>
-            </svg>
+            <img src={logo} alt="Copilot Skins" className="w-4 h-4 rounded-sm" />
             <span className="text-[#e6edf3] text-sm font-medium">Copilot Skins</span>
             
             {/* Model Selector */}
@@ -1078,11 +1075,7 @@ const App: React.FC = () => {
           <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
         {activeTab?.messages.length === 0 && status === 'connected' && (
           <div className="flex flex-col items-center justify-center min-h-full text-center -m-4 p-4">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" className="text-[#30363d] mb-4">
-              <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="1.5"/>
-              <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="1.5"/>
-              <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="1.5"/>
-            </svg>
+            <img src={logo} alt="Copilot Skins" className="w-16 h-16 mb-4" />
             <h2 className="text-[#e6edf3] text-lg font-medium mb-1">How can I help you today?</h2>
             <p className="text-[#8b949e] text-sm">Ask me anything about your code or projects.</p>
           </div>
