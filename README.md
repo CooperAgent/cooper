@@ -48,20 +48,24 @@ A beautiful native desktop GUI for GitHub Copilot, built with Electron and the [
 
 ## Installation
 
-### Download (macOS)
+### Build the App (macOS)
 
-**[⬇️ Download Copilot Skins for macOS (Apple Silicon)](https://github.com/idofrizler/copilot-ui/releases/download/latest/Copilot-Skins-arm64.dmg)**
-
-Or visit the [Releases page](https://github.com/idofrizler/copilot-ui/releases) for all versions.
-
-### Build from source
+Building locally avoids macOS Gatekeeper issues with unsigned apps:
 
 ```bash
+# Clone and install
+git clone https://github.com/idofrizler/copilot-ui.git
+cd copilot-ui
 npm install
+
+# Build the DMG
 npm run dist
+
+# Install
+open release/Copilot-Skins-*-arm64.dmg
 ```
 
-The built app will be in the `release/` folder.
+Drag "Copilot Skins" to your Applications folder and you're ready to go!
 
 > **Note:** pnpm may have memory issues with some Node.js versions. Use npm if you encounter problems.
 
