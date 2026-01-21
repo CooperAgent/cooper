@@ -45,11 +45,11 @@ jobs:
           path: release/Copilot-Skins-arm64.dmg
           if-no-files-found: error
 
-      - name: Publish "nightly" release asset
+      - name: Publish "latest" release asset
         uses: ncipollo/release-action@v1
         with:
-          tag: nightly
-          name: Nightly
+          tag: latest
+          name: Latest
           prerelease: true
           allowUpdates: true
           replacesArtifacts: true

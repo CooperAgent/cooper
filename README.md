@@ -50,7 +50,7 @@ A beautiful native desktop GUI for GitHub Copilot, built with Electron and the [
 
 ### Download (macOS)
 
-**[⬇️ Download Copilot Skins for macOS (Apple Silicon)](https://github.com/idofrizler/copilot-ui/releases/download/nightly/Copilot-Skins-arm64.dmg)**
+**[⬇️ Download Copilot Skins for macOS (Apple Silicon)](https://github.com/idofrizler/copilot-ui/releases/download/latest/Copilot-Skins-arm64.dmg)**
 
 Or visit the [Releases page](https://github.com/idofrizler/copilot-ui/releases) for all versions.
 
