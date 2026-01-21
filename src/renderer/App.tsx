@@ -1514,11 +1514,11 @@ const App: React.FC = () => {
               🌐 {pendingConfirmation.url}
             </div>
           )}
-          {pendingConfirmation.path && (
+          {pendingConfirmation.path && pendingConfirmation.kind !== 'write' && (
             <div className="text-xs text-copilot-accent mb-2 font-mono truncate" title={pendingConfirmation.path}>
               📄 {pendingConfirmation.path}
             </div>
-          )}
+          )
           {pendingConfirmation.fullCommandText && (
             <pre className="bg-copilot-bg rounded p-3 my-2 overflow-x-auto text-xs text-copilot-text border border-copilot-border max-h-32">
               <code>{pendingConfirmation.fullCommandText}</code>
