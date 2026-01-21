@@ -38,6 +38,10 @@ interface PendingConfirmation {
   fullCommandText?: string
   intention?: string
   path?: string
+  url?: string
+  serverName?: string
+  toolName?: string
+  toolTitle?: string
   isOutOfScope?: boolean  // True if reading outside session's cwd
   content?: string  // File content for write/create operations
   [key: string]: unknown
@@ -546,6 +550,10 @@ const App: React.FC = () => {
         fullCommandText: data.fullCommandText,
         intention: data.intention as string | undefined,
         path: data.path as string | undefined,
+        url: data.url as string | undefined,
+        serverName: data.serverName as string | undefined,
+        toolName: data.toolName as string | undefined,
+        toolTitle: data.toolTitle as string | undefined,
         isOutOfScope: data.isOutOfScope as boolean | undefined,
         content: data.content as string | undefined,
       }
@@ -1477,6 +1485,10 @@ const App: React.FC = () => {
                 <>Allow file changes?</>
               ) : pendingConfirmation.kind === 'shell' ? (
                 <>Allow <strong>{pendingConfirmation.executable || 'command'}</strong>?</>
+              ) : pendingConfirmation.kind === 'url' ? (
+                <>Allow <strong>URL access</strong>?</>
+              ) : pendingConfirmation.kind === 'mcp' ? (
+                <>Allow <strong>MCP tool</strong>?</>
               ) : (
                 <>Allow <strong>{pendingConfirmation.kind}</strong>?</>
               )}
@@ -1490,6 +1502,16 @@ const App: React.FC = () => {
           {pendingConfirmation.isOutOfScope && (
             <div className="text-xs text-copilot-text-muted mb-2">
               Path is outside trusted workspace
+            </div>
+          )}
+          {pendingConfirmation.kind === 'mcp' && (pendingConfirmation.toolTitle || pendingConfirmation.toolName || pendingConfirmation.serverName) && (
+            <div className="text-xs text-copilot-accent mb-2 font-mono truncate" title={`${pendingConfirmation.serverName || ''} ${pendingConfirmation.toolName || ''}`.trim()}>
+              🔌 {(pendingConfirmation.toolTitle || pendingConfirmation.toolName || 'MCP tool')}{pendingConfirmation.serverName ? ` @${pendingConfirmation.serverName}` : ''}
+            </div>
+          )}
+          {pendingConfirmation.kind === 'url' && pendingConfirmation.url && (
+            <div className="text-xs text-copilot-accent mb-2 font-mono truncate" title={pendingConfirmation.url}>
+              🌐 {pendingConfirmation.url}
             </div>
           )}
           {pendingConfirmation.path && (
@@ -1829,19 +1851,77 @@ const App: React.FC = () => {
                     {activeTab.alwaysAllowed.length === 0 ? (
                       <div className="px-3 py-2 text-[10px] text-copilot-text-muted">No always-allowed</div>
                     ) : (
-                      activeTab.alwaysAllowed.map((exe) => (
-                        <div key={exe} className="group flex items-center gap-2 px-3 py-1 text-[10px] text-copilot-text-muted hover:bg-copilot-surface">
-                          <span className="flex-1 truncate font-mono">{exe}</span>
-                          <button
-                            onClick={() => handleRemoveAlwaysAllowed(exe)}
-                            className="shrink-0 opacity-0 group-hover:opacity-100 text-copilot-error transition-opacity"
-                          >
-                            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M18 6L6 18M6 6l12 12"/>
-                            </svg>
-                          </button>
-                        </div>
-                      ))
+                      (() => {
+                        const isSpecialExe = (exe: string) => exe.startsWith('write') || exe.startsWith('url') || exe.startsWith('mcp')
+                        const toPretty = (exe: string) => {
+                          const hasColon = exe.includes(':')
+                          const [rawPrefix, rawRest] = hasColon ? exe.split(':', 2) : [exe, null]
+                          const prefix = rawPrefix
+                          const rest = rawRest
+
+                          const isSpecial = prefix === 'write' || prefix === 'url' || prefix === 'mcp'
+                          const meaning = prefix === 'write'
+                            ? 'File changes'
+                            : prefix === 'url'
+                            ? 'Web access'
+                            : prefix === 'mcp'
+                            ? 'MCP tools'
+                            : ''
+
+                          return isSpecial ? (rest ? `${meaning}: ${rest}` : meaning) : exe
+                        }
+
+                        const list = [...activeTab.alwaysAllowed].sort((a, b) => {
+                          const ra = isSpecialExe(a) ? 0 : 1
+                          const rb = isSpecialExe(b) ? 0 : 1
+                          if (ra !== rb) return ra - rb
+                          return toPretty(a).localeCompare(toPretty(b))
+                        })
+
+                        return (
+                          <div className="px-3 pb-2 flex flex-wrap gap-2">
+                            {list.map((exe) => {
+                              const hasColon = exe.includes(':')
+                              const [rawPrefix, rawRest] = hasColon ? exe.split(':', 2) : [exe, null]
+                              const prefix = rawPrefix
+                              const rest = rawRest
+
+                              const isSpecial = prefix === 'write' || prefix === 'url' || prefix === 'mcp'
+                              const meaning = prefix === 'write'
+                                ? 'File changes'
+                                : prefix === 'url'
+                                ? 'Web access'
+                                : prefix === 'mcp'
+                                ? 'MCP tools'
+                                : ''
+                              const pretty = isSpecial ? (rest ? `${meaning}: ${rest}` : meaning) : exe
+
+                              return (
+                                <div
+                                  key={exe}
+                                  className={`flex items-center gap-2 rounded border px-2 py-1 text-[10px] font-mono ${
+                                    isSpecial
+                                      ? 'bg-copilot-surface-hover border-copilot-border text-copilot-accent'
+                                      : 'bg-copilot-surface-hover border-copilot-border text-copilot-text-muted'
+                                  }`}
+                                  title={pretty}
+                                >
+                                  <span className="truncate max-w-[180px]">{pretty}</span>
+                                  <button
+                                    onClick={() => handleRemoveAlwaysAllowed(exe)}
+                                    className="shrink-0 text-copilot-error hover:brightness-110"
+                                    title="Remove"
+                                  >
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M18 6L6 18M6 6l12 12"/>
+                                    </svg>
+                                  </button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()
                     )}
                   </div>
                 )}
