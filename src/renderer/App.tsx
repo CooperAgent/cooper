@@ -1309,7 +1309,7 @@ const App: React.FC = () => {
                         console.error('Failed to rename session:', err)
                       }
                     }}
-                    className="flex-1 min-w-0 bg-[#0d1117] border border-[#30363d] rounded px-1 py-0.5 text-xs text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+                    className="flex-1 min-w-0 bg-copilot-bg border border-copilot-border rounded px-1 py-0.5 text-xs text-copilot-text outline-none focus:border-copilot-accent"
                   />
                 ) : (
                   <span
@@ -1832,7 +1832,7 @@ const App: React.FC = () => {
               </div>
               
               {/* Always Allowed */}
-              <div className="border-b border-[#21262d]">
+              <div className="border-b border-copilot-border">
                 <button
                   onClick={() => { setShowAlwaysAllowed(!showAlwaysAllowed); if (!showAlwaysAllowed) refreshAlwaysAllowed() }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
@@ -1932,72 +1932,96 @@ const App: React.FC = () => {
                 <div className="flex items-center">
                   <button
                     onClick={() => setShowMcpServers(!showMcpServers)}
-                    className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors"
+                    className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                   >
-                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                      className={`transition-transform ${showMcpServers ? 'rotate-90' : ''}`}>
-                      <path d="M9 18l6-6-6-6"/>
+                    <svg
+                      width="8"
+                      height="8"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      className={`transition-transform ${showMcpServers ? 'rotate-90' : ''}`}
+                    >
+                      <path d="M9 18l6-6-6-6" />
                     </svg>
                     <span>MCP Servers</span>
                     {Object.keys(mcpServers).length > 0 && (
-                      <span className="text-[#a371f7]">({Object.keys(mcpServers).length})</span>
+                      <span className="text-copilot-accent">({Object.keys(mcpServers).length})</span>
                     )}
                   </button>
                   <button
                     onClick={openAddMcpModal}
-                    className="px-2 py-1 mr-1 text-[#3fb950] hover:text-[#56d364] hover:bg-[#21262d] rounded transition-colors"
+                    className="px-2 py-1 mr-1 text-copilot-success hover:bg-copilot-surface rounded transition-colors hover:brightness-110"
                     title="Add MCP server"
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 5v14M5 12h14"/>
+                      <path d="M12 5v14M5 12h14" />
                     </svg>
                   </button>
                 </div>
                 {showMcpServers && (
                   <div className="max-h-48 overflow-y-auto">
                     {Object.keys(mcpServers).length === 0 ? (
-                      <div className="px-3 py-2 text-[10px] text-[#6e7681]">No MCP servers configured</div>
+                      <div className="px-3 py-2 text-[10px] text-copilot-text-muted">No MCP servers configured</div>
                     ) : (
                       Object.entries(mcpServers).map(([name, server]) => {
                         const isLocal = !server.type || server.type === 'local' || server.type === 'stdio'
                         const toolCount = server.tools[0] === '*' ? 'all' : `${server.tools.length}`
                         return (
-                          <div key={name} className="group px-3 py-1.5 hover:bg-[#21262d] border-b border-[#161b22] last:border-b-0">
+                          <div
+                            key={name}
+                            className="group px-3 py-1.5 hover:bg-copilot-surface border-b border-copilot-border last:border-b-0"
+                          >
                             <div className="flex items-center gap-2">
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#a371f7" strokeWidth="2" className="shrink-0">
+                              <svg
+                                width="10"
+                                height="10"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                className="shrink-0 text-copilot-accent"
+                              >
                                 {isLocal ? (
-                                  <><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><path d="M8 21h8"/><path d="M12 17v4"/></>
+                                  <>
+                                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                                    <path d="M8 21h8" />
+                                    <path d="M12 17v4" />
+                                  </>
                                 ) : (
-                                  <><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></>
+                                  <>
+                                    <circle cx="12" cy="12" r="10" />
+                                    <path d="M2 12h20" />
+                                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                                  </>
                                 )}
                               </svg>
                               <div className="flex-1 min-w-0">
-                                <div className="text-xs text-[#e6edf3] truncate">{name}</div>
-                                <div className="text-[10px] text-[#6e7681] truncate">
+                                <div className="text-xs text-copilot-text truncate">{name}</div>
+                                <div className="text-[10px] text-copilot-text-muted truncate">
                                   {isLocal ? (server as MCPLocalServerConfig).command : (server as MCPRemoteServerConfig).url}
                                 </div>
-                                <div className="text-[10px] text-[#a371f7]">
-                                  {toolCount} tools
-                                </div>
+                                <div className="text-[10px] text-copilot-accent">{toolCount} tools</div>
                               </div>
                               <div className="shrink-0 opacity-0 group-hover:opacity-100 flex gap-1">
                                 <button
                                   onClick={() => openEditMcpModal(name, server)}
-                                  className="text-[#58a6ff] hover:text-[#79c0ff] transition-colors"
+                                  className="text-copilot-accent hover:text-copilot-accent-hover transition-colors"
                                   title="Edit"
                                 >
                                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                   </svg>
                                 </button>
                                 <button
                                   onClick={() => handleDeleteMcpServer(name)}
-                                  className="text-[#f85149] hover:text-[#ff7b72] transition-colors"
+                                  className="text-copilot-error hover:brightness-110 transition-colors"
                                   title="Delete"
                                 >
                                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M18 6L6 18M6 6l12 12"/>
+                                    <path d="M18 6L6 18M6 6l12 12" />
                                   </svg>
                                 </button>
                               </div>
@@ -2108,38 +2132,38 @@ const App: React.FC = () => {
       {/* MCP Server Modal */}
       {showMcpModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl w-[450px] max-w-[90%]">
-            <div className="px-4 py-3 border-b border-[#30363d] flex items-center justify-between">
-              <h3 className="text-sm font-medium text-[#e6edf3]">
+          <div className="bg-copilot-surface border border-copilot-border rounded-lg shadow-xl w-[450px] max-w-[90%]">
+            <div className="px-4 py-3 border-b border-copilot-border flex items-center justify-between">
+              <h3 className="text-sm font-medium text-copilot-text">
                 {editingMcpServer ? 'Edit MCP Server' : 'Add MCP Server'}
               </h3>
               <button
                 onClick={() => setShowMcpModal(false)}
-                className="text-[#8b949e] hover:text-[#e6edf3] transition-colors"
+                className="text-copilot-text-muted hover:text-copilot-text transition-colors"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 6L6 18M6 6l12 12"/>
+                  <path d="M18 6L6 18M6 6l12 12" />
                 </svg>
               </button>
             </div>
-            
+
             <div className="p-4 space-y-4">
               {/* Server Name */}
               <div>
-                <label className="text-xs text-[#8b949e] mb-1 block">Server Name</label>
+                <label className="text-xs text-copilot-text-muted mb-1 block">Server Name</label>
                 <input
                   type="text"
                   value={mcpFormData.name}
                   onChange={(e) => setMcpFormData({ ...mcpFormData, name: e.target.value })}
-                  className="w-full bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-sm text-[#e6edf3] placeholder-[#484f58] focus:border-[#58a6ff] outline-none"
+                  className="w-full bg-copilot-bg border border-copilot-border rounded px-3 py-2 text-sm text-copilot-text placeholder-copilot-text-muted focus:border-copilot-accent outline-none"
                   placeholder="my-mcp-server"
                   autoFocus
                 />
               </div>
-              
+
               {/* Server Type */}
               <div>
-                <label className="text-xs text-[#8b949e] mb-1 block">Type</label>
+                <label className="text-xs text-copilot-text-muted mb-1 block">Type</label>
                 <div className="flex gap-2">
                   {(['local', 'http', 'sse'] as const).map((type) => (
                     <button
@@ -2147,8 +2171,8 @@ const App: React.FC = () => {
                       onClick={() => setMcpFormData({ ...mcpFormData, type })}
                       className={`px-3 py-1.5 text-xs rounded transition-colors ${
                         mcpFormData.type === type
-                          ? 'bg-[#238636] text-white'
-                          : 'bg-[#21262d] text-[#8b949e] hover:text-[#e6edf3]'
+                          ? 'bg-copilot-success text-copilot-text-inverse'
+                          : 'bg-copilot-surface-hover text-copilot-text-muted hover:text-copilot-text'
                       }`}
                     >
                       {type === 'local' ? 'Local/Stdio' : type.toUpperCase()}
@@ -2156,71 +2180,71 @@ const App: React.FC = () => {
                   ))}
                 </div>
               </div>
-              
+
               {/* Local Server Config */}
               {mcpFormData.type === 'local' && (
                 <>
                   <div>
-                    <label className="text-xs text-[#8b949e] mb-1 block">Command</label>
+                    <label className="text-xs text-copilot-text-muted mb-1 block">Command</label>
                     <input
                       type="text"
                       value={mcpFormData.command}
                       onChange={(e) => setMcpFormData({ ...mcpFormData, command: e.target.value })}
-                      className="w-full bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-sm text-[#e6edf3] font-mono placeholder-[#484f58] focus:border-[#58a6ff] outline-none"
+                      className="w-full bg-copilot-bg border border-copilot-border rounded px-3 py-2 text-sm text-copilot-text font-mono placeholder-copilot-text-muted focus:border-copilot-accent outline-none"
                       placeholder="npx"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-[#8b949e] mb-1 block">Arguments (space-separated)</label>
+                    <label className="text-xs text-copilot-text-muted mb-1 block">Arguments (space-separated)</label>
                     <input
                       type="text"
                       value={mcpFormData.args}
                       onChange={(e) => setMcpFormData({ ...mcpFormData, args: e.target.value })}
-                      className="w-full bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-sm text-[#e6edf3] font-mono placeholder-[#484f58] focus:border-[#58a6ff] outline-none"
+                      className="w-full bg-copilot-bg border border-copilot-border rounded px-3 py-2 text-sm text-copilot-text font-mono placeholder-copilot-text-muted focus:border-copilot-accent outline-none"
                       placeholder="-y @my-mcp-server"
                     />
                   </div>
                 </>
               )}
-              
+
               {/* Remote Server Config */}
               {(mcpFormData.type === 'http' || mcpFormData.type === 'sse') && (
                 <div>
-                  <label className="text-xs text-[#8b949e] mb-1 block">URL</label>
+                  <label className="text-xs text-copilot-text-muted mb-1 block">URL</label>
                   <input
                     type="text"
                     value={mcpFormData.url}
                     onChange={(e) => setMcpFormData({ ...mcpFormData, url: e.target.value })}
-                    className="w-full bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-sm text-[#e6edf3] font-mono placeholder-[#484f58] focus:border-[#58a6ff] outline-none"
+                    className="w-full bg-copilot-bg border border-copilot-border rounded px-3 py-2 text-sm text-copilot-text font-mono placeholder-copilot-text-muted focus:border-copilot-accent outline-none"
                     placeholder="https://mcp-server.example.com"
                   />
                 </div>
               )}
-              
+
               {/* Tools */}
               <div>
-                <label className="text-xs text-[#8b949e] mb-1 block">Tools (* for all, or comma-separated list)</label>
+                <label className="text-xs text-copilot-text-muted mb-1 block">Tools (* for all, or comma-separated list)</label>
                 <input
                   type="text"
                   value={mcpFormData.tools}
                   onChange={(e) => setMcpFormData({ ...mcpFormData, tools: e.target.value })}
-                  className="w-full bg-[#0d1117] border border-[#30363d] rounded px-3 py-2 text-sm text-[#e6edf3] font-mono placeholder-[#484f58] focus:border-[#58a6ff] outline-none"
+                  className="w-full bg-copilot-bg border border-copilot-border rounded px-3 py-2 text-sm text-copilot-text font-mono placeholder-copilot-text-muted focus:border-copilot-accent outline-none"
                   placeholder="*"
                 />
               </div>
-              
+
               {/* Actions */}
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => setShowMcpModal(false)}
-                  className="px-3 py-1.5 text-xs text-[#8b949e] hover:text-[#e6edf3] transition-colors"
+                  className="px-3 py-1.5 text-xs text-copilot-text-muted hover:text-copilot-text transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleSaveMcpServer}
                   disabled={!mcpFormData.name.trim() || (mcpFormData.type === 'local' ? !mcpFormData.command.trim() : !mcpFormData.url.trim())}
-                  className="px-3 py-1.5 bg-[#238636] hover:bg-[#2ea043] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
+                  className="px-3 py-1.5 bg-copilot-success hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed text-copilot-text-inverse text-xs font-medium rounded transition-colors"
                 >
                   {editingMcpServer ? 'Save Changes' : 'Add Server'}
                 </button>
