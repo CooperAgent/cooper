@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import logo from './assets/logo.png'
 import { useTheme } from './context/ThemeContext'
 import { Spinner } from './components/Spinner'
+import { GitBranchWidget } from './components/GitBranchWidget'
 import {
   Status,
   Message,
@@ -1614,6 +1615,12 @@ const App: React.FC = () => {
               <div className="px-3 py-2 border-b border-copilot-surface">
                 <div className="text-[10px] text-copilot-text-muted uppercase tracking-wide mb-1">Directory</div>
                 <div className="text-xs text-copilot-text-muted font-mono truncate" title={activeTab?.cwd}>{activeTab?.cwd || 'Unknown'}</div>
+              </div>
+
+              {/* Git Branch */}
+              <div className="px-3 py-2 border-b border-copilot-surface">
+                <div className="text-[10px] text-copilot-text-muted uppercase tracking-wide mb-1">Git Branch</div>
+                <GitBranchWidget cwd={activeTab?.cwd} />
               </div>
               
               {/* Edited Files */}
