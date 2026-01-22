@@ -258,6 +258,9 @@ const pendingPermissions = new Map<string, {
   sessionId: string
 }>()
 
+// Track in-flight permission requests by session+executable to deduplicate parallel requests
+const inFlightPermissions = new Map<string, Promise<PermissionRequestResult>>()
+
 // Model info with multipliers
 interface ModelInfo {
   id: string
@@ -513,8 +516,16 @@ async function handlePermissionRequest(
   // Log all request fields for debugging
   console.log(`[${ourSessionId}] Full permission request:`, JSON.stringify(request, null, 2))
   
-  // Send to renderer and wait for response
-  return new Promise((resolve) => {
+  // Deduplicate parallel permission requests for the same executable+session
+  const inFlightKey = `${ourSessionId}:${executable}`
+  const existingRequest = inFlightPermissions.get(inFlightKey)
+  if (existingRequest) {
+    console.log(`[${ourSessionId}] Reusing in-flight permission request for:`, executable)
+    return existingRequest
+  }
+  
+  // Create new permission request and track it
+  const permissionPromise = new Promise<PermissionRequestResult>((resolve) => {
     pendingPermissions.set(requestId, { resolve, request, executable, sessionId: ourSessionId })
     mainWindow!.webContents.send('copilot:permission', {
       requestId,
@@ -525,6 +536,16 @@ async function handlePermissionRequest(
     })
     bounceDock()
   })
+  
+  // Track the in-flight request
+  inFlightPermissions.set(inFlightKey, permissionPromise)
+  
+  // Clean up after resolution
+  permissionPromise.finally(() => {
+    inFlightPermissions.delete(inFlightKey)
+  })
+  
+  return permissionPromise
 }
 
 // Create a new session and return its ID
