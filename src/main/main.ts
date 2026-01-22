@@ -289,6 +289,48 @@ const AVAILABLE_MODELS: ModelInfo[] = [
 // Commands that should include their subcommand for granular permission control
 const SUBCOMMAND_EXECUTABLES = ['git', 'npm', 'yarn', 'pnpm', 'docker', 'kubectl']
 
+// Global allowlist of low-risk, read-only shell commands.
+// These are auto-approved for all sessions and intentionally NOT persisted/shown in the per-session "Always Allowed" UI.
+const GLOBAL_AUTO_APPROVED_SHELL_EXECUTABLES = new Set([
+  // Basic shell inspection
+  'ls',
+  'pwd',
+  'whoami',
+  'id',
+  'date',
+  'uname',
+  'which',
+  'echo',
+  'printf',
+
+  // Read-only file/content inspection
+  'cat',
+  'head',
+  'tail',
+  'wc',
+  'grep',
+  'sort',
+  'uniq',
+  'cut',
+  'tr',
+  'diff',
+
+  // File metadata / disk info
+  'stat',
+  'file',
+  'du',
+  'df',
+
+  // Path helpers
+  'basename',
+  'dirname',
+  'realpath',
+
+  // Hashing (read-only)
+  'shasum',
+  'md5',
+])
+
 // Extract all executables from a shell command
 function extractExecutables(command: string): string[] {
   const executables: string[] = []
@@ -444,8 +486,11 @@ async function handlePermissionRequest(
   if (request.kind === 'shell' && req.fullCommandText) {
     const executables = extractExecutables(req.fullCommandText as string)
     
-    // Filter to only unapproved executables
-    const unapproved = executables.filter(exec => !sessionState?.alwaysAllowed.has(exec))
+    // Filter to only unapproved executables (exclude globally-auto-approved commands)
+    const unapproved = executables.filter(exec =>
+      !GLOBAL_AUTO_APPROVED_SHELL_EXECUTABLES.has(exec) &&
+      !sessionState?.alwaysAllowed.has(exec)
+    )
     
     if (unapproved.length === 0) {
       console.log(`[${ourSessionId}] All executables already approved:`, executables)
@@ -480,7 +525,13 @@ async function handlePermissionRequest(
   // Non-shell permissions
   const executable = getExecutableIdentifier(request)
   
-  // Check if already allowed
+  // Auto-approve global low-risk commands (do not persist/show in UI)
+  if (request.kind === 'shell' && GLOBAL_AUTO_APPROVED_SHELL_EXECUTABLES.has(executable)) {
+    console.log(`[${ourSessionId}] Auto-approved (global allowlist):`, executable)
+    return { kind: 'approved' }
+  }
+
+  // Check if already allowed (per-session "always")
   if (sessionState?.alwaysAllowed.has(executable)) {
     console.log(`[${ourSessionId}] Auto-approved (always allow):`, executable)
     return { kind: 'approved' }
