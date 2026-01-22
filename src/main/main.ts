@@ -1122,7 +1122,20 @@ ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: s
     const { stdout: branchOutput } = await execAsync('git branch --show-current', { cwd: data.cwd })
     const currentBranch = branchOutput.trim()
     const isMainBranch = currentBranch === 'main' || currentBranch === 'master'
-    const targetBranch = currentBranch === 'master' ? 'master' : 'main'
+    
+    // Determine the target main branch by checking which exists
+    let targetBranch = 'main'
+    try {
+      await execAsync('git rev-parse --verify main', { cwd: data.cwd })
+    } catch {
+      // 'main' doesn't exist, try 'master'
+      try {
+        await execAsync('git rev-parse --verify master', { cwd: data.cwd })
+        targetBranch = 'master'
+      } catch {
+        // Neither exists, default to 'main'
+      }
+    }
     
     // Stage the files
     for (const file of data.files) {
@@ -1148,14 +1161,19 @@ ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: s
     
     // If not on main/master, merge to main and push
     if (!isMainBranch && currentBranch) {
+      console.log(`Merging ${currentBranch} to ${targetBranch}...`)
+      
       // Switch to main/master
       await execAsync(`git checkout ${targetBranch}`, { cwd: data.cwd })
+      console.log(`Switched to ${targetBranch}`)
       
       // Merge the feature branch
       await execAsync(`git merge ${currentBranch}`, { cwd: data.cwd })
+      console.log(`Merged ${currentBranch} into ${targetBranch}`)
       
       // Push main/master
       await execAsync('git push', { cwd: data.cwd })
+      console.log(`Pushed ${targetBranch} to origin`)
       
       return { success: true, mergedToMain: true, finalBranch: targetBranch }
     }
