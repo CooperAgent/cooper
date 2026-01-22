@@ -26,6 +26,7 @@ import {
   StopIcon,
   TrashIcon,
   GlobeIcon,
+  RalphIcon,
 } from "./components";
 import {
   Status,
@@ -38,6 +39,7 @@ import {
   MCPServerConfig,
   MCPLocalServerConfig,
   MCPRemoteServerConfig,
+  RalphConfig,
 } from "./types";
 import {
   generateId,
@@ -89,6 +91,12 @@ const App: React.FC = () => {
     url: "",
     tools: "*",
   });
+
+  // Ralph Wiggum loop state
+  const [showRalphSettings, setShowRalphSettings] = useState(false);
+  const [ralphEnabled, setRalphEnabled] = useState(false);
+  const [ralphCompletionPromise, setRalphCompletionPromise] = useState("COMPLETE");
+  const [ralphMaxIterations, setRalphMaxIterations] = useState(20);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -347,6 +355,45 @@ const App: React.FC = () => {
       setTabs((prev) => {
         const tab = prev.find((t) => t.id === sessionId);
 
+        // Check for Ralph loop continuation
+        if (tab?.ralphConfig?.active) {
+          const lastMessage = tab.messages[tab.messages.length - 1];
+          const hasCompletionPromise = lastMessage?.content?.includes(
+            tab.ralphConfig.completionPromise
+          );
+          const maxReached = tab.ralphConfig.currentIteration >= tab.ralphConfig.maxIterations;
+
+          if (!hasCompletionPromise && !maxReached) {
+            // Continue Ralph loop - re-send the same prompt
+            const nextIteration = tab.ralphConfig.currentIteration + 1;
+            console.log(`[Ralph] Iteration ${nextIteration}/${tab.ralphConfig.maxIterations}`);
+            
+            // Schedule the re-send after state update
+            setTimeout(() => {
+              window.electronAPI.copilot.send(sessionId, tab.ralphConfig!.originalPrompt);
+            }, 100);
+
+            // Update iteration count and keep processing
+            return prev.map((t) => {
+              if (t.id !== sessionId) return t;
+              return {
+                ...t,
+                ralphConfig: {
+                  ...t.ralphConfig!,
+                  currentIteration: nextIteration,
+                },
+                // Keep processing state, clear streaming
+                messages: t.messages.map((msg) =>
+                  msg.isStreaming ? { ...msg, isStreaming: false } : msg
+                ),
+              };
+            });
+          } else {
+            // Ralph loop complete - stop it
+            console.log(`[Ralph] Loop complete. Reason: ${hasCompletionPromise ? 'completion promise found' : 'max iterations reached'}`);
+          }
+        }
+
         // If tab needs a title and has messages, trigger title generation
         if (tab?.needsTitle && tab.messages.length > 0) {
           // Build conversation summary for title generation
@@ -396,6 +443,10 @@ const App: React.FC = () => {
             isProcessing: false,
             activeTools: [],
             currentIntent: null,
+            // Deactivate Ralph if it was active
+            ralphConfig: tab.ralphConfig?.active 
+              ? { ...tab.ralphConfig, active: false }
+              : tab.ralphConfig,
             // Mark as unread if this tab is not currently active
             hasUnreadCompletion: tab.id !== activeTabIdRef.current,
             messages: tab.messages
@@ -654,6 +705,17 @@ const App: React.FC = () => {
 
     const tabId = activeTab.id;
 
+    // Set up Ralph config if enabled
+    const ralphConfig: RalphConfig | undefined = ralphEnabled
+      ? {
+          originalPrompt: userMessage.content,
+          completionPromise: ralphCompletionPromise,
+          maxIterations: ralphMaxIterations,
+          currentIteration: 1,
+          active: true,
+        }
+      : undefined;
+
     updateTab(tabId, {
       messages: [
         ...activeTab.messages,
@@ -667,21 +729,34 @@ const App: React.FC = () => {
       ],
       isProcessing: true,
       activeTools: [],
+      ralphConfig,
     });
     setInputValue("");
+    
+    // Reset Ralph UI state after sending
+    if (ralphEnabled) {
+      setRalphEnabled(false);
+      setShowRalphSettings(false);
+    }
 
     try {
       await window.electronAPI.copilot.send(tabId, userMessage.content);
     } catch (error) {
       console.error("Send error:", error);
-      updateTab(tabId, { isProcessing: false });
+      updateTab(tabId, { isProcessing: false, ralphConfig: undefined });
     }
-  }, [inputValue, activeTab, updateTab]);
+  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphCompletionPromise, ralphMaxIterations]);
 
   const handleStop = useCallback(() => {
     if (!activeTab) return;
     window.electronAPI.copilot.abort(activeTab.id);
-    updateTab(activeTab.id, { isProcessing: false });
+    // Also stop Ralph loop if active
+    updateTab(activeTab.id, { 
+      isProcessing: false,
+      ralphConfig: activeTab.ralphConfig 
+        ? { ...activeTab.ralphConfig, active: false }
+        : undefined,
+    });
   }, [activeTab, updateTab]);
 
   const handleKeyPress = useCallback(
@@ -1756,14 +1831,87 @@ const App: React.FC = () => {
 
           {/* Input Area */}
           <div className="shrink-0 p-3 bg-copilot-surface border-t border-copilot-border">
+            {/* Ralph Settings Panel */}
+            {showRalphSettings && !activeTab?.isProcessing && (
+              <div className="mb-2 p-3 bg-copilot-bg rounded-lg border border-copilot-border">
+                <div className={`flex items-center gap-2 ${ralphEnabled ? 'mb-2' : ''}`}>
+                  <RalphIcon size={28} />
+                  <span className="text-xs font-medium text-copilot-text">Ralph Wiggum Loop</span>
+                  <label className="ml-auto flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ralphEnabled}
+                      onChange={(e) => setRalphEnabled(e.target.checked)}
+                      className="rounded border-copilot-border w-3.5 h-3.5"
+                    />
+                    <span className="text-[10px] text-copilot-text-muted">Enable</span>
+                  </label>
+                  <button
+                    onClick={() => setShowRalphSettings(false)}
+                    className="p-1 rounded hover:bg-copilot-surface-hover"
+                  >
+                    <CloseIcon size={10} className="text-copilot-text-muted" />
+                  </button>
+                </div>
+                {ralphEnabled && (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-[10px] text-copilot-text-muted block mb-1">
+                        Completion phrase (agent outputs this when done)
+                      </label>
+                      <input
+                        type="text"
+                        value={ralphCompletionPromise}
+                        onChange={(e) => setRalphCompletionPromise(e.target.value)}
+                        className="w-full bg-copilot-surface border border-copilot-border rounded px-2 py-1 text-xs text-copilot-text font-mono"
+                        placeholder="COMPLETE"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-copilot-text-muted block mb-1">
+                        Max iterations (safety limit)
+                      </label>
+                      <input
+                        type="number"
+                        value={ralphMaxIterations}
+                        onChange={(e) => setRalphMaxIterations(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-20 bg-copilot-surface border border-copilot-border rounded px-2 py-1 text-xs text-copilot-text"
+                        min={1}
+                        max={100}
+                      />
+                    </div>
+                    <p className="text-[10px] text-copilot-text-muted">
+                      Tip: Include "{`<promise>${ralphCompletionPromise}</promise>`}" in your prompt as the completion signal.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            
             <div className="flex items-center bg-copilot-bg rounded-lg border border-copilot-border focus-within:border-copilot-accent transition-colors">
+              {/* Ralph Toggle Button */}
+              {!activeTab?.isProcessing && (
+                <button
+                  onClick={() => setShowRalphSettings(!showRalphSettings)}
+                  className={`shrink-0 p-1.5 pl-2.5 transition-colors ${
+                    ralphEnabled 
+                      ? "text-copilot-warning" 
+                      : showRalphSettings 
+                        ? "text-copilot-accent" 
+                        : "text-copilot-text-muted hover:text-copilot-text"
+                  }`}
+                  title="Ralph Wiggum Loop - Iterative agent mode"
+                >
+                  <RalphIcon size={22} />
+                </button>
+              )}
               <textarea
                 ref={inputRef}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
-                placeholder="Ask Copilot... (Shift+Enter for new line)"
-                className="flex-1 bg-transparent py-2.5 px-4 text-copilot-text placeholder-copilot-text-muted outline-none text-sm resize-none min-h-[40px] max-h-[200px]"
+                placeholder={ralphEnabled ? "Describe task with clear completion criteria..." : "Ask Copilot... (Shift+Enter for new line)"}
+                className="flex-1 bg-transparent py-2.5 px-2 text-copilot-text placeholder-copilot-text-muted outline-none text-sm resize-none min-h-[40px] max-h-[200px]"
                 disabled={status !== "connected" || activeTab?.isProcessing}
                 autoFocus
                 rows={1}
@@ -1779,10 +1927,10 @@ const App: React.FC = () => {
                 <button
                   onClick={handleStop}
                   className="shrink-0 px-4 py-2.5 text-copilot-error hover:brightness-110 text-xs font-medium transition-colors flex items-center gap-1.5"
-                  title="Stop"
+                  title={activeTab?.ralphConfig?.active ? "Stop Ralph Loop" : "Stop"}
                 >
                   <StopIcon size={10} />
-                  Stop
+                  {activeTab?.ralphConfig?.active ? "Stop Loop" : "Stop"}
                 </button>
               ) : (
                 <button
@@ -1794,7 +1942,7 @@ const App: React.FC = () => {
                   }
                   className="shrink-0 px-4 py-2.5 text-copilot-accent hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
                 >
-                  Send
+                  {ralphEnabled ? "Start Loop" : "Send"}
                 </button>
               )}
             </div>
@@ -1808,10 +1956,21 @@ const App: React.FC = () => {
             <div className="flex items-center gap-2">
               {activeTab?.isProcessing ? (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-copilot-warning animate-pulse" />
+                  {activeTab?.ralphConfig?.active ? (
+                    <RalphIcon size={12} className="text-copilot-warning animate-pulse" />
+                  ) : (
+                    <span className="w-2 h-2 rounded-full bg-copilot-warning animate-pulse" />
+                  )}
                   <span className="text-xs font-medium text-copilot-text truncate">
-                    {activeTab?.currentIntent || "Working..."}
+                    {activeTab?.ralphConfig?.active 
+                      ? `Ralph ${activeTab.ralphConfig.currentIteration}/${activeTab.ralphConfig.maxIterations}`
+                      : (activeTab?.currentIntent || "Working...")}
                   </span>
+                  {activeTab?.ralphConfig?.active && activeTab?.currentIntent && (
+                    <span className="text-[10px] text-copilot-text-muted truncate">
+                      — {activeTab.currentIntent}
+                    </span>
+                  )}
                 </>
               ) : (
                 <>

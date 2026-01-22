@@ -6,6 +6,7 @@ export type {
   PendingConfirmation,
   TabState,
   PreviousSession,
+  RalphConfig,
 } from "./session";
 
 export type {

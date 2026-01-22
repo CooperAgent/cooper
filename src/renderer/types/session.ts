@@ -41,6 +41,23 @@ export interface PendingConfirmation {
   [key: string]: unknown;
 }
 
+// Previous session type (from history, not yet opened)
+export interface PreviousSession {
+  sessionId: string;
+  name?: string;
+  modifiedTime: string;
+}
+
+// Ralph Wiggum loop configuration
+// See: https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum
+export interface RalphConfig {
+  originalPrompt: string;
+  completionPromise: string;
+  maxIterations: number;
+  currentIteration: number;
+  active: boolean;
+}
+
 // Tab/Session state
 export interface TabState {
   id: string;
@@ -61,11 +78,5 @@ export interface TabState {
   gitBranchRefresh: number; // Bumps to refresh GitBranchWidget
   isRenaming?: boolean;
   renameDraft?: string;
-}
-
-// Previous session type (from history, not yet opened)
-export interface PreviousSession {
-  sessionId: string;
-  name?: string;
-  modifiedTime: string;
+  ralphConfig?: RalphConfig; // Ralph Wiggum loop configuration
 }

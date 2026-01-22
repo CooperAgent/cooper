@@ -1,4 +1,5 @@
 import React from 'react'
+import ralphImage from '../../assets/ralph-head.png'
 
 export interface IconProps {
   size?: number | string
@@ -129,6 +130,27 @@ export const TrashIcon: React.FC<IconProps> = ({ size = 24, className, strokeWid
   </svg>
 )
 
+export const RepeatIcon: React.FC<IconProps> = ({ size = 24, className, strokeWidth = 2 }) => (
+  <svg width={size} height={size} className={className} {...defaultProps} strokeWidth={strokeWidth}>
+    <path d="M17 1l4 4-4 4" />
+    <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+    <path d="M7 23l-4-4 4-4" />
+    <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+  </svg>
+)
+
+// Ralph Wiggum icon - uses the Ralph Wiggum image
+export const RalphIcon: React.FC<IconProps> = ({ size = 24, className }) => (
+  <img 
+    src={ralphImage} 
+    alt="Ralph" 
+    width={size} 
+    height={size} 
+    className={className}
+    style={{ objectFit: 'contain' }}
+  />
+)
+
 // Icons object for convenient access
 export const Icons = {
   ChevronDown: ChevronDownIcon,
@@ -148,6 +170,8 @@ export const Icons = {
   Stop: StopIcon,
   Globe: GlobeIcon,
   Trash: TrashIcon,
+  Repeat: RepeatIcon,
+  Ralph: RalphIcon,
 }
 
 export default Icons
