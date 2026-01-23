@@ -18,12 +18,14 @@ interface WorktreeSessionsListProps {
   isOpen: boolean
   onClose: () => void
   onOpenSession: (session: WorktreeSession) => void
+  onRemoveSession?: (worktreePath: string) => void
 }
 
 export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
   isOpen,
   onClose,
-  onOpenSession
+  onOpenSession,
+  onRemoveSession
 }) => {
   const [sessions, setSessions] = useState<(WorktreeSession & { diskUsage: string })[]>([])
   const [totalDiskUsage, setTotalDiskUsage] = useState('0 B')
@@ -32,6 +34,7 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
   const [error, setError] = useState<string | null>(null)
   const [actionInProgress, setActionInProgress] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [confirmRemove, setConfirmRemove] = useState<{ sessionId: string; worktreePath: string; hasUncommitted: boolean; hasUnpushed: boolean } | null>(null)
 
   const loadSessions = async () => {
     setIsLoading(true)
@@ -51,6 +54,7 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
     if (isOpen) {
       loadSessions()
       setSuccessMessage(null)
+      setConfirmRemove(null)
     }
   }, [isOpen])
 
@@ -68,59 +72,47 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
     }
   }
 
-  const handleRemove = async (sessionId: string) => {
+  const handleRemove = async (sessionId: string, worktreePath: string) => {
+    setActionInProgress(`remove-${sessionId}`)
+    setError(null)
+    try {
+      // Check for uncommitted/unpushed changes first
+      const status = await window.electronAPI.git.getWorkingStatus(worktreePath)
+      if (status.hasUncommittedChanges || status.hasUnpushedCommits) {
+        setConfirmRemove({ 
+          sessionId, 
+          worktreePath, 
+          hasUncommitted: status.hasUncommittedChanges, 
+          hasUnpushed: status.hasUnpushedCommits 
+        })
+        setActionInProgress(null)
+        return
+      }
+      // No uncommitted changes, proceed with removal
+      await doRemove(sessionId, worktreePath)
+    } catch (err) {
+      setError(String(err))
+      setActionInProgress(null)
+    }
+  }
+
+  const doRemove = async (sessionId: string, worktreePath: string) => {
+    setActionInProgress(`remove-${sessionId}`)
     try {
       const result = await window.electronAPI.worktree.removeSession({ sessionId, force: true })
       if (result.success) {
+        // Close the session tab if open
+        onRemoveSession?.(worktreePath)
         await loadSessions()
+        setSuccessMessage('Worktree removed successfully')
       } else {
         setError(result.error || 'Failed to remove session')
       }
     } catch (err) {
       setError(String(err))
-    }
-  }
-
-  const handleMerge = async (session: WorktreeSession) => {
-    setActionInProgress(`merge-${session.id}`)
-    setError(null)
-    setSuccessMessage(null)
-    try {
-      const result = await window.electronAPI.git.mergeToMain(session.worktreePath, true)
-      if (result.success) {
-        setSuccessMessage(`Merged ${result.mergedBranch} to ${result.targetBranch}`)
-        // Remove the worktree after successful merge
-        await window.electronAPI.worktree.removeSession({ sessionId: session.id, force: true })
-        await loadSessions()
-      } else {
-        setError(result.error || 'Merge failed')
-      }
-    } catch (err) {
-      setError(String(err))
     } finally {
       setActionInProgress(null)
-    }
-  }
-
-  const handleCreatePR = async (session: WorktreeSession) => {
-    setActionInProgress(`pr-${session.id}`)
-    setError(null)
-    setSuccessMessage(null)
-    try {
-      const result = await window.electronAPI.git.createPullRequest(session.worktreePath)
-      if (result.success) {
-        setSuccessMessage(`PR created: ${result.prUrl}`)
-        // Open PR URL in browser
-        if (result.prUrl) {
-          window.open(result.prUrl, '_blank')
-        }
-      } else {
-        setError(result.error || 'Failed to create PR')
-      }
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setActionInProgress(null)
+      setConfirmRemove(null)
     }
   }
 
@@ -210,31 +202,15 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
                   >
                     Open
                   </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleMerge(session)}
-                    disabled={session.status === 'orphaned' || !!actionInProgress}
-                  >
-                    {actionInProgress === `merge-${session.id}` ? 'Merging...' : 'Merge to Main'}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleCreatePR(session)}
-                    disabled={session.status === 'orphaned' || !!actionInProgress}
-                  >
-                    {actionInProgress === `pr-${session.id}` ? 'Creating...' : 'Create PR'}
-                  </Button>
                   <div className="flex-1" />
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => handleRemove(session.id)}
+                    onClick={() => handleRemove(session.id, session.worktreePath)}
                     disabled={!!actionInProgress}
                     className="text-copilot-error hover:text-copilot-error"
                   >
-                    Remove
+                    {actionInProgress === `remove-${session.id}` ? 'Removing...' : 'Remove'}
                   </Button>
                 </div>
               </div>
@@ -255,6 +231,36 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
           </Button>
         </div>
       </Modal.Body>
+
+      {/* Confirmation dialog for uncommitted/unpushed changes */}
+      {confirmRemove && (
+        <Modal isOpen={true} onClose={() => setConfirmRemove(null)} title="Confirm Removal" width="400px">
+          <Modal.Body>
+            <div className="text-sm text-copilot-text mb-4">
+              This worktree has:
+              <ul className="list-disc list-inside mt-2 text-copilot-warning">
+                {confirmRemove.hasUncommitted && <li>Uncommitted changes</li>}
+                {confirmRemove.hasUnpushed && <li>Unpushed commits</li>}
+              </ul>
+            </div>
+            <p className="text-sm text-copilot-text-muted">
+              Are you sure you want to remove it? All changes will be lost.
+            </p>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="ghost" onClick={() => setConfirmRemove(null)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="primary" 
+              onClick={() => doRemove(confirmRemove.sessionId, confirmRemove.worktreePath)}
+              className="bg-copilot-error hover:bg-copilot-error/80"
+            >
+              Remove Anyway
+            </Button>
+          </Modal.Footer>
+        </Modal>
+      )}
     </Modal>
   )
 }

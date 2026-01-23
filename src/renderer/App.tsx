@@ -69,8 +69,7 @@ const App: React.FC = () => {
   const [isCommitting, setIsCommitting] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
   const [commitAction, setCommitAction] = useState<'push' | 'merge' | 'pr'>('push');
-  const [commitMergeToMain, setCommitMergeToMain] = useState(false);
-  const [commitCreatePR, setCommitCreatePR] = useState(false);
+  const [removeWorktreeAfterMerge, setRemoveWorktreeAfterMerge] = useState(false);
 
   // Theme context
   const {
@@ -1033,6 +1032,24 @@ const App: React.FC = () => {
           }
         }
         
+        // If merge was selected and removeWorktreeAfterMerge is checked, remove the worktree and close session
+        const isWorktreePath = activeTab.cwd.includes('.copilot-sessions')
+        if (commitAction === 'merge' && removeWorktreeAfterMerge && isWorktreePath) {
+          // Find the worktree session by path
+          const sessionId = activeTab.cwd.split('/').pop() || ''
+          if (sessionId) {
+            await window.electronAPI.worktree.removeSession({ sessionId, force: true })
+            // Close this tab
+            handleCloseTab(activeTab.id)
+            setShowCommitModal(false)
+            setCommitMessage('')
+            setCommitAction('push')
+            setRemoveWorktreeAfterMerge(false)
+            setIsCommitting(false)
+            return
+          }
+        }
+        
         // Clear the edited files list and refresh git branch widget
         updateTab(activeTab.id, { 
           editedFiles: [],
@@ -1041,6 +1058,7 @@ const App: React.FC = () => {
         setShowCommitModal(false)
         setCommitMessage('')
         setCommitAction('push')
+        setRemoveWorktreeAfterMerge(false)
       } else {
         setCommitError(result.error || "Commit failed");
       }
@@ -2390,16 +2408,14 @@ const App: React.FC = () => {
                       </span>
                     )}
                   </button>
-                  {(activeTab?.editedFiles.length || 0) > 0 && (
-                    <IconButton
-                      icon={<CommitIcon size={12} />}
-                      onClick={handleOpenCommitModal}
-                      variant="accent"
-                      size="sm"
-                      title="Commit and push"
-                      className="mr-1"
-                    />
-                  )}
+                  <IconButton
+                    icon={<CommitIcon size={12} />}
+                    onClick={handleOpenCommitModal}
+                    variant="accent"
+                    size="sm"
+                    title="Commit and push"
+                    className="mr-1"
+                  />
                 </div>
                 {showEditedFiles && activeTab && (
                   <div className="max-h-32 overflow-y-auto">
@@ -2713,12 +2729,31 @@ const App: React.FC = () => {
                     { id: 'merge' as const, label: 'Merge to main' },
                     { id: 'pr' as const, label: 'Create PR' },
                   ]}
-                  onSelect={(id) => setCommitAction(id)}
+                  onSelect={(id) => {
+                    setCommitAction(id)
+                    if (id !== 'merge') setRemoveWorktreeAfterMerge(false)
+                  }}
                   disabled={isCommitting}
                   align="left"
                   minWidth="120px"
                 />
               </div>
+
+              {/* Remove worktree option - only visible when merge is selected and in a worktree */}
+              {commitAction === 'merge' && activeTab?.cwd.includes('.copilot-sessions') && (
+                <div className="mb-4 flex items-center gap-2">
+                  <label className="flex items-center gap-2 text-xs text-copilot-text-muted cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={removeWorktreeAfterMerge}
+                      onChange={(e) => setRemoveWorktreeAfterMerge(e.target.checked)}
+                      className="rounded border-copilot-border bg-copilot-bg accent-copilot-accent"
+                      disabled={isCommitting}
+                    />
+                    Remove worktree after merge
+                  </label>
+                </div>
+              )}
 
               {/* Error message */}
               {commitError && (
@@ -2902,6 +2937,13 @@ const App: React.FC = () => {
         isOpen={showWorktreeList}
         onClose={() => setShowWorktreeList(false)}
         onOpenSession={handleOpenWorktreeSession}
+        onRemoveSession={(worktreePath: string) => {
+          // Close any tab that has this worktree path as cwd
+          const tabToClose = tabs.find(tab => tab.cwd === worktreePath)
+          if (tabToClose) {
+            handleCloseTab(tabToClose.id)
+          }
+        }}
       />
 
       {/* Create Worktree Session Modal */}

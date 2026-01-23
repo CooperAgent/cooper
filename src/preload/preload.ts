@@ -151,6 +151,9 @@ const electronAPI = {
     },
     createPullRequest: (cwd: string, title?: string, draft?: boolean): Promise<{ success: boolean; error?: string; prUrl?: string; branch?: string }> => {
       return ipcRenderer.invoke('git:createPullRequest', { cwd, title, draft })
+    },
+    getWorkingStatus: (cwd: string): Promise<{ success: boolean; hasUncommittedChanges: boolean; hasUnpushedCommits: boolean; error?: string }> => {
+      return ipcRenderer.invoke('git:getWorkingStatus', cwd)
     }
   },
   // Theme management

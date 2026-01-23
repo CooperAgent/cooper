@@ -1372,6 +1372,48 @@ ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: s
   }
 })
 
+// Git operations - check for uncommitted/unpushed changes
+ipcMain.handle('git:getWorkingStatus', async (_event, cwd: string) => {
+  try {
+    // Check for uncommitted changes
+    const { stdout: statusOutput } = await execAsync('git status --porcelain', { cwd })
+    const hasUncommittedChanges = statusOutput.trim().length > 0
+    
+    // Check for unpushed commits
+    let hasUnpushedCommits = false
+    try {
+      const { stdout: branch } = await execAsync('git branch --show-current', { cwd })
+      const branchName = branch.trim()
+      if (branchName) {
+        // Check if branch has an upstream
+        try {
+          const { stdout: unpushed } = await execAsync(`git log origin/${branchName}..${branchName} --oneline`, { cwd })
+          hasUnpushedCommits = unpushed.trim().length > 0
+        } catch {
+          // No upstream branch, check if there are any commits at all
+          try {
+            const { stdout: allCommits } = await execAsync('git log --oneline -1', { cwd })
+            hasUnpushedCommits = allCommits.trim().length > 0
+          } catch {
+            hasUnpushedCommits = false
+          }
+        }
+      }
+    } catch {
+      // Ignore branch errors
+    }
+    
+    return { 
+      success: true, 
+      hasUncommittedChanges, 
+      hasUnpushedCommits 
+    }
+  } catch (error) {
+    console.error('Git status check failed:', error)
+    return { success: false, hasUncommittedChanges: false, hasUnpushedCommits: false, error: String(error) }
+  }
+})
+
 // Git operations - get current branch
 ipcMain.handle('git:getBranch', async (_event, cwd: string) => {
   try {
