@@ -949,17 +949,37 @@ const App: React.FC = () => {
 
     setCommitError(null);
     setIsCommitting(false);
+    setCommitMessage("Checking files...");
+    setIsGeneratingMessage(true);
     setShowCommitModal(true);
 
-    // Start with placeholder while generating
-    setCommitMessage("Generating commit message...");
-    setIsGeneratingMessage(true);
-
     try {
-      // Get diff for edited files
-      const diffResult = await window.electronAPI.git.getDiff(
+      // First, recheck which files actually have changes
+      const changedResult = await window.electronAPI.git.getChangedFiles(
         activeTab.cwd,
         activeTab.editedFiles,
+      );
+      
+      const actualChangedFiles = changedResult.success ? changedResult.files : activeTab.editedFiles;
+      
+      // Update the tab's editedFiles list
+      if (changedResult.success && actualChangedFiles.length !== activeTab.editedFiles.length) {
+        updateTab(activeTab.id, { editedFiles: actualChangedFiles });
+      }
+      
+      // If no files have changes, show error and close
+      if (actualChangedFiles.length === 0) {
+        setCommitMessage("");
+        setCommitError("No files have changes to commit");
+        setIsGeneratingMessage(false);
+        return;
+      }
+
+      // Get diff for actual changed files
+      setCommitMessage("Generating commit message...");
+      const diffResult = await window.electronAPI.git.getDiff(
+        activeTab.cwd,
+        actualChangedFiles,
       );
       if (diffResult.success && diffResult.diff) {
         // Generate AI commit message from diff
@@ -969,7 +989,7 @@ const App: React.FC = () => {
         setCommitMessage(message);
       } else {
         // Fallback to simple message
-        const fileNames = activeTab.editedFiles
+        const fileNames = actualChangedFiles
           .map((f) => f.split("/").pop())
           .join(", ");
         setCommitMessage(`Update ${fileNames}`);

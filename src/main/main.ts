@@ -1226,6 +1226,27 @@ ipcMain.handle('copilot:renameSession', async (_event, data: { sessionId: string
   return { success: true }
 })
 
+// Git operations - get actual changed files
+ipcMain.handle('git:getChangedFiles', async (_event, data: { cwd: string; files: string[] }) => {
+  try {
+    // Check which of the provided files actually have changes
+    const changedFiles: string[] = []
+    
+    for (const file of data.files) {
+      // Check if file has staged or unstaged changes
+      const { stdout: status } = await execAsync(`git status --porcelain -- "${file}"`, { cwd: data.cwd })
+      if (status.trim()) {
+        changedFiles.push(file)
+      }
+    }
+    
+    return { success: true, files: changedFiles }
+  } catch (error) {
+    console.error('Git getChangedFiles failed:', error)
+    return { success: false, files: [], error: String(error) }
+  }
+})
+
 // Git operations - get diff for files
 ipcMain.handle('git:getDiff', async (_event, data: { cwd: string; files: string[] }) => {
   try {
