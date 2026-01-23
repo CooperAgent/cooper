@@ -1892,7 +1892,7 @@ const App: React.FC = () => {
               {!activeTab?.isProcessing && (
                 <button
                   onClick={() => setShowRalphSettings(!showRalphSettings)}
-                  className={`shrink-0 p-1.5 pl-2.5 transition-colors ${
+                  className={`shrink-0 p-1.5 pl-2.5 pr-0 transition-colors ${
                     ralphEnabled 
                       ? "text-copilot-warning" 
                       : showRalphSettings 
@@ -1910,7 +1910,7 @@ const App: React.FC = () => {
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
                 placeholder={ralphEnabled ? "Describe task with clear completion criteria..." : "Ask Copilot... (Shift+Enter for new line)"}
-                className="flex-1 bg-transparent py-2.5 px-2 text-copilot-text placeholder-copilot-text-muted outline-none text-sm resize-none min-h-[40px] max-h-[200px]"
+                className={`flex-1 bg-transparent py-2.5 ${activeTab?.isProcessing ? 'pl-3' : 'pl-1.5'} pr-2 text-copilot-text placeholder-copilot-text-muted outline-none text-sm resize-none min-h-[40px] max-h-[200px]`}
                 disabled={status !== "connected" || activeTab?.isProcessing}
                 autoFocus
                 rows={1}
