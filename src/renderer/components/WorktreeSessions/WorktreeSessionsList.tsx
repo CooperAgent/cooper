@@ -211,7 +211,7 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
                     Open
                   </Button>
                   <Button
-                    variant="primary"
+                    variant="secondary"
                     size="sm"
                     onClick={() => handleMerge(session)}
                     disabled={session.status === 'orphaned' || !!actionInProgress}
