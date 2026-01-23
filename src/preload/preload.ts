@@ -128,11 +128,14 @@ const electronAPI = {
 
   // Git operations
   git: {
+    getChangedFiles: (cwd: string, files: string[]): Promise<{ success: boolean; files: string[]; error?: string }> => {
+      return ipcRenderer.invoke('git:getChangedFiles', { cwd, files })
+    },
     getDiff: (cwd: string, files: string[]): Promise<{ diff: string; success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:getDiff', { cwd, files })
     },
-    commitAndPush: (cwd: string, files: string[], message: string): Promise<{ success: boolean; error?: string; mergedToMain?: boolean; finalBranch?: string }> => {
-      return ipcRenderer.invoke('git:commitAndPush', { cwd, files, message })
+    commitAndPush: (cwd: string, files: string[], message: string, mergeToMain?: boolean): Promise<{ success: boolean; error?: string; mergedToMain?: boolean; finalBranch?: string }> => {
+      return ipcRenderer.invoke('git:commitAndPush', { cwd, files, message, mergeToMain })
     },
     generateCommitMessage: (diff: string): Promise<string> => {
       return ipcRenderer.invoke('git:generateCommitMessage', { diff })
@@ -142,6 +145,12 @@ const electronAPI = {
     },
     checkoutBranch: (cwd: string, branchName: string): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:checkoutBranch', { cwd, branchName })
+    },
+    mergeToMain: (cwd: string, deleteBranch?: boolean): Promise<{ success: boolean; error?: string; mergedBranch?: string; targetBranch?: string }> => {
+      return ipcRenderer.invoke('git:mergeToMain', { cwd, deleteBranch })
+    },
+    createPullRequest: (cwd: string, title?: string, draft?: boolean): Promise<{ success: boolean; error?: string; prUrl?: string; branch?: string }> => {
+      return ipcRenderer.invoke('git:createPullRequest', { cwd, title, draft })
     }
   },
   // Theme management
@@ -193,11 +202,10 @@ const electronAPI = {
     checkGitVersion: (): Promise<{ supported: boolean; version: string }> => {
       return ipcRenderer.invoke('worktree:checkGitVersion')
     },
-    createSession: (data: { repoPath: string; branch: string; skipDeps?: boolean }): Promise<{
+    createSession: (data: { repoPath: string; branch: string }): Promise<{
       success: boolean
       session?: WorktreeSession
       error?: string
-      warning?: string
     }> => {
       return ipcRenderer.invoke('worktree:createSession', data)
     },
@@ -285,8 +293,6 @@ interface WorktreeSession {
 interface WorktreeConfig {
   directory: string
   pruneAfterDays: number
-  autoInstallDeps: boolean
-  preferCoW: boolean
   warnDiskThresholdMB: number
 }
 

@@ -30,6 +30,8 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
   const [isLoading, setIsLoading] = useState(false)
   const [isPruning, setIsPruning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null)
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
   const loadSessions = async () => {
     setIsLoading(true)
@@ -48,6 +50,7 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
   useEffect(() => {
     if (isOpen) {
       loadSessions()
+      setSuccessMessage(null)
     }
   }, [isOpen])
 
@@ -78,6 +81,49 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
     }
   }
 
+  const handleMerge = async (session: WorktreeSession) => {
+    setActionInProgress(`merge-${session.id}`)
+    setError(null)
+    setSuccessMessage(null)
+    try {
+      const result = await window.electronAPI.git.mergeToMain(session.worktreePath, true)
+      if (result.success) {
+        setSuccessMessage(`Merged ${result.mergedBranch} to ${result.targetBranch}`)
+        // Remove the worktree after successful merge
+        await window.electronAPI.worktree.removeSession({ sessionId: session.id, force: true })
+        await loadSessions()
+      } else {
+        setError(result.error || 'Merge failed')
+      }
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setActionInProgress(null)
+    }
+  }
+
+  const handleCreatePR = async (session: WorktreeSession) => {
+    setActionInProgress(`pr-${session.id}`)
+    setError(null)
+    setSuccessMessage(null)
+    try {
+      const result = await window.electronAPI.git.createPullRequest(session.worktreePath)
+      if (result.success) {
+        setSuccessMessage(`PR created: ${result.prUrl}`)
+        // Open PR URL in browser
+        if (result.prUrl) {
+          window.open(result.prUrl, '_blank')
+        }
+      } else {
+        setError(result.error || 'Failed to create PR')
+      }
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setActionInProgress(null)
+    }
+  }
+
   const formatDate = (isoDate: string) => {
     const date = new Date(isoDate)
     const now = new Date()
@@ -102,14 +148,28 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Worktree Sessions" width="650px">
+    <Modal isOpen={isOpen} onClose={onClose} title="Worktree Sessions" width="750px">
       <Modal.Body className="max-h-[400px] overflow-y-auto">
+        {successMessage && (
+          <div className="text-copilot-success text-sm mb-3 p-2 bg-copilot-success/10 rounded">
+            {successMessage}
+          </div>
+        )}
+        {error && (
+          <div className="text-copilot-error text-sm mb-3 p-2 bg-copilot-error/10 rounded">
+            {error}
+            <button 
+              onClick={() => setError(null)} 
+              className="ml-2 text-copilot-text-muted hover:text-copilot-text"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Spinner />
           </div>
-        ) : error ? (
-          <div className="text-copilot-error text-sm py-4">{error}</div>
         ) : sessions.length === 0 ? (
           <div className="text-copilot-text-muted text-sm py-4 text-center">
             No worktree sessions found.<br />
@@ -120,38 +180,58 @@ export const WorktreeSessionsList: React.FC<WorktreeSessionsListProps> = ({
             {sessions.map(session => (
               <div
                 key={session.id}
-                className="flex items-center justify-between p-3 bg-copilot-bg rounded border border-copilot-border hover:border-copilot-border-hover transition-colors"
+                className="p-3 bg-copilot-bg rounded border border-copilot-border hover:border-copilot-border-hover transition-colors"
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-copilot-accent truncate">
-                      {session.branch}
-                    </span>
-                    <span className={`text-xs ${getStatusColor(session.status)}`}>
-                      {session.status}
-                    </span>
-                  </div>
-                  <div className="text-xs text-copilot-text-muted mt-1 truncate">
-                    {session.repoPath}
-                  </div>
-                  <div className="flex gap-4 text-xs text-copilot-text-muted mt-1">
-                    <span>Created: {formatDate(session.createdAt)}</span>
-                    <span>{session.diskUsage}</span>
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm text-copilot-accent truncate">
+                        {session.branch}
+                      </span>
+                      <span className={`text-xs ${getStatusColor(session.status)}`}>
+                        {session.status}
+                      </span>
+                    </div>
+                    <div className="text-xs text-copilot-text-muted mt-1 truncate">
+                      {session.repoPath}
+                    </div>
+                    <div className="flex gap-4 text-xs text-copilot-text-muted mt-1">
+                      <span>Created: {formatDate(session.createdAt)}</span>
+                      <span>{session.diskUsage}</span>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 ml-4">
+                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-copilot-border">
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => onOpenSession(session)}
-                    disabled={session.status === 'orphaned'}
+                    disabled={session.status === 'orphaned' || !!actionInProgress}
                   >
                     Open
                   </Button>
                   <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => handleMerge(session)}
+                    disabled={session.status === 'orphaned' || !!actionInProgress}
+                  >
+                    {actionInProgress === `merge-${session.id}` ? 'Merging...' : 'Merge to Main'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleCreatePR(session)}
+                    disabled={session.status === 'orphaned' || !!actionInProgress}
+                  >
+                    {actionInProgress === `pr-${session.id}` ? 'Creating...' : 'Create PR'}
+                  </Button>
+                  <div className="flex-1" />
+                  <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => handleRemove(session.id)}
+                    disabled={!!actionInProgress}
                     className="text-copilot-error hover:text-copilot-error"
                   >
                     Remove

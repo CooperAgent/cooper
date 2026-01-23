@@ -17,10 +17,8 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
   onSessionCreated
 }) => {
   const [branch, setBranch] = useState('')
-  const [skipDeps, setSkipDeps] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [warning, setWarning] = useState<string | null>(null)
   const [gitSupported, setGitSupported] = useState<boolean | null>(null)
   const [gitVersion, setGitVersion] = useState<string>('')
 
@@ -28,7 +26,6 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
     if (isOpen) {
       setBranch('')
       setError(null)
-      setWarning(null)
       checkGitVersion()
     }
   }, [isOpen])
@@ -52,19 +49,14 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
 
     setIsCreating(true)
     setError(null)
-    setWarning(null)
 
     try {
       const result = await window.electronAPI.worktree.createSession({
         repoPath,
-        branch: branch.trim(),
-        skipDeps
+        branch: branch.trim()
       })
 
       if (result.success && result.session) {
-        if (result.warning) {
-          setWarning(result.warning)
-        }
         onSessionCreated(result.session.worktreePath, result.session.branch)
         onClose()
       } else {
@@ -120,31 +112,9 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
               </p>
             </div>
 
-            <div className="mb-4">
-              <label className="flex items-center gap-2 text-sm text-copilot-text cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={skipDeps}
-                  onChange={(e) => setSkipDeps(e.target.checked)}
-                  className="rounded border-copilot-border"
-                  disabled={isCreating}
-                />
-                Skip dependency installation
-              </label>
-              <p className="text-xs text-copilot-text-muted mt-1 ml-5">
-                Faster but you'll need to run npm/yarn/pnpm install manually.
-              </p>
-            </div>
-
             {error && (
               <div className="text-copilot-error text-sm mb-4 p-2 bg-copilot-error-muted rounded">
                 {error}
-              </div>
-            )}
-
-            {warning && (
-              <div className="text-copilot-warning text-sm mb-4 p-2 bg-copilot-warning-muted rounded">
-                {warning}
               </div>
             )}
           </>

@@ -9,11 +9,13 @@ export const GitBranchWidget: React.FC<GitBranchWidgetProps> = ({ cwd, refreshKe
   const [branch, setBranch] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isWorktree, setIsWorktree] = useState(false)
 
   useEffect(() => {
     if (!cwd) {
       setBranch(null)
       setError(null)
+      setIsWorktree(false)
       return
     }
 
@@ -31,10 +33,20 @@ export const GitBranchWidget: React.FC<GitBranchWidgetProps> = ({ cwd, refreshKe
             setError('Not a git repository')
           }
         }
+        
+        // Check if this is a worktree session
+        const worktreeSession = await window.electronAPI.worktree.findSession({ 
+          repoPath: cwd, 
+          branch: result.branch || '' 
+        })
+        // Also check if cwd itself is a worktree path
+        const isWorktreePath = cwd.includes('.copilot-sessions')
+        setIsWorktree(!!worktreeSession || isWorktreePath)
       } catch (err) {
         console.error('Failed to get git branch:', err)
         setError('Failed to get branch')
         setBranch(null)
+        setIsWorktree(false)
       } finally {
         setIsLoading(false)
       }
@@ -71,6 +83,14 @@ export const GitBranchWidget: React.FC<GitBranchWidgetProps> = ({ cwd, refreshKe
         <path d="M18 9a9 9 0 01-9 9" />
       </svg>
       <span className="text-copilot-text font-mono truncate" title={branch}>{branch}</span>
+      {isWorktree && (
+        <span 
+          className="px-1.5 py-0.5 bg-copilot-accent/20 text-copilot-accent rounded text-[10px] font-medium shrink-0"
+          title="This session is running in an isolated worktree"
+        >
+          worktree
+        </span>
+      )}
     </div>
   )
 }

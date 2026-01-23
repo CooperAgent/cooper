@@ -34,16 +34,12 @@ interface SessionRegistry {
 interface WorktreeConfig {
   directory: string             // Where to create worktrees
   pruneAfterDays: number        // Auto-prune sessions older than this
-  autoInstallDeps: boolean      // Automatically install dependencies
-  preferCoW: boolean            // Prefer copy-on-write for node_modules
   warnDiskThresholdMB: number   // Warn if disk space below this
 }
 
 const DEFAULT_CONFIG: WorktreeConfig = {
   directory: join(app.getPath('home'), '.copilot-sessions'),
   pruneAfterDays: 30,
-  autoInstallDeps: true,
-  preferCoW: true,
   warnDiskThresholdMB: 1024
 }
 
@@ -209,102 +205,6 @@ async function isBranchInWorktree(repoPath: string, branch: string): Promise<str
   return existing ? existing.path : null
 }
 
-// Detect package manager from lockfile
-function detectPackageManager(worktreePath: string): 'npm' | 'yarn' | 'pnpm' | null {
-  if (existsSync(join(worktreePath, 'pnpm-lock.yaml'))) return 'pnpm'
-  if (existsSync(join(worktreePath, 'yarn.lock'))) return 'yarn'
-  if (existsSync(join(worktreePath, 'package-lock.json'))) return 'npm'
-  if (existsSync(join(worktreePath, 'package.json'))) return 'npm'
-  return null
-}
-
-// Check if filesystem supports copy-on-write
-async function supportsCoW(): Promise<boolean> {
-  if (process.platform === 'darwin') {
-    try {
-      const { stdout } = await execAsync('diskutil info / | grep "File System"')
-      return stdout.includes('APFS')
-    } catch {
-      return false
-    }
-  }
-  // Linux: check for Btrfs or XFS
-  if (process.platform === 'linux') {
-    try {
-      const { stdout } = await execAsync('stat -f -c %T /')
-      return stdout.includes('btrfs') || stdout.includes('xfs')
-    } catch {
-      return false
-    }
-  }
-  return false
-}
-
-// Install dependencies in worktree
-async function installDependencies(
-  worktreePath: string, 
-  repoPath: string,
-  config: WorktreeConfig
-): Promise<{ success: boolean; method: string; error?: string }> {
-  const packageManager = detectPackageManager(worktreePath)
-  if (!packageManager) {
-    return { success: true, method: 'none' }
-  }
-  
-  const repoNodeModules = join(repoPath, 'node_modules')
-  const worktreeNodeModules = join(worktreePath, 'node_modules')
-  
-  // Try CoW copy first if available and preferred
-  if (config.preferCoW && existsSync(repoNodeModules)) {
-    const canCoW = await supportsCoW()
-    if (canCoW) {
-      // Check if lockfiles match
-      const lockFile = packageManager === 'pnpm' ? 'pnpm-lock.yaml' 
-        : packageManager === 'yarn' ? 'yarn.lock' 
-        : 'package-lock.json'
-      
-      const repoLock = join(repoPath, lockFile)
-      const worktreeLock = join(worktreePath, lockFile)
-      
-      let locksMatch = false
-      try {
-        if (existsSync(repoLock) && existsSync(worktreeLock)) {
-          const repoContent = readFileSync(repoLock, 'utf-8')
-          const worktreeContent = readFileSync(worktreeLock, 'utf-8')
-          locksMatch = repoContent === worktreeContent
-        }
-      } catch {
-        // Ignore comparison errors
-      }
-      
-      if (locksMatch) {
-        try {
-          if (process.platform === 'darwin') {
-            await execAsync(`cp -c -r "${repoNodeModules}" "${worktreeNodeModules}"`)
-          } else {
-            await execAsync(`cp --reflink=auto -r "${repoNodeModules}" "${worktreeNodeModules}"`)
-          }
-          return { success: true, method: 'cow' }
-        } catch (error) {
-          console.warn('CoW copy failed, falling back to install:', error)
-        }
-      }
-    }
-  }
-  
-  // Fall back to package manager install
-  try {
-    const installCmd = packageManager === 'pnpm' ? 'pnpm install'
-      : packageManager === 'yarn' ? 'yarn install'
-      : 'npm install'
-    
-    await execAsync(installCmd, { cwd: worktreePath })
-    return { success: true, method: 'install' }
-  } catch (error) {
-    return { success: false, method: 'install', error: String(error) }
-  }
-}
-
 // Get disk usage for a directory
 function getDiskUsage(path: string): number {
   if (!existsSync(path)) return 0
@@ -348,13 +248,11 @@ function formatBytes(bytes: number): string {
  */
 export async function createWorktreeSession(
   repoPath: string,
-  branch: string,
-  options?: { skipDeps?: boolean }
+  branch: string
 ): Promise<{ 
   success: boolean
   session?: WorktreeSession
   error?: string
-  warning?: string
 }> {
   const config = loadConfig()
   
@@ -413,15 +311,6 @@ export async function createWorktreeSession(
     return { success: false, error: `Failed to create worktree: ${error}` }
   }
   
-  // Install dependencies if needed
-  let warning: string | undefined
-  if (config.autoInstallDeps && !options?.skipDeps) {
-    const depResult = await installDependencies(worktreePath, repoPath, config)
-    if (!depResult.success) {
-      warning = `Worktree created but dependency install failed: ${depResult.error}`
-    }
-  }
-  
   // Create session record
   const session: WorktreeSession = {
     id: sessionId,
@@ -440,7 +329,7 @@ export async function createWorktreeSession(
   registry.sessions.push(session)
   saveRegistry(registry)
   
-  return { success: true, session, warning }
+  return { success: true, session }
 }
 
 /**

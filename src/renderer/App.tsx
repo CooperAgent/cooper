@@ -27,6 +27,8 @@ import {
   TrashIcon,
   GlobeIcon,
   RalphIcon,
+  WorktreeSessionsList,
+  CreateWorktreeSession,
 } from "./components";
 import {
   Status,
@@ -66,6 +68,9 @@ const App: React.FC = () => {
   const [commitMessage, setCommitMessage] = useState("");
   const [isCommitting, setIsCommitting] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
+  const [commitAction, setCommitAction] = useState<'push' | 'merge' | 'pr'>('push');
+  const [commitMergeToMain, setCommitMergeToMain] = useState(false);
+  const [commitCreatePR, setCommitCreatePR] = useState(false);
 
   // Theme context
   const {
@@ -98,6 +103,11 @@ const App: React.FC = () => {
   const [showRalphSettings, setShowRalphSettings] = useState(false);
   const [ralphEnabled, setRalphEnabled] = useState(false);
   const [ralphMaxIterations, setRalphMaxIterations] = useState(20);
+
+  // Worktree session state
+  const [showWorktreeList, setShowWorktreeList] = useState(false);
+  const [showCreateWorktree, setShowCreateWorktree] = useState(false);
+  const [worktreeRepoPath, setWorktreeRepoPath] = useState("");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -939,17 +949,37 @@ const App: React.FC = () => {
 
     setCommitError(null);
     setIsCommitting(false);
+    setCommitMessage("Checking files...");
+    setIsGeneratingMessage(true);
     setShowCommitModal(true);
 
-    // Start with placeholder while generating
-    setCommitMessage("Generating commit message...");
-    setIsGeneratingMessage(true);
-
     try {
-      // Get diff for edited files
-      const diffResult = await window.electronAPI.git.getDiff(
+      // First, recheck which files actually have changes
+      const changedResult = await window.electronAPI.git.getChangedFiles(
         activeTab.cwd,
         activeTab.editedFiles,
+      );
+      
+      const actualChangedFiles = changedResult.success ? changedResult.files : activeTab.editedFiles;
+      
+      // Update the tab's editedFiles list
+      if (changedResult.success && actualChangedFiles.length !== activeTab.editedFiles.length) {
+        updateTab(activeTab.id, { editedFiles: actualChangedFiles });
+      }
+      
+      // If no files have changes, show error and close
+      if (actualChangedFiles.length === 0) {
+        setCommitMessage("");
+        setCommitError("No files have changes to commit");
+        setIsGeneratingMessage(false);
+        return;
+      }
+
+      // Get diff for actual changed files
+      setCommitMessage("Generating commit message...");
+      const diffResult = await window.electronAPI.git.getDiff(
+        activeTab.cwd,
+        actualChangedFiles,
       );
       if (diffResult.success && diffResult.diff) {
         // Generate AI commit message from diff
@@ -959,7 +989,7 @@ const App: React.FC = () => {
         setCommitMessage(message);
       } else {
         // Fallback to simple message
-        const fileNames = activeTab.editedFiles
+        const fileNames = actualChangedFiles
           .map((f) => f.split("/").pop())
           .join(", ");
         setCommitMessage(`Update ${fileNames}`);
@@ -982,13 +1012,27 @@ const App: React.FC = () => {
     setCommitError(null);
 
     try {
+      // First commit and push
       const result = await window.electronAPI.git.commitAndPush(
         activeTab.cwd,
         activeTab.editedFiles,
         commitMessage.trim(),
+        commitAction === 'merge',
       );
 
       if (result.success) {
+        // If creating PR, do that after commit
+        if (commitAction === 'pr') {
+          const prResult = await window.electronAPI.git.createPullRequest(activeTab.cwd, commitMessage.split('\n')[0]);
+          if (prResult.success && prResult.prUrl) {
+            window.open(prResult.prUrl, '_blank');
+          } else if (!prResult.success) {
+            setCommitError(prResult.error || 'Failed to create PR');
+            setIsCommitting(false);
+            return;
+          }
+        }
+        
         // Clear the edited files list and refresh git branch widget
         updateTab(activeTab.id, { 
           editedFiles: [],
@@ -996,6 +1040,7 @@ const App: React.FC = () => {
         })
         setShowCommitModal(false)
         setCommitMessage('')
+        setCommitAction('push')
       } else {
         setCommitError(result.error || "Commit failed");
       }
@@ -1051,6 +1096,69 @@ const App: React.FC = () => {
       console.error("Failed to create new tab:", error);
       setStatus("connected");
     }
+  };
+
+  // Handle starting a new worktree session
+  const handleNewWorktreeSession = async () => {
+    try {
+      const folderResult = await window.electronAPI.copilot.pickFolder();
+      if (folderResult.canceled || !folderResult.path) {
+        return;
+      }
+      setWorktreeRepoPath(folderResult.path);
+      setShowCreateWorktree(true);
+    } catch (error) {
+      console.error("Failed to pick folder for worktree:", error);
+    }
+  };
+
+  // Handle when worktree session is created
+  const handleWorktreeSessionCreated = async (worktreePath: string, branch: string) => {
+    try {
+      // Check trust for the worktree directory
+      const trustResult = await window.electronAPI.copilot.checkDirectoryTrust(worktreePath);
+      if (!trustResult.trusted) {
+        // User declined trust - remove the worktree we just created
+        const sessionId = worktreePath.split('/').pop() || '';
+        await window.electronAPI.worktree.removeSession({ sessionId, force: true });
+        return;
+      }
+
+      setStatus("connecting");
+      const result = await window.electronAPI.copilot.createSession({
+        cwd: worktreePath,
+      });
+      const newTab: TabState = {
+        id: result.sessionId,
+        name: `${branch} (worktree)`,
+        messages: [],
+        model: result.model,
+        cwd: result.cwd,
+        isProcessing: false,
+        activeTools: [],
+        hasUnreadCompletion: false,
+        pendingConfirmations: [],
+        needsTitle: false, // Already has a good name
+        alwaysAllowed: [],
+        editedFiles: [],
+        currentIntent: null,
+        autoBranchingEnabled: false, // Already on the right branch
+        autoBranchingDone: true,
+        gitBranchRefresh: 0,
+      };
+      setTabs((prev) => [...prev, newTab]);
+      setActiveTabId(result.sessionId);
+      setStatus("connected");
+    } catch (error) {
+      console.error("Failed to create worktree session tab:", error);
+      setStatus("connected");
+    }
+  };
+
+  // Handle opening an existing worktree session
+  const handleOpenWorktreeSession = async (session: { worktreePath: string; branch: string }) => {
+    setShowWorktreeList(false);
+    await handleWorktreeSessionCreated(session.worktreePath, session.branch);
   };
 
   const handleCloseTab = async (tabId: string, e?: React.MouseEvent) => {
@@ -1382,6 +1490,26 @@ const App: React.FC = () => {
             <PlusIcon size={12} />
             New Session
           </button>
+          
+          {/* Worktree Session Buttons */}
+          <div className="flex border-b border-copilot-border">
+            <button
+              onClick={() => handleNewWorktreeSession()}
+              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[10px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+              title="Create isolated worktree session"
+            >
+              <PlusIcon size={10} />
+              Worktree
+            </button>
+            <button
+              onClick={() => setShowWorktreeList(true)}
+              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[10px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors border-l border-copilot-border"
+              title="View all worktree sessions"
+            >
+              <FolderIcon size={10} />
+              List
+            </button>
+          </div>
 
           {/* Open Tabs */}
           <div className="flex-1 overflow-y-auto">
@@ -2566,6 +2694,23 @@ const App: React.FC = () => {
                 )}
               </div>
 
+              {/* Options */}
+              <div className="mb-4 flex items-center gap-2">
+                <span className="text-xs text-copilot-text-muted">After push:</span>
+                <Dropdown
+                  value={commitAction}
+                  options={[
+                    { id: 'push' as const, label: 'Nothing' },
+                    { id: 'merge' as const, label: 'Merge to main' },
+                    { id: 'pr' as const, label: 'Create PR' },
+                  ]}
+                  onSelect={(id) => setCommitAction(id)}
+                  disabled={isCommitting}
+                  align="left"
+                  minWidth="120px"
+                />
+              </div>
+
               {/* Error message */}
               {commitError && (
                 <div className="mb-3 px-3 py-2 bg-copilot-error-muted border border-copilot-error rounded text-xs text-copilot-error">
@@ -2593,7 +2738,13 @@ const App: React.FC = () => {
                     !isCommitting ? <CommitIcon size={12} /> : undefined
                   }
                 >
-                  {isCommitting ? "Pushing..." : "Commit & Push"}
+                  {isCommitting 
+                    ? "Pushing..." 
+                    : commitAction === 'pr' 
+                      ? "Commit & Create PR" 
+                      : commitAction === 'merge' 
+                        ? "Commit & Merge" 
+                        : "Commit & Push"}
                 </Button>
               </Modal.Footer>
             </>
@@ -2736,6 +2887,21 @@ const App: React.FC = () => {
           </Modal.Footer>
         </Modal.Body>
       </Modal>
+
+      {/* Worktree Sessions List Modal */}
+      <WorktreeSessionsList
+        isOpen={showWorktreeList}
+        onClose={() => setShowWorktreeList(false)}
+        onOpenSession={handleOpenWorktreeSession}
+      />
+
+      {/* Create Worktree Session Modal */}
+      <CreateWorktreeSession
+        isOpen={showCreateWorktree}
+        onClose={() => setShowCreateWorktree(false)}
+        repoPath={worktreeRepoPath}
+        onSessionCreated={handleWorktreeSessionCreated}
+      />
     </div>
   );
 };

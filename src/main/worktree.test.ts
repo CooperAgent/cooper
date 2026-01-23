@@ -56,8 +56,6 @@ describe('worktree module', () => {
       const config = loadConfig()
       
       expect(config.pruneAfterDays).toBe(30)
-      expect(config.autoInstallDeps).toBe(true)
-      expect(config.preferCoW).toBe(true)
       expect(config.warnDiskThresholdMB).toBe(1024)
     })
 
@@ -65,8 +63,7 @@ describe('worktree module', () => {
       vi.mocked(existsSync).mockReturnValue(true)
       vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
         sessions: {
-          pruneAfterDays: 7,
-          autoInstallDeps: false
+          pruneAfterDays: 7
         }
       }))
 
@@ -74,8 +71,7 @@ describe('worktree module', () => {
       const config = loadConfig()
       
       expect(config.pruneAfterDays).toBe(7)
-      expect(config.autoInstallDeps).toBe(false)
-      expect(config.preferCoW).toBe(true) // Default preserved
+      expect(config.warnDiskThresholdMB).toBe(1024) // Default preserved
     })
   })
 

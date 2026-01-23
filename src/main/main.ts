@@ -384,6 +384,7 @@ const AVAILABLE_MODELS: ModelInfo[] = [
 const GLOBAL_AUTO_APPROVED_SHELL_EXECUTABLES = new Set([
   // Basic shell inspection
   'ls',
+  'cd',
   'pwd',
   'whoami',
   'id',
@@ -1225,6 +1226,27 @@ ipcMain.handle('copilot:renameSession', async (_event, data: { sessionId: string
   return { success: true }
 })
 
+// Git operations - get actual changed files
+ipcMain.handle('git:getChangedFiles', async (_event, data: { cwd: string; files: string[] }) => {
+  try {
+    // Check which of the provided files actually have changes
+    const changedFiles: string[] = []
+    
+    for (const file of data.files) {
+      // Check if file has staged or unstaged changes
+      const { stdout: status } = await execAsync(`git status --porcelain -- "${file}"`, { cwd: data.cwd })
+      if (status.trim()) {
+        changedFiles.push(file)
+      }
+    }
+    
+    return { success: true, files: changedFiles }
+  } catch (error) {
+    console.error('Git getChangedFiles failed:', error)
+    return { success: false, files: [], error: String(error) }
+  }
+})
+
 // Git operations - get diff for files
 ipcMain.handle('git:getDiff', async (_event, data: { cwd: string; files: string[] }) => {
   try {
@@ -1246,7 +1268,7 @@ ipcMain.handle('git:getDiff', async (_event, data: { cwd: string; files: string[
 })
 
 // Git operations - commit and push
-ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: string[]; message: string }) => {
+ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: string[]; message: string; mergeToMain?: boolean }) => {
   try {
     // Get current branch name
     const { stdout: branchOutput } = await execAsync('git branch --show-current', { cwd: data.cwd })
@@ -1289,13 +1311,20 @@ ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: s
       }
     }
     
-    // If not on main/master, merge to main and push
-    if (!isMainBranch && currentBranch) {
+    // If mergeToMain is requested and not already on main/master
+    if (data.mergeToMain && !isMainBranch && currentBranch) {
       console.log(`Merging ${currentBranch} to ${targetBranch}...`)
       
       // Switch to main/master
       await execAsync(`git checkout ${targetBranch}`, { cwd: data.cwd })
       console.log(`Switched to ${targetBranch}`)
+      
+      // Pull latest
+      try {
+        await execAsync('git pull', { cwd: data.cwd })
+      } catch {
+        // Ignore pull errors
+      }
       
       // Merge the feature branch
       await execAsync(`git merge ${currentBranch}`, { cwd: data.cwd })
@@ -1342,6 +1371,156 @@ ipcMain.handle('git:checkoutBranch', async (_event, data: { cwd: string; branchN
     return { success: true }
   } catch (error) {
     console.error('Git checkout branch failed:', error)
+    return { success: false, error: String(error) }
+  }
+})
+
+// Git operations - merge worktree branch to main/master
+ipcMain.handle('git:mergeToMain', async (_event, data: { cwd: string; deleteBranch?: boolean }) => {
+  try {
+    // Get current branch name
+    const { stdout: branchOutput } = await execAsync('git branch --show-current', { cwd: data.cwd })
+    const currentBranch = branchOutput.trim()
+    
+    if (!currentBranch) {
+      return { success: false, error: 'Not on a branch (detached HEAD)' }
+    }
+    
+    const isMainBranch = currentBranch === 'main' || currentBranch === 'master'
+    if (isMainBranch) {
+      return { success: false, error: 'Already on main/master branch' }
+    }
+    
+    // Determine the target main branch
+    let targetBranch = 'main'
+    try {
+      await execAsync('git rev-parse --verify main', { cwd: data.cwd })
+    } catch {
+      try {
+        await execAsync('git rev-parse --verify master', { cwd: data.cwd })
+        targetBranch = 'master'
+      } catch {
+        return { success: false, error: 'Neither main nor master branch exists' }
+      }
+    }
+    
+    // Check for uncommitted changes
+    const { stdout: statusOutput } = await execAsync('git status --porcelain', { cwd: data.cwd })
+    if (statusOutput.trim()) {
+      return { success: false, error: 'Uncommitted changes exist. Please commit or stash them first.' }
+    }
+    
+    // Push current branch first
+    try {
+      await execAsync('git push', { cwd: data.cwd })
+    } catch (pushError) {
+      const errorMsg = String(pushError)
+      if (errorMsg.includes('has no upstream branch')) {
+        await execAsync(`git push --set-upstream origin ${currentBranch}`, { cwd: data.cwd })
+      } else {
+        throw pushError
+      }
+    }
+    
+    // Switch to main/master
+    await execAsync(`git checkout ${targetBranch}`, { cwd: data.cwd })
+    
+    // Pull latest
+    try {
+      await execAsync('git pull', { cwd: data.cwd })
+    } catch {
+      // Ignore pull errors (might be a new repo)
+    }
+    
+    // Merge the feature branch
+    await execAsync(`git merge ${currentBranch}`, { cwd: data.cwd })
+    
+    // Push main/master
+    await execAsync('git push', { cwd: data.cwd })
+    
+    // Optionally delete the feature branch
+    if (data.deleteBranch) {
+      try {
+        await execAsync(`git branch -d ${currentBranch}`, { cwd: data.cwd })
+        await execAsync(`git push origin --delete ${currentBranch}`, { cwd: data.cwd })
+      } catch {
+        // Ignore branch deletion errors
+      }
+    }
+    
+    return { success: true, mergedBranch: currentBranch, targetBranch }
+  } catch (error) {
+    console.error('Git merge to main failed:', error)
+    return { success: false, error: String(error) }
+  }
+})
+
+// Git operations - create pull request via gh CLI
+ipcMain.handle('git:createPullRequest', async (_event, data: { cwd: string; title?: string; draft?: boolean }) => {
+  try {
+    // Check if gh CLI is available
+    try {
+      await execAsync('gh --version', { cwd: data.cwd })
+    } catch {
+      return { success: false, error: 'GitHub CLI (gh) is not installed. Install it from https://cli.github.com/' }
+    }
+    
+    // Get current branch name
+    const { stdout: branchOutput } = await execAsync('git branch --show-current', { cwd: data.cwd })
+    const currentBranch = branchOutput.trim()
+    
+    if (!currentBranch) {
+      return { success: false, error: 'Not on a branch (detached HEAD)' }
+    }
+    
+    const isMainBranch = currentBranch === 'main' || currentBranch === 'master'
+    if (isMainBranch) {
+      return { success: false, error: 'Cannot create PR from main/master branch' }
+    }
+    
+    // Check for uncommitted changes
+    const { stdout: statusOutput } = await execAsync('git status --porcelain', { cwd: data.cwd })
+    if (statusOutput.trim()) {
+      return { success: false, error: 'Uncommitted changes exist. Please commit them first.' }
+    }
+    
+    // Push current branch
+    try {
+      await execAsync('git push', { cwd: data.cwd })
+    } catch (pushError) {
+      const errorMsg = String(pushError)
+      if (errorMsg.includes('has no upstream branch')) {
+        await execAsync(`git push --set-upstream origin ${currentBranch}`, { cwd: data.cwd })
+      } else {
+        throw pushError
+      }
+    }
+    
+    // Get remote URL to construct PR URL
+    const { stdout: remoteUrl } = await execAsync('git remote get-url origin', { cwd: data.cwd })
+    const remote = remoteUrl.trim()
+    
+    // Parse GitHub URL from remote (handles both HTTPS and SSH formats)
+    let repoPath = ''
+    if (remote.startsWith('git@github.com:')) {
+      repoPath = remote.replace('git@github.com:', '').replace(/\.git$/, '')
+    } else if (remote.includes('github.com')) {
+      const match = remote.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/)
+      repoPath = match ? match[1] : ''
+    }
+    
+    if (!repoPath) {
+      return { success: false, error: 'Could not parse GitHub repository from remote URL' }
+    }
+    
+    // Construct PR creation URL - GitHub will auto-fill the form
+    const title = data.title || currentBranch.replace(/[-_]/g, ' ')
+    const encodedTitle = encodeURIComponent(title)
+    const prUrl = `https://github.com/${repoPath}/compare/main...${currentBranch}?quick_pull=1&title=${encodedTitle}`
+    
+    return { success: true, prUrl, branch: currentBranch }
+  } catch (error) {
+    console.error('Create PR failed:', error)
     return { success: false, error: String(error) }
   }
 })
@@ -1607,9 +1786,8 @@ ipcMain.handle('worktree:checkGitVersion', async () => {
 ipcMain.handle('worktree:createSession', async (_event, data: { 
   repoPath: string
   branch: string
-  skipDeps?: boolean 
 }) => {
-  return worktree.createWorktreeSession(data.repoPath, data.branch, { skipDeps: data.skipDeps })
+  return worktree.createWorktreeSession(data.repoPath, data.branch)
 })
 
 // Remove a worktree session
@@ -1667,8 +1845,6 @@ ipcMain.handle('worktree:getConfig', async () => {
 ipcMain.handle('worktree:updateConfig', async (_event, updates: Partial<{
   directory: string
   pruneAfterDays: number
-  autoInstallDeps: boolean
-  preferCoW: boolean
   warnDiskThresholdMB: number
 }>) => {
   worktree.updateWorktreeConfig(updates)
