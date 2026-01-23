@@ -944,7 +944,7 @@ const App: React.FC = () => {
   const [isGeneratingMessage, setIsGeneratingMessage] = useState(false);
 
   const handleOpenCommitModal = async () => {
-    if (!activeTab || activeTab.editedFiles.length === 0) return;
+    if (!activeTab) return;
 
     setCommitError(null);
     setIsCommitting(false);
