@@ -1926,6 +1926,11 @@ app.on('before-quit', async () => {
 // Worktree Session Management IPC Handlers
 // ============================================================================
 
+// Fetch GitHub issue and generate branch name
+ipcMain.handle('worktree:fetchGitHubIssue', async (_event, issueUrl: string) => {
+  return worktree.fetchGitHubIssue(issueUrl)
+})
+
 // Check git version for worktree support
 ipcMain.handle('worktree:checkGitVersion', async () => {
   return worktree.checkGitVersion()
