@@ -1293,16 +1293,32 @@ ipcMain.handle('copilot:renameSession', async (_event, data: { sessionId: string
 })
 
 // Git operations - get actual changed files
-ipcMain.handle('git:getChangedFiles', async (_event, data: { cwd: string; files: string[] }) => {
+ipcMain.handle('git:getChangedFiles', async (_event, data: { cwd: string; files: string[]; includeAll?: boolean }) => {
   try {
-    // Check which of the provided files actually have changes
     const changedFiles: string[] = []
     
-    for (const file of data.files) {
-      // Check if file has staged or unstaged changes
-      const { stdout: status } = await execAsync(`git status --porcelain -- "${file}"`, { cwd: data.cwd })
-      if (status.trim()) {
-        changedFiles.push(file)
+    if (data.includeAll) {
+      // Get ALL changed files (staged, unstaged, and untracked)
+      const { stdout: status } = await execAsync('git status --porcelain', { cwd: data.cwd })
+      for (const line of status.split('\n')) {
+        if (line.trim()) {
+          // Status format: XY filename (where XY is 2-char status)
+          const filename = line.substring(3).trim()
+          // Handle renamed files (format: "old -> new")
+          const actualFile = filename.includes(' -> ') ? filename.split(' -> ')[1] : filename
+          if (actualFile) {
+            changedFiles.push(actualFile)
+          }
+        }
+      }
+    } else {
+      // Check which of the provided files actually have changes
+      for (const file of data.files) {
+        // Check if file has staged or unstaged changes
+        const { stdout: status } = await execAsync(`git status --porcelain -- "${file}"`, { cwd: data.cwd })
+        if (status.trim()) {
+          changedFiles.push(file)
+        }
       }
     }
     
@@ -1601,7 +1617,47 @@ ipcMain.handle('git:mergeToMain', async (_event, data: { cwd: string; deleteBran
         // Ignore other pull errors (might be a new repo)
       }
       
+      // Fetch latest to ensure we have the most recent main
+      try {
+        await execAsync('git fetch origin', { cwd: data.cwd })
+      } catch {
+        // Ignore fetch errors
+      }
+      
+      // Rebase feature branch on top of main to incorporate any changes (like version bumps)
+      // This ensures merge to main will be clean/fast-forward
+      try {
+        await execAsync(`git rebase origin/${targetBranch}`, { cwd: data.cwd })
+      } catch (rebaseError) {
+        const errorMsg = String(rebaseError)
+        if (errorMsg.includes('CONFLICT')) {
+          // Abort the rebase and return error
+          try {
+            await execAsync('git rebase --abort', { cwd: data.cwd })
+          } catch {
+            // Ignore abort errors
+          }
+          return { success: false, error: `Rebase conflicts detected when updating '${currentBranch}' with changes from ${targetBranch}. Please rebase manually.` }
+        }
+        // If rebase fails for other reasons, continue with merge attempt
+        console.warn('Rebase failed, continuing with direct merge:', errorMsg)
+      }
+      
+      // Force push the rebased branch (since we rebased, history changed)
+      try {
+        await execAsync(`git push --force-with-lease`, { cwd: data.cwd })
+      } catch (pushError) {
+        const errorMsg = String(pushError)
+        if (errorMsg.includes('has no upstream branch')) {
+          await execAsync(`git push --set-upstream origin ${currentBranch}`, { cwd: data.cwd })
+        } else {
+          // Ignore other push errors, continue with merge
+          console.warn('Force push after rebase failed:', errorMsg)
+        }
+      }
+      
       // Merge the feature branch into main (from the main repo)
+      // After rebase, this should be a fast-forward merge
       try {
         await execAsync(`git merge ${currentBranch}`, { cwd: mainRepoPath })
       } catch (mergeError) {
