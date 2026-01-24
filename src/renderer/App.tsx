@@ -1165,6 +1165,10 @@ const App: React.FC = () => {
       const result = await window.electronAPI.copilot.createSession({
         cwd: worktreePath,
       });
+      
+      // Auto-allow file writes for worktree sessions (used for code editing)
+      await window.electronAPI.copilot.addAlwaysAllowed(result.sessionId, 'write');
+      
       const newTab: TabState = {
         id: result.sessionId,
         name: `${branch} (worktree)`,
@@ -1176,7 +1180,7 @@ const App: React.FC = () => {
         hasUnreadCompletion: false,
         pendingConfirmations: [],
         needsTitle: false, // Already has a good name
-        alwaysAllowed: [],
+        alwaysAllowed: ['write'], // Pre-approved for worktree sessions
         editedFiles: [],
         currentIntent: null,
         autoBranchingEnabled: false, // Already on the right branch
