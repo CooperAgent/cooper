@@ -77,6 +77,7 @@ const App: React.FC = () => {
   const [removeWorktreeAfterMerge, setRemoveWorktreeAfterMerge] = useState(false);
   const [pendingMergeInfo, setPendingMergeInfo] = useState<{ incomingFiles: string[] } | null>(null);
   const [mainAheadInfo, setMainAheadInfo] = useState<{ isAhead: boolean; commits: string[]; targetBranch?: string } | null>(null);
+  const [isMergingMain, setIsMergingMain] = useState(false);
 
   // Theme context
   const {
@@ -2977,13 +2978,62 @@ Start by exploring the codebase to understand the current implementation, then m
                 <div className="mb-3 bg-copilot-warning/10 border border-copilot-warning/30 rounded p-3">
                   <div className="flex items-start gap-2">
                     <span className="text-copilot-warning text-sm">⚠️</span>
-                    <div>
+                    <div className="flex-1">
                       <div className="text-xs text-copilot-warning font-medium mb-1">
                         origin/{mainAheadInfo.targetBranch || 'main'} is {mainAheadInfo.commits.length} commit{mainAheadInfo.commits.length > 1 ? 's' : ''} ahead
                       </div>
-                      <div className="text-xs text-copilot-text-muted">
-                        If you merge to main, your branch will first be synced with the latest changes.
+                      <div className="text-xs text-copilot-text-muted mb-2">
+                        Merge the latest changes into your branch to stay up to date.
                       </div>
+                      <button
+                        onClick={async () => {
+                          if (!activeTab) return;
+                          setIsMergingMain(true);
+                          setCommitError(null);
+                          try {
+                            const result = await window.electronAPI.git.mergeMainIntoBranch(activeTab.cwd);
+                            if (!result.success) {
+                              setCommitError(result.error || 'Failed to merge');
+                              return;
+                            }
+                            // Refresh the changed files list
+                            const changedResult = await window.electronAPI.git.getChangedFiles(
+                              activeTab.cwd,
+                              activeTab.editedFiles,
+                              true
+                            );
+                            if (changedResult.success) {
+                              updateTab(activeTab.id, { editedFiles: changedResult.files });
+                            }
+                            // Re-check if main is still ahead
+                            const mainAheadResult = await window.electronAPI.git.checkMainAhead(activeTab.cwd);
+                            if (mainAheadResult.success && mainAheadResult.isAhead) {
+                              setMainAheadInfo({ 
+                                isAhead: true, 
+                                commits: mainAheadResult.commits,
+                                targetBranch: mainAheadResult.targetBranch
+                              });
+                            } else {
+                              setMainAheadInfo(null);
+                            }
+                          } catch (error) {
+                            setCommitError(String(error));
+                          } finally {
+                            setIsMergingMain(false);
+                          }
+                        }}
+                        disabled={isMergingMain || isCommitting}
+                        className="px-3 py-1 text-xs bg-copilot-warning/20 hover:bg-copilot-warning/30 text-copilot-warning border border-copilot-warning/30 rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                      >
+                        {isMergingMain ? (
+                          <>
+                            <span className="w-3 h-3 border border-copilot-warning/30 border-t-copilot-warning rounded-full animate-spin"></span>
+                            Merging...
+                          </>
+                        ) : (
+                          <>Merge origin/{mainAheadInfo.targetBranch || 'main'} into branch</>
+                        )}
+                      </button>
                     </div>
                   </div>
                 </div>
