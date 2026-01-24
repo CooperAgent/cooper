@@ -146,6 +146,9 @@ const electronAPI = {
     getBranch: (cwd: string): Promise<{ branch: string | null; success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:getBranch', cwd)
     },
+    checkMainAhead: (cwd: string): Promise<{ success: boolean; isAhead: boolean; commits: string[]; targetBranch?: string; error?: string }> => {
+      return ipcRenderer.invoke('git:checkMainAhead', cwd)
+    },
     checkoutBranch: (cwd: string, branchName: string): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:checkoutBranch', { cwd, branchName })
     },

@@ -76,6 +76,7 @@ const App: React.FC = () => {
   const [commitAction, setCommitAction] = useState<'push' | 'merge' | 'pr'>('push');
   const [removeWorktreeAfterMerge, setRemoveWorktreeAfterMerge] = useState(false);
   const [pendingMergeInfo, setPendingMergeInfo] = useState<{ incomingFiles: string[] } | null>(null);
+  const [mainAheadInfo, setMainAheadInfo] = useState<{ isAhead: boolean; commits: string[]; targetBranch?: string } | null>(null);
 
   // Theme context
   const {
@@ -994,9 +995,13 @@ const App: React.FC = () => {
     setIsCommitting(false);
     setCommitMessage("Checking files...");
     setIsGeneratingMessage(true);
+    setMainAheadInfo(null);
     setShowCommitModal(true);
 
     try {
+      // Check if origin/main is ahead of current branch (in parallel with other checks)
+      const mainAheadPromise = window.electronAPI.git.checkMainAhead(activeTab.cwd);
+      
       // Get ALL changed files in the repo, not just the ones we tracked
       const changedResult = await window.electronAPI.git.getChangedFiles(
         activeTab.cwd,
@@ -1037,6 +1042,20 @@ const App: React.FC = () => {
           .map((f) => f.split("/").pop())
           .join(", ");
         setCommitMessage(`Update ${fileNames}`);
+      }
+      
+      // Check if main is ahead (await the promise we started earlier)
+      try {
+        const mainAheadResult = await mainAheadPromise;
+        if (mainAheadResult.success && mainAheadResult.isAhead) {
+          setMainAheadInfo({ 
+            isAhead: true, 
+            commits: mainAheadResult.commits,
+            targetBranch: mainAheadResult.targetBranch
+          });
+        }
+      } catch {
+        // Ignore errors checking main ahead
       }
     } catch (error) {
       console.error("Failed to generate commit message:", error);
@@ -2929,7 +2948,7 @@ Start by exploring the codebase to understand the current implementation, then m
       {/* Commit Modal */}
       <Modal
         isOpen={showCommitModal && !!activeTab}
-        onClose={() => setShowCommitModal(false)}
+        onClose={() => { setShowCommitModal(false); setMainAheadInfo(null); }}
         title="Commit & Push Changes"
       >
         <Modal.Body>
@@ -2952,6 +2971,23 @@ Start by exploring the codebase to understand the current implementation, then m
                   ))}
                 </div>
               </div>
+
+              {/* Warning if origin/main is ahead */}
+              {mainAheadInfo?.isAhead && (
+                <div className="mb-3 bg-copilot-warning/10 border border-copilot-warning/30 rounded p-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-copilot-warning text-sm">⚠️</span>
+                    <div>
+                      <div className="text-xs text-copilot-warning font-medium mb-1">
+                        origin/{mainAheadInfo.targetBranch || 'main'} is {mainAheadInfo.commits.length} commit{mainAheadInfo.commits.length > 1 ? 's' : ''} ahead
+                      </div>
+                      <div className="text-xs text-copilot-text-muted">
+                        If you merge to main, your branch will first be synced with the latest changes.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Commit message */}
               <div className="mb-3 relative">

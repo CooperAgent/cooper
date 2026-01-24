@@ -1575,6 +1575,54 @@ ipcMain.handle('git:getBranch', async (_event, cwd: string) => {
   }
 })
 
+// Git operations - check if origin/main is ahead of current branch
+ipcMain.handle('git:checkMainAhead', async (_event, cwd: string) => {
+  try {
+    // Get current branch
+    const { stdout: branchOutput } = await execAsync('git branch --show-current', { cwd })
+    const currentBranch = branchOutput.trim()
+    
+    // If already on main/master, no need to check
+    if (currentBranch === 'main' || currentBranch === 'master') {
+      return { success: true, isAhead: false, commits: [] }
+    }
+    
+    // Determine target main branch
+    let targetBranch = 'main'
+    try {
+      await execAsync('git rev-parse --verify origin/main', { cwd })
+    } catch {
+      try {
+        await execAsync('git rev-parse --verify origin/master', { cwd })
+        targetBranch = 'master'
+      } catch {
+        return { success: true, isAhead: false, commits: [] }
+      }
+    }
+    
+    // Fetch latest from origin
+    try {
+      await execAsync('git fetch origin', { cwd })
+    } catch {
+      // Ignore fetch errors
+    }
+    
+    // Check if origin/main has commits not in current branch
+    const { stdout: aheadCommits } = await execAsync(`git log --oneline HEAD..origin/${targetBranch}`, { cwd })
+    const commits = aheadCommits.trim().split('\n').filter(c => c)
+    
+    return { 
+      success: true, 
+      isAhead: commits.length > 0, 
+      commits,
+      targetBranch
+    }
+  } catch (error) {
+    console.error('Git checkMainAhead failed:', error)
+    return { success: false, isAhead: false, commits: [], error: String(error) }
+  }
+})
+
 // Git operations - checkout (create) branch
 ipcMain.handle('git:checkoutBranch', async (_event, data: { cwd: string; branchName: string }) => {
   try {
