@@ -11,6 +11,7 @@ import Store from 'electron-store'
 import log from 'electron-log/main'
 import { extractExecutables } from './utils/extractExecutables'
 import * as worktree from './worktree'
+import * as ptyManager from './pty'
 
 // MCP Server Configuration types (matching SDK)
 interface MCPServerConfigBase {
@@ -1937,6 +1938,9 @@ app.on('window-all-closed', async () => {
 })
 
 app.on('before-quit', async () => {
+  // Close all PTY instances
+  ptyManager.closeAllPtys()
+  
   // Destroy all sessions
   for (const [id, state] of sessions) {
     await state.session.destroy()
@@ -2031,5 +2035,34 @@ ipcMain.handle('worktree:updateConfig', async (_event, updates: Partial<{
 }>) => {
   worktree.updateWorktreeConfig(updates)
   return { success: true }
+})
+
+// PTY (Terminal) handlers
+ipcMain.handle('pty:create', async (_event, data: { sessionId: string; cwd: string }) => {
+  return ptyManager.createPty(data.sessionId, data.cwd, mainWindow)
+})
+
+ipcMain.handle('pty:write', async (_event, data: { sessionId: string; data: string }) => {
+  return ptyManager.writePty(data.sessionId, data.data)
+})
+
+ipcMain.handle('pty:resize', async (_event, data: { sessionId: string; cols: number; rows: number }) => {
+  return ptyManager.resizePty(data.sessionId, data.cols, data.rows)
+})
+
+ipcMain.handle('pty:getOutput', async (_event, sessionId: string) => {
+  return ptyManager.getPtyOutput(sessionId)
+})
+
+ipcMain.handle('pty:clearBuffer', async (_event, sessionId: string) => {
+  return ptyManager.clearPtyBuffer(sessionId)
+})
+
+ipcMain.handle('pty:close', async (_event, sessionId: string) => {
+  return ptyManager.closePty(sessionId)
+})
+
+ipcMain.handle('pty:exists', async (_event, sessionId: string) => {
+  return { exists: ptyManager.hasPty(sessionId) }
 })
 

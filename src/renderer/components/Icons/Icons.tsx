@@ -139,6 +139,13 @@ export const RepeatIcon: React.FC<IconProps> = ({ size = 24, className, strokeWi
   </svg>
 )
 
+export const TerminalIcon: React.FC<IconProps> = ({ size = 24, className, strokeWidth = 2 }) => (
+  <svg width={size} height={size} className={className} {...defaultProps} strokeWidth={strokeWidth}>
+    <polyline points="4 17 10 11 4 5" />
+    <line x1="12" y1="19" x2="20" y2="19" />
+  </svg>
+)
+
 // Ralph Wiggum icon - uses the Ralph Wiggum image
 export const RalphIcon: React.FC<IconProps> = ({ size = 24, className }) => (
   <img 
@@ -171,6 +178,7 @@ export const Icons = {
   Globe: GlobeIcon,
   Trash: TrashIcon,
   Repeat: RepeatIcon,
+  Terminal: TerminalIcon,
   Ralph: RalphIcon,
 }
 

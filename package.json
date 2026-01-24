@@ -16,6 +16,7 @@
     "test:e2e": "npm run build && npx playwright test",
     "test:e2e:headed": "npm run build && npx playwright test --headed",
     "test:all": "npm run test && npm run test:e2e",
+    "postinstall": "npx @electron/rebuild -f -w node-pty",
     "dist": "electron-vite build && electron-builder --mac --dir && hdiutil create -volname 'Copilot Skins' -srcfolder release/mac-arm64 -ov -format UDZO release/Copilot-Skins-1.0.0-arm64.dmg"
   },
   "build": {
@@ -34,8 +35,11 @@
   },
   "dependencies": {
     "@github/copilot-sdk": "0.1.15",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "electron-log": "^5.4.3",
     "electron-store": "^11.0.0",
+    "node-pty": "^1.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
@@ -44,6 +48,7 @@
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.0",
     "@electron-toolkit/utils": "^3.0.0",
+    "@electron/rebuild": "^4.0.2",
     "@playwright/test": "^1.58.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

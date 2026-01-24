@@ -6,6 +6,7 @@ export * from './Icons'
 export * from './Modal'
 export * from './WindowControls'
 export * from './WorktreeSessions'
+export * from './Terminal'
 
 // Existing Components
 export * from './Spinner'

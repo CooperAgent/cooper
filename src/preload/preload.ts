@@ -266,6 +266,40 @@ const electronAPI = {
     updateConfig: (updates: Partial<WorktreeConfig>): Promise<{ success: boolean }> => {
       return ipcRenderer.invoke('worktree:updateConfig', updates)
     }
+  },
+  // PTY (Terminal) management
+  pty: {
+    create: (sessionId: string, cwd: string): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('pty:create', { sessionId, cwd })
+    },
+    write: (sessionId: string, data: string): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('pty:write', { sessionId, data })
+    },
+    resize: (sessionId: string, cols: number, rows: number): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('pty:resize', { sessionId, cols, rows })
+    },
+    getOutput: (sessionId: string): Promise<{ success: boolean; output?: string; error?: string }> => {
+      return ipcRenderer.invoke('pty:getOutput', sessionId)
+    },
+    clearBuffer: (sessionId: string): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('pty:clearBuffer', sessionId)
+    },
+    close: (sessionId: string): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('pty:close', sessionId)
+    },
+    exists: (sessionId: string): Promise<{ exists: boolean }> => {
+      return ipcRenderer.invoke('pty:exists', sessionId)
+    },
+    onData: (callback: (data: { sessionId: string; data: string }) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string; data: string }): void => callback(data)
+      ipcRenderer.on('pty:data', handler)
+      return () => ipcRenderer.removeListener('pty:data', handler)
+    },
+    onExit: (callback: (data: { sessionId: string; exitCode: number }) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string; exitCode: number }): void => callback(data)
+      ipcRenderer.on('pty:exit', handler)
+      return () => ipcRenderer.removeListener('pty:exit', handler)
+    }
   }
 }
 
