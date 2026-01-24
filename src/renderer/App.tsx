@@ -27,6 +27,8 @@ import {
   TrashIcon,
   GlobeIcon,
   RalphIcon,
+  TerminalIcon,
+  TerminalPanel,
   WorktreeSessionsList,
   CreateWorktreeSession,
 } from "./components";
@@ -110,6 +112,11 @@ const App: React.FC = () => {
   const [showWorktreeList, setShowWorktreeList] = useState(false);
   const [showCreateWorktree, setShowCreateWorktree] = useState(false);
   const [worktreeRepoPath, setWorktreeRepoPath] = useState("");
+
+  // Terminal panel state - track which session has terminal open
+  const [terminalOpenForSession, setTerminalOpenForSession] = useState<string | null>(null);
+  // Terminal output attachment state
+  const [terminalAttachment, setTerminalAttachment] = useState<{output: string; lineCount: number} | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -714,12 +721,22 @@ const App: React.FC = () => {
   }, []);
 
   const handleSendMessage = useCallback(async () => {
-    if (!inputValue.trim() || !activeTab || activeTab.isProcessing) return;
+    if (!inputValue.trim() && !terminalAttachment) return;
+    if (!activeTab || activeTab.isProcessing) return;
+
+    // Build message content with terminal attachment if present
+    let messageContent = inputValue.trim();
+    if (terminalAttachment) {
+      const terminalBlock = `\`\`\`\n${terminalAttachment.output}\n\`\`\``;
+      messageContent = messageContent 
+        ? `${messageContent}\n\nTerminal output:\n${terminalBlock}`
+        : `Terminal output:\n${terminalBlock}`;
+    }
 
     const userMessage: Message = {
       id: generateId(),
       role: "user",
-      content: inputValue.trim(),
+      content: messageContent,
     };
 
     const tabId = activeTab.id;
@@ -755,6 +772,7 @@ const App: React.FC = () => {
       ralphConfig,
     });
     setInputValue("");
+    setTerminalAttachment(null);
     
     // Reset Ralph UI state after sending
     if (ralphEnabled) {
@@ -768,7 +786,16 @@ const App: React.FC = () => {
       console.error("Send error:", error);
       updateTab(tabId, { isProcessing: false, ralphConfig: undefined });
     }
-  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphMaxIterations]);
+  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphMaxIterations, terminalAttachment]);
+
+  // Handle sending terminal output to the agent
+  const handleSendTerminalOutput = useCallback((output: string, lineCount: number) => {
+    if (!output.trim()) return;
+    // Store the terminal output as an attachment to be included in next message
+    setTerminalAttachment({ output: output.trim(), lineCount });
+    // Focus the input field
+    inputRef.current?.focus();
+  }, []);
 
   const handleStop = useCallback(() => {
     if (!activeTab) return;
@@ -1823,6 +1850,38 @@ Start by exploring the codebase to understand the current implementation, then m
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          {/* Terminal Toggle Button */}
+          {activeTab && (
+            <button
+              onClick={() => setTerminalOpenForSession(
+                terminalOpenForSession === activeTab.id ? null : activeTab.id
+              )}
+              className={`shrink-0 flex items-center gap-2 px-4 py-2 text-xs border-b border-copilot-border transition-colors ${
+                terminalOpenForSession === activeTab.id
+                  ? "text-copilot-accent bg-copilot-surface" 
+                  : "text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface"
+              }`}
+            >
+              <TerminalIcon size={14} />
+              <span className="font-medium">Terminal</span>
+              <ChevronDownIcon
+                size={12}
+                className={`transition-transform ${terminalOpenForSession === activeTab.id ? "rotate-180" : ""}`}
+              />
+            </button>
+          )}
+
+          {/* Embedded Terminal Panel */}
+          {activeTab && (
+            <TerminalPanel
+              sessionId={activeTab.id}
+              cwd={activeTab.cwd}
+              isOpen={terminalOpenForSession === activeTab.id}
+              onClose={() => setTerminalOpenForSession(null)}
+              onSendToAgent={handleSendTerminalOutput}
+            />
+          )}
+
           {/* Messages Area - Conversation Only */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
             {activeTab?.messages.length === 0 && (
@@ -2144,8 +2203,25 @@ Start by exploring the codebase to understand the current implementation, then m
                 )}
               </div>
             )}
+
+            {/* Terminal Attachment Indicator */}
+            {terminalAttachment && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-copilot-surface rounded-t-lg border border-b-0 border-copilot-border">
+                <TerminalIcon size={12} className="text-copilot-accent shrink-0" />
+                <span className="text-xs text-copilot-text">
+                  Terminal output: {terminalAttachment.lineCount} lines
+                </span>
+                <button
+                  onClick={() => setTerminalAttachment(null)}
+                  className="ml-auto text-copilot-text-muted hover:text-copilot-text text-xs"
+                  title="Remove terminal output"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             
-            <div className="flex items-center bg-copilot-bg rounded-lg border border-copilot-border focus-within:border-copilot-accent transition-colors">
+            <div className={`flex items-center bg-copilot-bg border border-copilot-border focus-within:border-copilot-accent transition-colors ${terminalAttachment ? 'rounded-b-lg' : 'rounded-lg'}`}>
               {/* Ralph Toggle Button */}
               {!activeTab?.isProcessing && (
                 <button
@@ -2193,7 +2269,7 @@ Start by exploring the codebase to understand the current implementation, then m
                 <button
                   onClick={handleSendMessage}
                   disabled={
-                    !inputValue.trim() ||
+                    (!inputValue.trim() && !terminalAttachment) ||
                     status !== "connected" ||
                     activeTab?.isProcessing
                   }
