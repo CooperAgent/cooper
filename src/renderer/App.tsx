@@ -53,6 +53,7 @@ import {
   setTabCounter,
 } from "./utils/session";
 import { playNotificationSound } from "./utils/sound";
+import buildInfo from "./build-info.json";
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<Status>("connecting");
@@ -74,6 +75,7 @@ const App: React.FC = () => {
   const [commitError, setCommitError] = useState<string | null>(null);
   const [commitAction, setCommitAction] = useState<'push' | 'merge' | 'pr'>('push');
   const [removeWorktreeAfterMerge, setRemoveWorktreeAfterMerge] = useState(false);
+  const [pendingMergeInfo, setPendingMergeInfo] = useState<{ incomingFiles: string[] } | null>(null);
 
   // Theme context
   const {
@@ -111,13 +113,6 @@ const App: React.FC = () => {
   const [showWorktreeList, setShowWorktreeList] = useState(false);
   const [showCreateWorktree, setShowCreateWorktree] = useState(false);
   const [worktreeRepoPath, setWorktreeRepoPath] = useState("");
-
-  // Resizable panel state
-  const [leftPanelWidth, setLeftPanelWidth] = useState(192); // default w-48
-  const [rightPanelWidth, setRightPanelWidth] = useState(288); // default w-72
-  const resizingPanel = useRef<'left' | 'right' | null>(null);
-  const resizeStartX = useRef(0);
-  const resizeStartWidth = useRef(0);
 
   // Terminal panel state - track which session has terminal open
   const [terminalOpenForSession, setTerminalOpenForSession] = useState<string | null>(null);
@@ -161,51 +156,6 @@ const App: React.FC = () => {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
-
-  // Resize handlers for side panels
-  const handleResizeMouseDown = useCallback((e: React.MouseEvent, panel: 'left' | 'right') => {
-    e.preventDefault();
-    resizingPanel.current = panel;
-    resizeStartX.current = e.clientX;
-    resizeStartWidth.current = panel === 'left' ? leftPanelWidth : rightPanelWidth;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  }, [leftPanelWidth, rightPanelWidth]);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!resizingPanel.current) return;
-      
-      const delta = e.clientX - resizeStartX.current;
-      const minWidth = 120;
-      const maxWidth = 400;
-      
-      if (resizingPanel.current === 'left') {
-        const newWidth = Math.min(maxWidth, Math.max(minWidth, resizeStartWidth.current + delta));
-        setLeftPanelWidth(newWidth);
-      } else {
-        // For right panel, dragging right decreases width
-        const newWidth = Math.min(maxWidth, Math.max(minWidth, resizeStartWidth.current - delta));
-        setRightPanelWidth(newWidth);
-      }
-    };
-
-    const handleMouseUp = () => {
-      if (resizingPanel.current) {
-        resizingPanel.current = null;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
 
   useEffect(() => {
     scrollToBottom();
@@ -735,20 +685,20 @@ const App: React.FC = () => {
 
     const tabId = activeTab.id;
 
-    // If Ralph is enabled, append completion instruction to the prompt
-    const promptToSend = ralphEnabled
-      ? `${userMessage.content}\n\nWhen you have fully completed this task, output exactly: ${RALPH_COMPLETION_SIGNAL}`
-      : userMessage.content;
-
-    // Set up Ralph config if enabled - store full prompt with completion instruction
+    // Set up Ralph config if enabled - auto-inject completion instruction
     const ralphConfig: RalphConfig | undefined = ralphEnabled
       ? {
-          originalPrompt: promptToSend, // Store full prompt including completion instruction
+          originalPrompt: userMessage.content,
           maxIterations: ralphMaxIterations,
           currentIteration: 1,
           active: true,
         }
       : undefined;
+    
+    // If Ralph is enabled, append completion instruction to the prompt
+    const promptToSend = ralphEnabled
+      ? `${userMessage.content}\n\nWhen you have fully completed this task, output exactly: ${RALPH_COMPLETION_SIGNAL}`
+      : userMessage.content;
 
     updateTab(tabId, {
       messages: [
@@ -1062,6 +1012,20 @@ const App: React.FC = () => {
       );
 
       if (result.success) {
+        // If merge synced with main and brought in changes, notify user to test first
+        if (result.mainSyncedWithChanges && commitAction === 'merge') {
+          setPendingMergeInfo({ incomingFiles: result.incomingFiles || [] });
+          // Clear the edited files list and refresh git branch widget (commit was successful)
+          updateTab(activeTab.id, { 
+            editedFiles: [],
+            gitBranchRefresh: (activeTab.gitBranchRefresh || 0) + 1
+          });
+          setShowCommitModal(false);
+          setCommitMessage('');
+          setIsCommitting(false);
+          return;
+        }
+        
         // If creating PR, do that after commit
         if (commitAction === 'pr') {
           const prResult = await window.electronAPI.git.createPullRequest(activeTab.cwd, commitMessage.split('\n')[0]);
@@ -1172,7 +1136,11 @@ const App: React.FC = () => {
   };
 
   // Handle when worktree session is created
-  const handleWorktreeSessionCreated = async (worktreePath: string, branch: string) => {
+  const handleWorktreeSessionCreated = async (
+    worktreePath: string,
+    branch: string,
+    autoStart?: { issueInfo: { url: string; title: string; body: string | null } }
+  ) => {
     try {
       // Check trust for the worktree directory
       const trustResult = await window.electronAPI.copilot.checkDirectoryTrust(worktreePath);
@@ -1187,10 +1155,19 @@ const App: React.FC = () => {
       const result = await window.electronAPI.copilot.createSession({
         cwd: worktreePath,
       });
+
+      // If autoStart is enabled, pre-approve GitHub web fetches and file writes
+      const preApprovedCommands = autoStart
+        ? ['write', 'url:github.com']
+        : [];
       
-      // Auto-allow file writes for worktree sessions (used for code editing)
-      await window.electronAPI.copilot.addAlwaysAllowed(result.sessionId, 'write');
-      
+      // Add pre-approved commands to the session
+      if (autoStart) {
+        for (const cmd of preApprovedCommands) {
+          await window.electronAPI.copilot.addAlwaysAllowed(result.sessionId, cmd);
+        }
+      }
+
       const newTab: TabState = {
         id: result.sessionId,
         name: `${branch} (worktree)`,
@@ -1202,7 +1179,7 @@ const App: React.FC = () => {
         hasUnreadCompletion: false,
         pendingConfirmations: [],
         needsTitle: false, // Already has a good name
-        alwaysAllowed: ['write'], // Pre-approved for worktree sessions
+        alwaysAllowed: preApprovedCommands,
         editedFiles: [],
         currentIntent: null,
         currentIntentTimestamp: null,
@@ -1211,6 +1188,63 @@ const App: React.FC = () => {
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(result.sessionId);
       setStatus("connected");
+
+      // If autoStart is enabled, send the initial prompt with issue context
+      if (autoStart) {
+        const issueContext = autoStart.issueInfo.body
+          ? `## Issue Description\n\n${autoStart.issueInfo.body}`
+          : '';
+        
+        const initialPrompt = `Please implement the following GitHub issue:
+
+**Issue URL:** ${autoStart.issueInfo.url}
+**Title:** ${autoStart.issueInfo.title}
+
+${issueContext}
+
+Start by exploring the codebase to understand the current implementation, then make the necessary changes to address this issue.`;
+
+        const userMessage: Message = {
+          id: generateId(),
+          role: "user",
+          content: initialPrompt,
+        };
+
+        // Update tab with the initial message and start processing
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === result.sessionId
+              ? {
+                  ...tab,
+                  messages: [
+                    userMessage,
+                    {
+                      id: generateId(),
+                      role: "assistant",
+                      content: "",
+                      isStreaming: true,
+                    },
+                  ],
+                  isProcessing: true,
+                }
+              : tab
+          )
+        );
+
+        // Send the prompt
+        try {
+          await window.electronAPI.copilot.send(result.sessionId, initialPrompt);
+        } catch (error) {
+          console.error("Failed to send initial prompt:", error);
+          setTabs((prev) =>
+            prev.map((tab) =>
+              tab.id === result.sessionId
+                ? { ...tab, isProcessing: false }
+                : tab
+            )
+          );
+        }
+      }
     } catch (error) {
       console.error("Failed to create worktree session tab:", error);
       setStatus("connected");
@@ -1551,10 +1585,7 @@ const App: React.FC = () => {
       {/* Tab Bar */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar - Vertical Tabs */}
-        <div 
-          className="bg-copilot-bg border-r border-copilot-border flex flex-col shrink-0"
-          style={{ width: leftPanelWidth }}
-        >
+        <div className="w-48 bg-copilot-bg border-r border-copilot-border flex flex-col shrink-0">
           {/* New Tab Button */}
           <button
             onClick={() => handleNewTab()}
@@ -1762,13 +1793,16 @@ const App: React.FC = () => {
               )}
             </div>
           )}
-        </div>
 
-        {/* Left Resize Handle */}
-        <div
-          className="w-1 hover:w-1.5 bg-transparent hover:bg-copilot-accent/50 cursor-col-resize shrink-0 transition-all"
-          onMouseDown={(e) => handleResizeMouseDown(e, 'left')}
-        />
+          {/* Build Info */}
+          <div className="border-t border-copilot-border px-3 py-2 text-[10px] text-copilot-text-muted">
+            <div className="flex items-center gap-1" title={`Build: ${buildInfo.version}\nBranch: ${buildInfo.gitBranch}\nCommit: ${buildInfo.gitSha}\nBuilt: ${buildInfo.buildDate} ${buildInfo.buildTime}`}>
+              <span className="opacity-60">v{buildInfo.baseVersion}</span>
+              <span className="opacity-40">•</span>
+              <span className="opacity-60 truncate">{buildInfo.gitBranch === 'main' ? buildInfo.gitSha : buildInfo.gitBranch}</span>
+            </div>
+          </div>
+        </div>
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
@@ -2231,17 +2265,8 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Resize Handle */}
-        <div
-          className="w-1 hover:w-1.5 bg-transparent hover:bg-copilot-accent/50 cursor-col-resize shrink-0 transition-all"
-          onMouseDown={(e) => handleResizeMouseDown(e, 'right')}
-        />
-
         {/* Right Panel - Activity & Session Info */}
-        <div 
-          className="border-l border-copilot-border flex flex-col shrink-0 bg-copilot-bg"
-          style={{ width: rightPanelWidth }}
-        >
+        <div className="w-72 border-l border-copilot-border flex flex-col shrink-0 bg-copilot-bg">
           {/* Activity Header with Intent */}
           <div className="px-3 py-2 border-b border-copilot-border bg-copilot-surface">
             <div className="flex items-center gap-2">
@@ -2951,6 +2976,84 @@ const App: React.FC = () => {
               </Modal.Footer>
             </>
           )}
+        </Modal.Body>
+      </Modal>
+
+      {/* Incoming Changes Modal - shown when merge from main brought changes */}
+      <Modal
+        isOpen={!!pendingMergeInfo && !!activeTab}
+        onClose={() => setPendingMergeInfo(null)}
+        title="Main Branch Had Changes"
+        width="500px"
+      >
+        <Modal.Body>
+          <div className="mb-4">
+            <div className="text-sm text-copilot-text mb-2">
+              Your branch has been synced with the latest changes from main. The following files were updated:
+            </div>
+            {pendingMergeInfo && pendingMergeInfo.incomingFiles.length > 0 ? (
+              <div className="bg-copilot-bg rounded border border-copilot-surface max-h-40 overflow-y-auto">
+                {pendingMergeInfo.incomingFiles.map((filePath) => (
+                  <div
+                    key={filePath}
+                    className="px-3 py-1.5 text-xs text-copilot-warning font-mono truncate"
+                    title={filePath}
+                  >
+                    {filePath}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-copilot-text-muted italic">
+                (Unable to determine changed files)
+              </div>
+            )}
+          </div>
+          <div className="text-sm text-copilot-text-muted mb-4">
+            We recommend testing your changes before completing the merge to main.
+          </div>
+          <Modal.Footer>
+            <Button
+              variant="ghost"
+              onClick={() => setPendingMergeInfo(null)}
+            >
+              Test First
+            </Button>
+            <Button
+              variant="primary"
+              onClick={async () => {
+                if (!activeTab) return;
+                setIsCommitting(true);
+                try {
+                  const result = await window.electronAPI.git.mergeToMain(activeTab.cwd, removeWorktreeAfterMerge);
+                  if (result.success) {
+                    if (removeWorktreeAfterMerge && activeTab.cwd.includes('.copilot-sessions')) {
+                      const sessionId = activeTab.cwd.split('/').pop() || '';
+                      if (sessionId) {
+                        await window.electronAPI.worktree.removeSession({ sessionId, force: true });
+                        handleCloseTab(activeTab.id);
+                      }
+                    }
+                    updateTab(activeTab.id, { 
+                      gitBranchRefresh: (activeTab.gitBranchRefresh || 0) + 1
+                    });
+                  } else {
+                    setCommitError(result.error || 'Merge failed');
+                  }
+                } catch (error) {
+                  setCommitError(String(error));
+                } finally {
+                  setIsCommitting(false);
+                  setPendingMergeInfo(null);
+                  setCommitAction('push');
+                  setRemoveWorktreeAfterMerge(false);
+                }
+              }}
+              isLoading={isCommitting}
+            >
+              Merge to Main Now
+            </Button>
+          </Modal.Footer>
         </Modal.Body>
       </Modal>
 

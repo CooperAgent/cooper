@@ -137,7 +137,7 @@ const electronAPI = {
     getDiff: (cwd: string, files: string[]): Promise<{ diff: string; success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:getDiff', { cwd, files })
     },
-    commitAndPush: (cwd: string, files: string[], message: string, mergeToMain?: boolean): Promise<{ success: boolean; error?: string; mergedToMain?: boolean; finalBranch?: string }> => {
+    commitAndPush: (cwd: string, files: string[], message: string, mergeToMain?: boolean): Promise<{ success: boolean; error?: string; mergedToMain?: boolean; finalBranch?: string; mainSyncedWithChanges?: boolean; incomingFiles?: string[] }> => {
       return ipcRenderer.invoke('git:commitAndPush', { cwd, files, message, mergeToMain })
     },
     generateCommitMessage: (diff: string): Promise<string> => {

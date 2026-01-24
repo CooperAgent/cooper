@@ -1404,6 +1404,60 @@ ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: s
           // Ignore pull errors
         }
         
+        // Fetch latest to ensure we have origin's main
+        try {
+          await execAsync('git fetch origin', { cwd: data.cwd })
+        } catch {
+          // Ignore fetch errors
+        }
+        
+        // Get HEAD before merge to detect if sync brought in changes
+        const { stdout: headBefore } = await execAsync('git rev-parse HEAD', { cwd: data.cwd })
+        
+        // Merge main into the feature branch first (in the worktree) to ensure it's up-to-date
+        // This prevents losing changes when the feature branch was based on an older main
+        try {
+          await execAsync(`git merge origin/${targetBranch}`, { cwd: data.cwd })
+          console.log(`Merged ${targetBranch} into ${currentBranch} to sync`)
+        } catch (mergeError) {
+          const errorMsg = String(mergeError)
+          if (errorMsg.includes('CONFLICT')) {
+            throw new Error(`Merge conflicts detected when syncing '${targetBranch}' into '${currentBranch}'. Please resolve conflicts first.`)
+          }
+          // Continue if no conflicts - branch might already be up to date
+        }
+        
+        // Get HEAD after merge to check if changes were brought in
+        const { stdout: headAfter } = await execAsync('git rev-parse HEAD', { cwd: data.cwd })
+        const syncBroughtChanges = headBefore.trim() !== headAfter.trim()
+        
+        // Push the updated feature branch
+        try {
+          await execAsync('git push', { cwd: data.cwd })
+        } catch {
+          // Ignore - might already be up to date
+        }
+        
+        // If sync brought in changes, return early so user can test before merging
+        if (syncBroughtChanges) {
+          // Get list of files that were changed by the merge
+          let incomingFiles: string[] = []
+          try {
+            const { stdout: diffFiles } = await execAsync(`git diff --name-only ${headBefore.trim()} ${headAfter.trim()}`, { cwd: data.cwd })
+            incomingFiles = diffFiles.trim().split('\n').filter(f => f)
+          } catch {
+            // Ignore errors
+          }
+          
+          return { 
+            success: true, 
+            mergedToMain: false, 
+            finalBranch: currentBranch,
+            mainSyncedWithChanges: true,
+            incomingFiles
+          }
+        }
+        
         // Merge the feature branch into main (from the main repo)
         await execAsync(`git merge ${currentBranch}`, { cwd: mainRepoPath })
         console.log(`Merged ${currentBranch} into ${targetBranch}`)
@@ -1580,35 +1634,115 @@ ipcMain.handle('git:mergeToMain', async (_event, data: { cwd: string; deleteBran
     // For worktrees, we need to run merge commands from the main repo
     // because main/master is checked out there
     if (isWorktree) {
+      // Check if main repo has uncommitted changes or unresolved conflicts
+      const { stdout: mainRepoStatus } = await execAsync('git status --porcelain', { cwd: mainRepoPath })
+      if (mainRepoStatus.trim()) {
+        const hasConflicts = mainRepoStatus.includes('UU') || mainRepoStatus.includes('AA') || mainRepoStatus.includes('DD')
+        if (hasConflicts) {
+          return { success: false, error: `Main repository has unresolved merge conflicts. Please resolve conflicts in ${mainRepoPath} first.` }
+        }
+        return { success: false, error: `Main repository has uncommitted changes. Please commit or stash changes in ${mainRepoPath} first.` }
+      }
+      
       // Pull latest on main in the main repo
       try {
         await execAsync('git pull', { cwd: mainRepoPath })
+      } catch (pullError) {
+        const errorMsg = String(pullError)
+        if (errorMsg.includes('CONFLICT')) {
+          return { success: false, error: `Pull resulted in merge conflicts in ${mainRepoPath}. Please resolve manually.` }
+        }
+        // Ignore other pull errors (might be a new repo)
+      }
+      
+      // Fetch latest to ensure we have origin's main
+      try {
+        await execAsync('git fetch origin', { cwd: data.cwd })
       } catch {
-        // Ignore pull errors (might be a new repo)
+        // Ignore fetch errors
+      }
+      
+      // Merge main into the feature branch first (in the worktree) to ensure it's up-to-date
+      // This prevents losing changes when the feature branch was based on an older main
+      try {
+        await execAsync(`git merge origin/${targetBranch}`, { cwd: data.cwd })
+      } catch (mergeError) {
+        const errorMsg = String(mergeError)
+        if (errorMsg.includes('CONFLICT')) {
+          return { success: false, error: `Merge conflicts detected when merging '${targetBranch}' into '${currentBranch}'. Please resolve conflicts in the worktree first, then try again.` }
+        }
+        // If merge fails for other reasons, continue - the branch might already be up to date
+      }
+      
+      // Push the updated feature branch
+      try {
+        await execAsync('git push', { cwd: data.cwd })
+      } catch (pushError) {
+        const errorMsg = String(pushError)
+        if (!errorMsg.includes('Everything up-to-date')) {
+          // Try with --force-with-lease if regular push fails (in case of rebase)
+          try {
+            await execAsync('git push --force-with-lease', { cwd: data.cwd })
+          } catch {
+            // Ignore - the merge might not have changed anything
+          }
+        }
       }
       
       // Merge the feature branch into main (from the main repo)
-      await execAsync(`git merge ${currentBranch}`, { cwd: mainRepoPath })
+      try {
+        await execAsync(`git merge ${currentBranch}`, { cwd: mainRepoPath })
+      } catch (mergeError) {
+        const errorMsg = String(mergeError)
+        if (errorMsg.includes('CONFLICT')) {
+          return { success: false, error: `Merge conflicts detected when merging '${currentBranch}' into ${targetBranch}. Please resolve conflicts in ${mainRepoPath} manually.` }
+        }
+        return { success: false, error: `Failed to merge '${currentBranch}': ${errorMsg}` }
+      }
       
       // Push main/master from the main repo
-      await execAsync('git push', { cwd: mainRepoPath })
+      try {
+        await execAsync('git push', { cwd: mainRepoPath })
+      } catch (pushError) {
+        return { success: false, error: `Merge succeeded but push failed: ${String(pushError)}` }
+      }
     } else {
       // Standard flow for non-worktree repos
       // Switch to main/master
-      await execAsync(`git checkout ${targetBranch}`, { cwd: data.cwd })
+      try {
+        await execAsync(`git checkout ${targetBranch}`, { cwd: data.cwd })
+      } catch (checkoutError) {
+        return { success: false, error: `Failed to checkout ${targetBranch}: ${String(checkoutError)}` }
+      }
       
       // Pull latest
       try {
         await execAsync('git pull', { cwd: data.cwd })
-      } catch {
-        // Ignore pull errors (might be a new repo)
+      } catch (pullError) {
+        const errorMsg = String(pullError)
+        if (errorMsg.includes('CONFLICT')) {
+          return { success: false, error: `Pull resulted in merge conflicts. Please resolve manually.` }
+        }
+        // Ignore other pull errors (might be a new repo)
       }
       
       // Merge the feature branch
-      await execAsync(`git merge ${currentBranch}`, { cwd: data.cwd })
+      try {
+        await execAsync(`git merge ${currentBranch}`, { cwd: data.cwd })
+      } catch (mergeError) {
+        const errorMsg = String(mergeError)
+        if (errorMsg.includes('CONFLICT')) {
+          return { success: false, error: `Merge conflicts detected when merging '${currentBranch}' into ${targetBranch}. Please resolve conflicts manually.` }
+        }
+        return { success: false, error: `Failed to merge '${currentBranch}': ${errorMsg}` }
+      }
       
       // Push main/master
-      await execAsync('git push', { cwd: data.cwd })
+      try {
+        await execAsync('git push', { cwd: data.cwd })
+      } catch (pushError) {
+        return { success: false, error: `Merge succeeded but push failed: ${String(pushError)}` }
+      }
     }
     
     // Optionally delete the feature branch
