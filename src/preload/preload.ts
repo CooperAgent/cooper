@@ -131,8 +131,8 @@ const electronAPI = {
 
   // Git operations
   git: {
-    getChangedFiles: (cwd: string, files: string[]): Promise<{ success: boolean; files: string[]; error?: string }> => {
-      return ipcRenderer.invoke('git:getChangedFiles', { cwd, files })
+    getChangedFiles: (cwd: string, files: string[], includeAll?: boolean): Promise<{ success: boolean; files: string[]; error?: string }> => {
+      return ipcRenderer.invoke('git:getChangedFiles', { cwd, files, includeAll })
     },
     getDiff: (cwd: string, files: string[]): Promise<{ diff: string; success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:getDiff', { cwd, files })

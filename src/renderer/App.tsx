@@ -997,16 +997,17 @@ const App: React.FC = () => {
     setShowCommitModal(true);
 
     try {
-      // First, recheck which files actually have changes
+      // Get ALL changed files in the repo, not just the ones we tracked
       const changedResult = await window.electronAPI.git.getChangedFiles(
         activeTab.cwd,
         activeTab.editedFiles,
+        true, // includeAll: get all changed files, including package-lock.json etc.
       );
       
       const actualChangedFiles = changedResult.success ? changedResult.files : activeTab.editedFiles;
       
-      // Update the tab's editedFiles list
-      if (changedResult.success && actualChangedFiles.length !== activeTab.editedFiles.length) {
+      // Update the tab's editedFiles list with all changed files
+      if (changedResult.success) {
         updateTab(activeTab.id, { editedFiles: actualChangedFiles });
       }
       
