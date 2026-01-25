@@ -76,6 +76,8 @@ const App: React.FC = () => {
   const [commitAction, setCommitAction] = useState<'push' | 'merge' | 'pr'>('push');
   const [removeWorktreeAfterMerge, setRemoveWorktreeAfterMerge] = useState(false);
   const [pendingMergeInfo, setPendingMergeInfo] = useState<{ incomingFiles: string[] } | null>(null);
+  const [mainAheadInfo, setMainAheadInfo] = useState<{ isAhead: boolean; commits: string[]; targetBranch?: string } | null>(null);
+  const [isMergingMain, setIsMergingMain] = useState(false);
 
   // Theme context
   const {
@@ -994,9 +996,13 @@ const App: React.FC = () => {
     setIsCommitting(false);
     setCommitMessage("Checking files...");
     setIsGeneratingMessage(true);
+    setMainAheadInfo(null);
     setShowCommitModal(true);
 
     try {
+      // Check if origin/main is ahead of current branch (in parallel with other checks)
+      const mainAheadPromise = window.electronAPI.git.checkMainAhead(activeTab.cwd);
+      
       // Get ALL changed files in the repo, not just the ones we tracked
       const changedResult = await window.electronAPI.git.getChangedFiles(
         activeTab.cwd,
@@ -1037,6 +1043,20 @@ const App: React.FC = () => {
           .map((f) => f.split("/").pop())
           .join(", ");
         setCommitMessage(`Update ${fileNames}`);
+      }
+      
+      // Check if main is ahead (await the promise we started earlier)
+      try {
+        const mainAheadResult = await mainAheadPromise;
+        if (mainAheadResult.success && mainAheadResult.isAhead) {
+          setMainAheadInfo({ 
+            isAhead: true, 
+            commits: mainAheadResult.commits,
+            targetBranch: mainAheadResult.targetBranch
+          });
+        }
+      } catch {
+        // Ignore errors checking main ahead
       }
     } catch (error) {
       console.error("Failed to generate commit message:", error);
@@ -1902,7 +1922,7 @@ Start by exploring the codebase to understand the current implementation, then m
           )}
 
           {/* Messages Area - Conversation Only */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+          <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
             {activeTab?.messages.length === 0 && (
               <div className="flex flex-col items-center justify-center min-h-full text-center -m-4 p-4">
                 <img
@@ -2929,7 +2949,7 @@ Start by exploring the codebase to understand the current implementation, then m
       {/* Commit Modal */}
       <Modal
         isOpen={showCommitModal && !!activeTab}
-        onClose={() => setShowCommitModal(false)}
+        onClose={() => { setShowCommitModal(false); setMainAheadInfo(null); }}
         title="Commit & Push Changes"
       >
         <Modal.Body>
@@ -2952,6 +2972,72 @@ Start by exploring the codebase to understand the current implementation, then m
                   ))}
                 </div>
               </div>
+
+              {/* Warning if origin/main is ahead */}
+              {mainAheadInfo?.isAhead && (
+                <div className="mb-3 bg-copilot-warning/10 border border-copilot-warning/30 rounded p-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-copilot-warning text-sm">⚠️</span>
+                    <div className="flex-1">
+                      <div className="text-xs text-copilot-warning font-medium mb-1">
+                        origin/{mainAheadInfo.targetBranch || 'main'} is {mainAheadInfo.commits.length} commit{mainAheadInfo.commits.length > 1 ? 's' : ''} ahead
+                      </div>
+                      <div className="text-xs text-copilot-text-muted mb-2">
+                        Merge the latest changes into your branch to stay up to date.
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!activeTab) return;
+                          setIsMergingMain(true);
+                          setCommitError(null);
+                          try {
+                            const result = await window.electronAPI.git.mergeMainIntoBranch(activeTab.cwd);
+                            if (!result.success) {
+                              setCommitError(result.error || 'Failed to merge');
+                              return;
+                            }
+                            // Refresh the changed files list
+                            const changedResult = await window.electronAPI.git.getChangedFiles(
+                              activeTab.cwd,
+                              activeTab.editedFiles,
+                              true
+                            );
+                            if (changedResult.success) {
+                              updateTab(activeTab.id, { editedFiles: changedResult.files });
+                            }
+                            // Re-check if main is still ahead
+                            const mainAheadResult = await window.electronAPI.git.checkMainAhead(activeTab.cwd);
+                            if (mainAheadResult.success && mainAheadResult.isAhead) {
+                              setMainAheadInfo({ 
+                                isAhead: true, 
+                                commits: mainAheadResult.commits,
+                                targetBranch: mainAheadResult.targetBranch
+                              });
+                            } else {
+                              setMainAheadInfo(null);
+                            }
+                          } catch (error) {
+                            setCommitError(String(error));
+                          } finally {
+                            setIsMergingMain(false);
+                          }
+                        }}
+                        disabled={isMergingMain || isCommitting}
+                        className="px-3 py-1 text-xs bg-copilot-warning/20 hover:bg-copilot-warning/30 text-copilot-warning border border-copilot-warning/30 rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                      >
+                        {isMergingMain ? (
+                          <>
+                            <span className="w-3 h-3 border border-copilot-warning/30 border-t-copilot-warning rounded-full animate-spin"></span>
+                            Merging...
+                          </>
+                        ) : (
+                          <>Merge origin/{mainAheadInfo.targetBranch || 'main'} into branch</>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Commit message */}
               <div className="mb-3 relative">

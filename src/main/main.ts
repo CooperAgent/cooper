@@ -1575,6 +1575,95 @@ ipcMain.handle('git:getBranch', async (_event, cwd: string) => {
   }
 })
 
+// Git operations - check if origin/main is ahead of current branch
+ipcMain.handle('git:checkMainAhead', async (_event, cwd: string) => {
+  try {
+    // Get current branch
+    const { stdout: branchOutput } = await execAsync('git branch --show-current', { cwd })
+    const currentBranch = branchOutput.trim()
+    
+    // If already on main/master, no need to check
+    if (currentBranch === 'main' || currentBranch === 'master') {
+      return { success: true, isAhead: false, commits: [] }
+    }
+    
+    // Determine target main branch
+    let targetBranch = 'main'
+    try {
+      await execAsync('git rev-parse --verify origin/main', { cwd })
+    } catch {
+      try {
+        await execAsync('git rev-parse --verify origin/master', { cwd })
+        targetBranch = 'master'
+      } catch {
+        return { success: true, isAhead: false, commits: [] }
+      }
+    }
+    
+    // Fetch latest from origin
+    try {
+      await execAsync('git fetch origin', { cwd })
+    } catch {
+      // Ignore fetch errors
+    }
+    
+    // Check if origin/main has commits not in current branch
+    const { stdout: aheadCommits } = await execAsync(`git log --oneline HEAD..origin/${targetBranch}`, { cwd })
+    const commits = aheadCommits.trim().split('\n').filter(c => c)
+    
+    return { 
+      success: true, 
+      isAhead: commits.length > 0, 
+      commits,
+      targetBranch
+    }
+  } catch (error) {
+    console.error('Git checkMainAhead failed:', error)
+    return { success: false, isAhead: false, commits: [], error: String(error) }
+  }
+})
+
+// Git operations - merge origin/main into current branch
+ipcMain.handle('git:mergeMainIntoBranch', async (_event, cwd: string) => {
+  try {
+    // Determine target branch (main or master)
+    let targetBranch = 'main'
+    try {
+      await execAsync('git rev-parse --verify origin/main', { cwd })
+    } catch {
+      try {
+        await execAsync('git rev-parse --verify origin/master', { cwd })
+        targetBranch = 'master'
+      } catch {
+        return { success: false, error: 'Neither origin/main nor origin/master exists' }
+      }
+    }
+
+    // Fetch latest
+    try {
+      await execAsync('git fetch origin', { cwd })
+    } catch {
+      // Ignore fetch errors
+    }
+
+    // Merge origin/main into current branch
+    try {
+      await execAsync(`git merge origin/${targetBranch}`, { cwd })
+    } catch (mergeError) {
+      const errorMsg = String(mergeError)
+      if (errorMsg.includes('CONFLICT')) {
+        return { success: false, error: `Merge conflicts detected. Please resolve them manually.` }
+      }
+      return { success: false, error: `Failed to merge origin/${targetBranch}: ${errorMsg}` }
+    }
+
+    return { success: true, targetBranch }
+  } catch (error) {
+    console.error('Git mergeMainIntoBranch failed:', error)
+    return { success: false, error: String(error) }
+  }
+})
+
 // Git operations - checkout (create) branch
 ipcMain.handle('git:checkoutBranch', async (_event, data: { cwd: string; branchName: string }) => {
   try {
