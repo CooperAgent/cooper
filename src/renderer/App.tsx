@@ -857,6 +857,10 @@ const App: React.FC = () => {
     const pendingConfirmation = activeTab?.pendingConfirmations?.[0];
     if (!pendingConfirmation || !activeTab) return;
 
+    // Always reset to "once" for next command (safety measure)
+    setAllowMode("once");
+    setShowAllowDropdown(false);
+
     try {
       await window.electronAPI.copilot.respondPermission({
         requestId: pendingConfirmation.requestId,
@@ -2345,7 +2349,7 @@ Start by exploring the codebase to understand the current implementation, then m
                           </button>
                           <button
                             onClick={() => setShowAllowDropdown(!showAllowDropdown)}
-                            className="px-1.5 py-2 rounded-r bg-copilot-success hover:brightness-110 text-copilot-text-inverse text-sm font-medium transition-colors border-l border-copilot-text-inverse/20"
+                            className="px-1.5 py-2 rounded-r bg-copilot-success hover:brightness-110 text-copilot-text-inverse text-sm font-medium transition-colors border-l border-black/20"
                             title="Choose approval scope"
                           >
                             <ChevronDownIcon size={14} />
