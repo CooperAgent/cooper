@@ -55,6 +55,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     xterm.open(terminalRef.current)
     fitAddon.fit()
 
+    // Allow Ctrl/Cmd key combinations to pass through to the terminal
+    xterm.attachCustomKeyEventHandler((event) => {
+      // Allow all key events to be processed by xterm (pass to PTY)
+      // Return true to let xterm handle the event, false to prevent it
+      if ((event.ctrlKey || event.metaKey) && event.type === 'keydown') {
+        // Let xterm handle Ctrl/Cmd key combinations
+        return true
+      }
+      return true
+    })
+
     xtermRef.current = xterm
     fitAddonRef.current = fitAddon
     setIsInitialized(true)
@@ -133,21 +144,19 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     return () => window.removeEventListener('resize', handleResize)
   }, [isOpen, isConnected])
 
-  // Cleanup on close
+  // Cleanup on close - only cleanup when component unmounts (tab closed), not when hidden
   useEffect(() => {
-    if (!isOpen && isInitialized) {
-      // Close PTY when panel closes
+    // Return cleanup function that runs on unmount
+    return () => {
+      // Use refs which are always current, not stale closure values
       window.electronAPI.pty.close(sessionIdRef.current)
       if (xtermRef.current) {
         xtermRef.current.dispose()
         xtermRef.current = null
       }
       fitAddonRef.current = null
-      setIsInitialized(false)
-      setIsConnected(false)
-      setBufferLineCount(0)
     }
-  }, [isOpen, isInitialized])
+  }, []) // Empty deps - only run cleanup on unmount
 
   const handleSendToAgent = useCallback(async () => {
     const result = await window.electronAPI.pty.getOutput(sessionIdRef.current)
@@ -163,6 +172,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     const result = await window.electronAPI.pty.clearBuffer(sessionIdRef.current)
     if (result.success) {
       setBufferLineCount(0)
+      // Also clear the terminal display
+      if (xtermRef.current) {
+        xtermRef.current.clear()
+      }
     }
   }, [])
 
@@ -192,10 +205,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     }
   }, [cwd])
 
-  if (!isOpen) return null
-
   return (
-    <div className="flex flex-col border-b border-copilot-border bg-copilot-terminal-bg">
+    <div className={`flex flex-col border-b border-copilot-border bg-copilot-terminal-bg ${!isOpen ? 'hidden' : ''}`}>
       {/* Terminal Header */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-copilot-surface border-b border-copilot-border">
         <div className="flex items-center gap-2 min-w-0">

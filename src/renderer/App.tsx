@@ -119,6 +119,8 @@ const App: React.FC = () => {
 
   // Terminal panel state - track which session has terminal open
   const [terminalOpenForSession, setTerminalOpenForSession] = useState<string | null>(null);
+  // Track which sessions have had a terminal initialized (so we keep them alive)
+  const [terminalInitializedSessions, setTerminalInitializedSessions] = useState<Set<string>>(new Set());
   // Terminal output attachment state
   const [terminalAttachment, setTerminalAttachment] = useState<{output: string; lineCount: number} | null>(null);
 
@@ -1370,6 +1372,16 @@ Start by exploring the codebase to understand the current implementation, then m
   const handleCloseTab = async (tabId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
 
+    // Clean up terminal state for this tab
+    setTerminalInitializedSessions(prev => {
+      const next = new Set(prev);
+      next.delete(tabId);
+      return next;
+    });
+    if (terminalOpenForSession === tabId) {
+      setTerminalOpenForSession(null);
+    }
+
     // If closing the last tab, delete it and create a new one
     if (tabs.length === 1) {
       try {
@@ -1922,10 +1934,16 @@ Start by exploring the codebase to understand the current implementation, then m
           {/* Terminal Toggle Button */}
           {activeTab && (
             <button
-              onClick={() => setTerminalOpenForSession(
-                terminalOpenForSession === activeTab.id ? null : activeTab.id
-              )}
-              className={`shrink-0 flex items-center gap-2 px-4 py-2 text-xs border-b border-copilot-border transition-colors ${
+              onClick={() => {
+                if (terminalOpenForSession === activeTab.id) {
+                  setTerminalOpenForSession(null);
+                } else {
+                  setTerminalOpenForSession(activeTab.id);
+                  // Track that this session has had a terminal initialized
+                  setTerminalInitializedSessions(prev => new Set(prev).add(activeTab.id));
+                }
+              }}
+              className={`shrink-0 flex items-center gap-2 px-4 py-2 text-xs border-b border-copilot-border ${
                 terminalOpenForSession === activeTab.id
                   ? "text-copilot-accent bg-copilot-surface" 
                   : "text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface"
@@ -1935,21 +1953,22 @@ Start by exploring the codebase to understand the current implementation, then m
               <span className="font-medium">Terminal</span>
               <ChevronDownIcon
                 size={12}
-                className={`transition-transform ${terminalOpenForSession === activeTab.id ? "rotate-180" : ""}`}
+                className={`transition-transform duration-200 ${terminalOpenForSession === activeTab.id ? "rotate-180" : ""}`}
               />
             </button>
           )}
 
-          {/* Embedded Terminal Panel */}
-          {activeTab && (
+          {/* Embedded Terminal Panels - render one per initialized session to preserve state */}
+          {tabs.filter(tab => terminalInitializedSessions.has(tab.id)).map(tab => (
             <TerminalPanel
-              sessionId={activeTab.id}
-              cwd={activeTab.cwd}
-              isOpen={terminalOpenForSession === activeTab.id}
+              key={tab.id}
+              sessionId={tab.id}
+              cwd={tab.cwd}
+              isOpen={terminalOpenForSession === tab.id && activeTabId === tab.id}
               onClose={() => setTerminalOpenForSession(null)}
               onSendToAgent={handleSendTerminalOutput}
             />
-          )}
+          ))}
 
           {/* Messages Area - Conversation Only */}
           <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
