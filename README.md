@@ -8,7 +8,7 @@ A native desktop GUI for GitHub Copilot, wrapping the [Copilot SDK](https://gith
 
 Watch Copilot Skins building itself in action!
 
-![Copilot Skins Demo](https://github.com/idofrizler/copilot-ui/releases/download/assets/Copilot.Skins.2-5.gif)
+![Copilot Skins Demo](https://github.com/idofrizler/copilot-ui/releases/download/assets/Copilot.Skins.2-4.gif)
 
 ## Features
 
