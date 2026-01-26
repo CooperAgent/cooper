@@ -266,6 +266,21 @@ const electronAPI = {
       return ipcRenderer.invoke('skills:getAll', cwd)
     }
   },
+  // Browser Automation Management
+  browser: {
+    hasActive: (): Promise<{ active: boolean }> => {
+      return ipcRenderer.invoke('browser:hasActive')
+    },
+    getActiveSessions: (): Promise<{ sessions: string[] }> => {
+      return ipcRenderer.invoke('browser:getActiveSessions')
+    },
+    close: (sessionId?: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('browser:close', sessionId)
+    },
+    saveState: (): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('browser:saveState')
+    }
+  },
   // Worktree Session Management
   worktree: {
     fetchGitHubIssue: (issueUrl: string): Promise<{

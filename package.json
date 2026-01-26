@@ -55,10 +55,11 @@
     "electron-log": "^5.4.3",
     "electron-store": "^11.0.0",
     "node-pty": "^1.1.0",
+    "playwright": "^1.58.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
-    "zod": "^3.23.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.0",

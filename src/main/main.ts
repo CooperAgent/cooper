@@ -12,6 +12,8 @@ import log from 'electron-log/main'
 import { extractExecutables } from './utils/extractExecutables'
 import * as worktree from './worktree'
 import * as ptyManager from './pty'
+import * as browserManager from './browser'
+import { createBrowserTools } from './browserTools'
 
 // MCP Server Configuration types (matching SDK)
 interface MCPServerConfigBase {
@@ -324,8 +326,13 @@ async function resumeDisconnectedSession(sessionId: string, sessionState: Sessio
   const client = await getClientForCwd(sessionState.cwd)
   const mcpConfig = await readMcpConfig()
   
+  // Create browser tools for resumed session
+  const browserTools = createBrowserTools(sessionId)
+  log.info(`[${sessionId}] Resuming with ${browserTools.length} browser tools:`, browserTools.map(t => t.name).join(', '))
+  
   const resumedSession = await client.resumeSession(sessionId, {
     mcpServers: mcpConfig.mcpServers,
+    tools: browserTools,
     onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
   })
   
@@ -815,9 +822,18 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
   // Load MCP servers config
   const mcpConfig = await readMcpConfig()
   
+  // Generate session ID upfront so we can pass it to browser tools
+  const generatedSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+  
+  // Create browser tools for this session
+  const browserTools = createBrowserTools(generatedSessionId)
+  console.log(`[${generatedSessionId}] Registering ${browserTools.length} browser tools:`, browserTools.map(t => t.name))
+  
   const newSession = await client.createSession({
+    sessionId: generatedSessionId,
     model: sessionModel,
     mcpServers: mcpConfig.mcpServers,
+    tools: browserTools,
     onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, newSession.sessionId),
     systemMessage: {
       mode: 'append',
@@ -832,6 +848,17 @@ You have access to the \`web_fetch\` tool. Use it when:
 
 When fetching, prefer official/authoritative sources (official docs, GitHub, npm, PyPI, etc.).
 The user will be prompted to approve each new domain you access.
+
+## Browser Automation
+
+You have access to browser automation tools (browser_navigate, browser_click, browser_fill, etc.). Use these when:
+- User asks you to interact with a website
+- User needs to perform web automation tasks (fill forms, click buttons, etc.)
+- User wants to log into a web service
+- User needs to extract information from a web page that requires interaction
+
+The browser window will be visible to the user. Login sessions persist between runs, so users won't need to re-login each time.
+Browser tools available: browser_navigate, browser_click, browser_fill, browser_type, browser_press_key, browser_screenshot, browser_get_text, browser_get_html, browser_wait_for_element, browser_get_page_info, browser_select_option, browser_checkbox, browser_scroll, browser_go_back, browser_reload, browser_get_links, browser_get_form_inputs, browser_close.
 `
     },
   })
@@ -963,6 +990,7 @@ async function initCopilot(): Promise<void> {
         
         const session = await client.resumeSession(sessionId, {
           mcpServers: mcpConfig.mcpServers,
+          tools: createBrowserTools(sessionId),
           onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
         })
         
@@ -2437,6 +2465,7 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
   
   const session = await client.resumeSession(sessionId, {
     mcpServers: mcpConfig.mcpServers,
+    tools: createBrowserTools(sessionId),
     onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
   })
   
@@ -2555,6 +2584,29 @@ ipcMain.handle('skills:getAll', async (_event, cwd?: string) => {
   const result = await getAllSkills(projectCwd)
   console.log(`Found ${result.skills.length} skills (${result.errors.length} errors)`)
   return result
+})
+
+// Browser session management handlers
+ipcMain.handle('browser:hasActive', async () => {
+  return { active: browserManager.hasActiveBrowser() }
+})
+
+ipcMain.handle('browser:getActiveSessions', async () => {
+  return { sessions: browserManager.getActiveBrowserSessions() }
+})
+
+ipcMain.handle('browser:close', async (_event, sessionId?: string) => {
+  if (sessionId) {
+    await browserManager.closeSessionPage(sessionId)
+  } else {
+    await browserManager.closeBrowser()
+  }
+  return { success: true }
+})
+
+ipcMain.handle('browser:saveState', async () => {
+  await browserManager.saveBrowserState()
+  return { success: true }
 })
 
 // Window control handlers
@@ -2676,6 +2728,9 @@ app.on('window-all-closed', async () => {
   // Stop keep-alive timer
   stopKeepAlive()
   
+  // Close browser and save state
+  await browserManager.closeBrowser()
+  
   // Destroy all sessions
   for (const [id, state] of sessions) {
     await state.session.destroy()
@@ -2696,6 +2751,9 @@ app.on('window-all-closed', async () => {
 app.on('before-quit', async () => {
   // Close all PTY instances
   ptyManager.closeAllPtys()
+  
+  // Close browser and save state
+  await browserManager.closeBrowser()
   
   // Destroy all sessions
   for (const [id, state] of sessions) {
