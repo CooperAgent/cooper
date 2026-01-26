@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, desktopCapturer } from 'electron'
 import { join, dirname } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, copyFileSync } from 'fs'
 import { exec } from 'child_process'
@@ -6,7 +6,7 @@ import { promisify } from 'util'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 
 const execAsync = promisify(exec)
-import { CopilotClient, CopilotSession, PermissionRequest, PermissionRequestResult } from '@github/copilot-sdk'
+import { CopilotClient, CopilotSession, PermissionRequest, PermissionRequestResult, Tool } from '@github/copilot-sdk'
 import Store from 'electron-store'
 import log from 'electron-log/main'
 import { extractExecutables, containsDestructiveCommand, getDestructiveExecutables } from './utils/extractExecutables'
@@ -40,6 +40,130 @@ type MCPServerConfig = MCPLocalServerConfig | MCPRemoteServerConfig
 
 interface MCPConfigFile {
   mcpServers: Record<string, MCPServerConfig>
+}
+
+// Screenshot tool - captures the screen or a specific window and saves to the session's cwd
+// Uses Electron's desktopCapturer API which runs in the main process with granted permissions
+function createScreenshotTool(sessionCwd: string): Tool {
+  return {
+    name: 'take_screenshot',
+    description: 'Takes a screenshot and saves it to a file. Can capture either the entire screen or a specific window by name. Use this to capture visual evidence of a delivered feature or UI state. Returns the path to the saved screenshot file.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filename: {
+          type: 'string',
+          description: 'Optional filename for the screenshot (without extension). If not provided, uses timestamp.'
+        },
+        window: {
+          type: 'string',
+          description: 'Optional window name to capture (e.g., "Chrome", "VS Code", "Terminal"). If not provided, captures the entire screen. Use list_windows first to see available windows.'
+        },
+        list_windows: {
+          type: 'boolean',
+          description: 'If true, returns a list of available window names instead of taking a screenshot. Useful to discover what windows can be captured.'
+        }
+      }
+    },
+    handler: async (args: { filename?: string; window?: string; list_windows?: boolean }) => {
+      try {
+        // Generate filename
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const baseFilename = args.filename || `screenshot-${timestamp}`
+        const filename = `${baseFilename}.png`
+        const filepath = join(sessionCwd, filename)
+
+        // If list_windows is true, get available sources
+        if (args.list_windows) {
+          log.info('[Screenshot] Listing available windows...')
+          const windowSources = await desktopCapturer.getSources({
+            types: ['window'],
+            thumbnailSize: { width: 1, height: 1 }
+          })
+          const screenSources = await desktopCapturer.getSources({
+            types: ['screen'],
+            thumbnailSize: { width: 1, height: 1 }
+          })
+          return {
+            windows: windowSources.map(s => s.name).filter(n => n),
+            screens: screenSources.map(s => s.name),
+            hint: 'Use the window parameter with one of these names to capture a specific window, or omit it to capture the entire screen.'
+          }
+        }
+
+        // Determine what to capture
+        const captureType = args.window ? 'window' : 'screen'
+        log.info(`[Screenshot] Capturing ${captureType}${args.window ? `: ${args.window}` : ''}...`)
+        
+        const sources = await desktopCapturer.getSources({
+          types: [captureType],
+          thumbnailSize: { width: 1920, height: 1080 },
+          fetchWindowIcons: false
+        })
+        
+        if (sources.length === 0) {
+          return { 
+            error: `No ${captureType} sources available`,
+            hint: 'Screen recording permission may be required. Go to System Settings → Privacy & Security → Screen Recording and enable Copilot Skins. You may need to restart the app.'
+          }
+        }
+        
+        // Find the right source
+        let source
+        if (args.window) {
+          const searchTerm = args.window.toLowerCase()
+          source = sources.find(s => s.name.toLowerCase().includes(searchTerm))
+          if (!source) {
+            return { 
+              error: `Window "${args.window}" not found`,
+              available_windows: sources.map(s => s.name),
+              hint: 'Try one of the available window names listed above.'
+            }
+          }
+        } else {
+          source = sources[0]
+        }
+        
+        const thumbnail = source.thumbnail
+        
+        // Check if we got actual content
+        if (thumbnail.isEmpty()) {
+          return {
+            error: 'Screenshot capture returned empty image',
+            hint: 'Screen recording permission is required. Go to System Settings → Privacy & Security → Screen Recording and enable Copilot Skins. Restart the app after granting permission.'
+          }
+        }
+        
+        // Convert to PNG and save
+        const pngBuffer = thumbnail.toPNG()
+        
+        if (!pngBuffer || pngBuffer.length === 0) {
+          return {
+            error: 'Screenshot produced empty file',
+            hint: 'Screen recording permission may not be fully granted. Try removing and re-adding Copilot Skins in Screen Recording settings, then restart.'
+          }
+        }
+        
+        await writeFile(filepath, pngBuffer)
+        
+        log.info(`[Screenshot] Saved to: ${filepath} (${pngBuffer.length} bytes)`)
+        return {
+          success: true,
+          path: filepath,
+          filename: filename,
+          captured: args.window ? `window: ${source.name}` : 'entire screen',
+          size: `${pngBuffer.length} bytes`,
+          dimensions: `${thumbnail.getSize().width}x${thumbnail.getSize().height}`
+        }
+        
+      } catch (error) {
+        log.error('[Screenshot] Failed:', error)
+        return {
+          error: `Failed to capture screenshot: ${error instanceof Error ? error.message : String(error)}`
+        }
+      }
+    }
+  }
 }
 
 // Path to MCP config file
@@ -326,13 +450,14 @@ async function resumeDisconnectedSession(sessionId: string, sessionState: Sessio
   const client = await getClientForCwd(sessionState.cwd)
   const mcpConfig = await readMcpConfig()
   
-  // Create browser tools for resumed session
+  // Create browser tools and screenshot tool for resumed session
   const browserTools = createBrowserTools(sessionId)
-  log.info(`[${sessionId}] Resuming with ${browserTools.length} browser tools:`, browserTools.map(t => t.name).join(', '))
+  const screenshotTool = createScreenshotTool(sessionState.cwd)
+  log.info(`[${sessionId}] Resuming with ${browserTools.length + 1} tools:`, [...browserTools.map(t => t.name), screenshotTool.name].join(', '))
   
   const resumedSession = await client.resumeSession(sessionId, {
     mcpServers: mcpConfig.mcpServers,
-    tools: browserTools,
+    tools: [...browserTools, screenshotTool],
     onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
   })
   
@@ -855,15 +980,16 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
   // Generate session ID upfront so we can pass it to browser tools
   const generatedSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
   
-  // Create browser tools for this session
+  // Create browser tools and screenshot tool for this session
   const browserTools = createBrowserTools(generatedSessionId)
-  console.log(`[${generatedSessionId}] Registering ${browserTools.length} browser tools:`, browserTools.map(t => t.name))
+  const screenshotTool = createScreenshotTool(sessionCwd)
+  console.log(`[${generatedSessionId}] Registering ${browserTools.length + 1} tools:`, [...browserTools.map(t => t.name), screenshotTool.name])
   
   const newSession = await client.createSession({
     sessionId: generatedSessionId,
     model: sessionModel,
     mcpServers: mcpConfig.mcpServers,
-    tools: browserTools,
+    tools: [...browserTools, screenshotTool],
     onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, newSession.sessionId),
     systemMessage: {
       mode: 'append',
@@ -889,6 +1015,13 @@ You have access to browser automation tools (browser_navigate, browser_click, br
 
 The browser window will be visible to the user. Login sessions persist between runs, so users won't need to re-login each time.
 Browser tools available: browser_navigate, browser_click, browser_fill, browser_type, browser_press_key, browser_screenshot, browser_get_text, browser_get_html, browser_wait_for_element, browser_get_page_info, browser_select_option, browser_checkbox, browser_scroll, browser_go_back, browser_reload, browser_get_links, browser_get_form_inputs, browser_close.
+
+## Screenshot Tool
+
+You have access to the \`take_screenshot\` tool. Use it to capture visual evidence of UI features or application state.
+- Call with \`list_windows: true\` to see available windows
+- Call with \`window: "Window Name"\` to capture a specific window
+- Call with no arguments to capture the entire screen
 `
     },
   })
@@ -1018,9 +1151,12 @@ async function initCopilot(): Promise<void> {
         // Load MCP servers config
         const mcpConfig = await readMcpConfig()
         
+        // Create screenshot tool for this session
+        const screenshotTool = createScreenshotTool(sessionCwd)
+        
         const session = await client.resumeSession(sessionId, {
           mcpServers: mcpConfig.mcpServers,
-          tools: createBrowserTools(sessionId),
+          tools: [...createBrowserTools(sessionId), screenshotTool],
           onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
         })
         
@@ -2493,9 +2629,12 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
   // Load MCP servers config
   const mcpConfig = await readMcpConfig()
   
+  // Create screenshot tool for this session
+  const screenshotTool = createScreenshotTool(sessionCwd)
+  
   const session = await client.resumeSession(sessionId, {
     mcpServers: mcpConfig.mcpServers,
-    tools: createBrowserTools(sessionId),
+    tools: [...createBrowserTools(sessionId), screenshotTool],
     onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
   })
   

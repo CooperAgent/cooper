@@ -58,6 +58,7 @@ export interface RalphConfig {
   maxIterations: number;
   currentIteration: number;
   active: boolean;
+  requireScreenshot?: boolean; // When true, agent must take screenshot of delivered feature
 }
 
 // Context usage information from the SDK

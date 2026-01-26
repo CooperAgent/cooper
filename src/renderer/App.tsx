@@ -134,6 +134,7 @@ const App: React.FC = () => {
   const [showRalphSettings, setShowRalphSettings] = useState(false);
   const [ralphEnabled, setRalphEnabled] = useState(false);
   const [ralphMaxIterations, setRalphMaxIterations] = useState(20);
+  const [ralphRequireScreenshot, setRalphRequireScreenshot] = useState(false);
 
   // Worktree session state
   const [showWorktreeList, setShowWorktreeList] = useState(false);
@@ -502,6 +503,9 @@ const App: React.FC = () => {
             // Build continuation prompt that includes the agent's last response for context
             // This differs from original Ralph which relies solely on files/git history
             const lastResponseContent = lastMessage?.content || '';
+            const screenshotChecklistItem = tab.ralphConfig.requireScreenshot 
+              ? '\n- [ ] Screenshot taken of the delivered feature' 
+              : '';
             const continuationPrompt = `🔄 **Ralph Loop - Iteration ${nextIteration}/${tab.ralphConfig.maxIterations}**
 
 ---
@@ -527,7 +531,7 @@ COMPLETION CHECKLIST (verify ALL before signaling complete):
 - [ ] Code builds without errors
 - [ ] Feature tested and working (actually ran the app)
 - [ ] No console errors introduced
-- [ ] Tests added/updated if applicable
+- [ ] Tests added/updated if applicable${screenshotChecklistItem}
 
 Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complete.`;
             
@@ -929,9 +933,20 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
           maxIterations: ralphMaxIterations,
           currentIteration: 1,
           active: true,
+          requireScreenshot: ralphRequireScreenshot,
         }
       : undefined;
     
+    // Build screenshot requirement text if enabled
+    const screenshotRequirement = ralphRequireScreenshot
+      ? `
+
+6. **Take Screenshot**: Before signaling completion, you MUST take a screenshot of the delivered feature:
+   - Use the \`take_screenshot\` tool to capture the working feature
+   - The screenshot should clearly show the feature in action
+   - This is REQUIRED before you can signal completion`
+      : '';
+
     // If Ralph is enabled, append detailed completion instructions to the prompt
     const promptToSend = ralphEnabled
       ? `${userMessage.content}
@@ -954,7 +969,7 @@ You are running in an autonomous loop. Before signaling completion, you MUST ver
 
 4. **Add Tests**: If the codebase has tests, add appropriate test coverage for the new functionality.
 
-5. **Verify Completion**: Go through each item in your plan one more time to ensure nothing was missed.
+5. **Verify Completion**: Go through each item in your plan one more time to ensure nothing was missed.${screenshotRequirement}
 
 Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETION_SIGNAL}`
       : userMessage.content;
@@ -983,6 +998,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     if (ralphEnabled) {
       setRalphEnabled(false);
       setShowRalphSettings(false);
+      setRalphRequireScreenshot(false);
     }
 
     try {
@@ -991,7 +1007,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       console.error("Send error:", error);
       updateTab(tabId, { isProcessing: false, ralphConfig: undefined });
     }
-  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphMaxIterations, terminalAttachment]);
+  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphMaxIterations, ralphRequireScreenshot, terminalAttachment]);
 
   // Handle sending terminal output to the agent
   const handleSendTerminalOutput = useCallback((output: string, lineCount: number) => {
@@ -2727,6 +2743,15 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         max={100}
                       />
                     </div>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={ralphRequireScreenshot}
+                        onChange={(e) => setRalphRequireScreenshot(e.target.checked)}
+                        className="rounded border-copilot-border w-3.5 h-3.5"
+                      />
+                      <span className="text-[10px] text-copilot-text-muted">Require screenshot of delivered feature</span>
+                    </label>
                     <p className="text-[10px] text-copilot-text-muted">
                       The agent will loop until verified complete. Each iteration includes context from the previous response. The agent must: follow a plan, test the feature, fix errors, add tests if possible, and verify all plan items.
                     </p>
