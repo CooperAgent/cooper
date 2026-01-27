@@ -163,6 +163,14 @@ export const PaletteIcon: React.FC<IconProps> = ({ size = 24, className, strokeW
   </svg>
 )
 
+export const ImageIcon: React.FC<IconProps> = ({ size = 24, className, strokeWidth = 2 }) => (
+  <svg width={size} height={size} className={className} {...defaultProps} strokeWidth={strokeWidth}>
+    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+    <circle cx="8.5" cy="8.5" r="1.5" />
+    <path d="M21 15l-5-5L5 21" />
+  </svg>
+)
+
 // Ralph Wiggum icon - uses the Ralph Wiggum image
 export const RalphIcon: React.FC<IconProps> = ({ size = 24, className }) => (
   <img 
@@ -198,6 +206,7 @@ export const Icons = {
   Terminal: TerminalIcon,
   Book: BookIcon,
   Palette: PaletteIcon,
+  Image: ImageIcon,
   Ralph: RalphIcon,
 }
 

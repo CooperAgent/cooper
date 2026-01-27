@@ -3,11 +3,11 @@ import { contextBridge, ipcRenderer } from 'electron'
 const electronAPI = {
   // Copilot communication
   copilot: {
-    send: (sessionId: string, prompt: string): Promise<string> => {
-      return ipcRenderer.invoke('copilot:send', { sessionId, prompt })
+    send: (sessionId: string, prompt: string, attachments?: { type: 'file'; path: string; displayName?: string }[]): Promise<string> => {
+      return ipcRenderer.invoke('copilot:send', { sessionId, prompt, attachments })
     },
-    sendAndWait: (sessionId: string, prompt: string): Promise<string> => {
-      return ipcRenderer.invoke('copilot:sendAndWait', { sessionId, prompt })
+    sendAndWait: (sessionId: string, prompt: string, attachments?: { type: 'file'; path: string; displayName?: string }[]): Promise<string> => {
+      return ipcRenderer.invoke('copilot:sendAndWait', { sessionId, prompt, attachments })
     },
     generateTitle: (conversation: string): Promise<string> => {
       return ipcRenderer.invoke('copilot:generateTitle', { conversation })
@@ -161,6 +161,15 @@ const electronAPI = {
     },
     detectChoices: (message: string): Promise<{ isChoice: boolean; options?: { id: string; label: string; description?: string }[] }> => {
       return ipcRenderer.invoke('copilot:detectChoices', { message })
+    },
+    getModelCapabilities: (modelId: string): Promise<{ supportsVision: boolean; visionLimits?: { supportedMediaTypes: string[]; maxPromptImages: number; maxPromptImageSize: number } }> => {
+      return ipcRenderer.invoke('copilot:getModelCapabilities', modelId)
+    },
+    saveImageToTemp: (dataUrl: string, filename: string): Promise<{ success: boolean; path?: string; error?: string }> => {
+      return ipcRenderer.invoke('copilot:saveImageToTemp', { dataUrl, filename })
+    },
+    fetchImageFromUrl: (url: string): Promise<{ success: boolean; path?: string; dataUrl?: string; mimeType?: string; size?: number; filename?: string; error?: string }> => {
+      return ipcRenderer.invoke('copilot:fetchImageFromUrl', url)
     }
   },
 

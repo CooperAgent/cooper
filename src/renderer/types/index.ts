@@ -3,6 +3,8 @@ export type {
   Message,
   ActiveTool,
   ModelInfo,
+  ModelCapabilities,
+  ImageAttachment,
   PendingConfirmation,
   TabState,
   PreviousSession,

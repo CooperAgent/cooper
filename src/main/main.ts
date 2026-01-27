@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, desktopCapturer } from 'electron'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, readdirSync, readFileSync, copyFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, copyFileSync, statSync, unlinkSync } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { readFile, writeFile, mkdir } from 'fs/promises'
@@ -1299,7 +1299,7 @@ function createWindow(): void {
 }
 
 // IPC Handlers
-ipcMain.handle('copilot:send', async (_event, data: { sessionId: string, prompt: string }) => {
+ipcMain.handle('copilot:send', async (_event, data: { sessionId: string, prompt: string, attachments?: { type: 'file'; path: string; displayName?: string }[] }) => {
   const sessionState = sessions.get(data.sessionId)
   if (!sessionState) {
     throw new Error(`Session not found: ${data.sessionId}`)
@@ -1307,8 +1307,13 @@ ipcMain.handle('copilot:send', async (_event, data: { sessionId: string, prompt:
   
   sessionState.isProcessing = true
   
+  const messageOptions = {
+    prompt: data.prompt,
+    attachments: data.attachments
+  }
+  
   try {
-    const messageId = await sessionState.session.send({ prompt: data.prompt })
+    const messageId = await sessionState.session.send(messageOptions)
     return messageId
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
@@ -1322,7 +1327,7 @@ ipcMain.handle('copilot:send', async (_event, data: { sessionId: string, prompt:
         await resumeDisconnectedSession(data.sessionId, sessionState)
         
         // Retry the send
-        const messageId = await sessionState.session.send({ prompt: data.prompt })
+        const messageId = await sessionState.session.send(messageOptions)
         log.info(`[${data.sessionId}] Successfully sent message after session resume`)
         return messageId
       } catch (resumeError) {
@@ -1337,7 +1342,7 @@ ipcMain.handle('copilot:send', async (_event, data: { sessionId: string, prompt:
   }
 })
 
-ipcMain.handle('copilot:sendAndWait', async (_event, data: { sessionId: string, prompt: string }) => {
+ipcMain.handle('copilot:sendAndWait', async (_event, data: { sessionId: string, prompt: string, attachments?: { type: 'file'; path: string; displayName?: string }[] }) => {
   const sessionState = sessions.get(data.sessionId)
   if (!sessionState) {
     throw new Error(`Session not found: ${data.sessionId}`)
@@ -1345,8 +1350,13 @@ ipcMain.handle('copilot:sendAndWait', async (_event, data: { sessionId: string, 
   
   sessionState.isProcessing = true
   
+  const messageOptions = {
+    prompt: data.prompt,
+    attachments: data.attachments
+  }
+  
   try {
-    const response = await sessionState.session.sendAndWait({ prompt: data.prompt })
+    const response = await sessionState.session.sendAndWait(messageOptions)
     sessionState.isProcessing = false
     return response?.data?.content || ''
   } catch (error) {
@@ -1358,7 +1368,7 @@ ipcMain.handle('copilot:sendAndWait', async (_event, data: { sessionId: string, 
       
       try {
         await resumeDisconnectedSession(data.sessionId, sessionState)
-        const response = await sessionState.session.sendAndWait({ prompt: data.prompt })
+        const response = await sessionState.session.sendAndWait(messageOptions)
         sessionState.isProcessing = false
         return response?.data?.content || ''
       } catch (resumeError) {
@@ -1676,6 +1686,99 @@ ipcMain.handle('copilot:setModel', async (_event, data: { sessionId: string, mod
 ipcMain.handle('copilot:getModels', async () => {
   const currentModel = store.get('model') as string
   return { models: getVerifiedModels(), current: currentModel }
+})
+
+// Get model capabilities including vision support
+ipcMain.handle('copilot:getModelCapabilities', async (_event, modelId: string) => {
+  try {
+    if (!defaultClient) {
+      return { supportsVision: false }
+    }
+    const models = await defaultClient.listModels()
+    const model = models.find(m => m.id === modelId)
+    if (model) {
+      return {
+        supportsVision: model.capabilities?.supports?.vision ?? false,
+        visionLimits: model.capabilities?.limits?.vision ? {
+          supportedMediaTypes: model.capabilities.limits.vision.supported_media_types,
+          maxPromptImages: model.capabilities.limits.vision.max_prompt_images,
+          maxPromptImageSize: model.capabilities.limits.vision.max_prompt_image_size
+        } : undefined
+      }
+    }
+    return { supportsVision: false }
+  } catch (error) {
+    log.error('Failed to get model capabilities:', error)
+    return { supportsVision: false }
+  }
+})
+
+// Save image data URL to temp file for SDK attachment
+ipcMain.handle('copilot:saveImageToTemp', async (_event, data: { dataUrl: string, filename: string }) => {
+  try {
+    const imageDir = join(app.getPath('home'), '.copilot', 'images')
+    if (!existsSync(imageDir)) {
+      mkdirSync(imageDir, { recursive: true })
+    }
+    
+    // Parse data URL
+    const matches = data.dataUrl.match(/^data:([^;]+);base64,(.+)$/)
+    if (!matches) {
+      return { success: false, error: 'Invalid data URL format' }
+    }
+    
+    const buffer = Buffer.from(matches[2], 'base64')
+    const filePath = join(imageDir, data.filename)
+    
+    await writeFile(filePath, buffer)
+    return { success: true, path: filePath }
+  } catch (error) {
+    log.error('Failed to save image to temp:', error)
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+// Fetch image from URL and save to temp
+ipcMain.handle('copilot:fetchImageFromUrl', async (_event, url: string) => {
+  try {
+    const response = await fetch(url)
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` }
+    }
+    
+    const contentType = response.headers.get('content-type') || ''
+    if (!contentType.startsWith('image/')) {
+      return { success: false, error: 'URL does not point to an image' }
+    }
+    
+    const buffer = Buffer.from(await response.arrayBuffer())
+    const extension = contentType.split('/')[1]?.split(';')[0] || 'png'
+    const filename = `image-${Date.now()}.${extension}`
+    
+    const imageDir = join(app.getPath('home'), '.copilot', 'images')
+    if (!existsSync(imageDir)) {
+      mkdirSync(imageDir, { recursive: true })
+    }
+    
+    const filePath = join(imageDir, filename)
+    await writeFile(filePath, buffer)
+    
+    // Convert to data URL for preview
+    const base64 = buffer.toString('base64')
+    const dataUrl = `data:${contentType};base64,${base64}`
+    
+    return { 
+      success: true, 
+      path: filePath, 
+      dataUrl,
+      mimeType: contentType,
+      size: buffer.length,
+      filename
+    }
+  } catch (error) {
+    log.error('Failed to fetch image from URL:', error)
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
 })
 
 // Get current working directory
@@ -2882,6 +2985,26 @@ if (!gotTheLock) {
 
   app.whenReady().then(() => {
     console.log('Baseline models:', AVAILABLE_MODELS.map(m => `${m.name} (${m.multiplier}×)`).join(', '))
+    
+    // Clean up old cached images (older than 24 hours)
+    const imageDir = join(app.getPath('home'), '.copilot', 'images')
+    if (existsSync(imageDir)) {
+      const now = Date.now()
+      const maxAge = 24 * 60 * 60 * 1000 // 24 hours
+      try {
+        const files = readdirSync(imageDir)
+        for (const file of files) {
+          const filePath = join(imageDir, file)
+          const stats = statSync(filePath)
+          if (now - stats.mtimeMs > maxAge) {
+            unlinkSync(filePath)
+            log.info(`Cleaned up old image: ${file}`)
+          }
+        }
+      } catch (err) {
+        log.error('Failed to clean up old images:', err)
+      }
+    }
     
     createWindow()
 

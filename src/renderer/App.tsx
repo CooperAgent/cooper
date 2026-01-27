@@ -31,6 +31,7 @@ import {
   TerminalIcon,
   PaletteIcon,
   BookIcon,
+  ImageIcon,
   TerminalPanel,
   TerminalOutputShrinkModal,
   WorktreeSessionsList,
@@ -42,6 +43,8 @@ import {
   Message,
   ActiveTool,
   ModelInfo,
+  ModelCapabilities,
+  ImageAttachment,
   PendingConfirmation,
   TabState,
   PreviousSession,
@@ -151,6 +154,12 @@ const App: React.FC = () => {
   // Terminal output shrink modal state (for long outputs)
   const [pendingTerminalOutput, setPendingTerminalOutput] = useState<{output: string; lineCount: number} | null>(null);
 
+  // Image attachment state
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
+  const [modelCapabilities, setModelCapabilities] = useState<Record<string, ModelCapabilities>>({});
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
   // Resizable panel state
   const [leftPanelWidth, setLeftPanelWidth] = useState(192); // default w-48
   const [rightPanelWidth, setRightPanelWidth] = useState(288); // default w-72
@@ -174,6 +183,29 @@ const App: React.FC = () => {
     }
   }, [activeTabId]);
 
+  // Get the active tab (defined early for use in effects below)
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+
+  // Fetch model capabilities when active tab changes
+  useEffect(() => {
+    if (activeTab && activeTab.model && !modelCapabilities[activeTab.model]) {
+      window.electronAPI.copilot.getModelCapabilities(activeTab.model).then(capabilities => {
+        setModelCapabilities(prev => ({
+          ...prev,
+          [activeTab.model]: {
+            supportsVision: capabilities.supportsVision,
+            visionLimits: capabilities.visionLimits
+          }
+        }));
+      }).catch(console.error);
+    }
+  }, [activeTab?.model]);
+
+  // Clear image attachments when tab changes
+  useEffect(() => {
+    setImageAttachments([]);
+  }, [activeTabId]);
+
   // Save open sessions with models and cwd whenever tabs change
   useEffect(() => {
     if (tabs.length > 0) {
@@ -188,9 +220,6 @@ const App: React.FC = () => {
       window.electronAPI.copilot.saveOpenSessions(openSessions);
     }
   }, [tabs]);
-
-  // Get the active tab
-  const activeTab = tabs.find((t) => t.id === activeTabId);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -907,7 +936,7 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
   }, []);
 
   const handleSendMessage = useCallback(async () => {
-    if (!inputValue.trim() && !terminalAttachment) return;
+    if (!inputValue.trim() && !terminalAttachment && imageAttachments.length === 0) return;
     if (!activeTab || activeTab.isProcessing) return;
 
     // Build message content with terminal attachment if present
@@ -923,6 +952,7 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       id: generateId(),
       role: "user",
       content: messageContent,
+      imageAttachments: imageAttachments.length > 0 ? [...imageAttachments] : undefined,
     };
 
     const tabId = activeTab.id;
@@ -975,6 +1005,13 @@ You are running in an autonomous loop. Before signaling completion, you MUST ver
 Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETION_SIGNAL}`
       : userMessage.content;
 
+    // Build SDK attachments from image attachments
+    const sdkAttachments = imageAttachments.map(img => ({
+      type: 'file' as const,
+      path: img.path,
+      displayName: img.name
+    }));
+
     updateTab(tabId, {
       messages: [
         ...activeTab.messages,
@@ -994,6 +1031,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     });
     setInputValue("");
     setTerminalAttachment(null);
+    setImageAttachments([]);
     
     // Reset Ralph UI state after sending
     if (ralphEnabled) {
@@ -1003,12 +1041,12 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     }
 
     try {
-      await window.electronAPI.copilot.send(tabId, promptToSend);
+      await window.electronAPI.copilot.send(tabId, promptToSend, sdkAttachments.length > 0 ? sdkAttachments : undefined);
     } catch (error) {
       console.error("Send error:", error);
       updateTab(tabId, { isProcessing: false, ralphConfig: undefined });
     }
-  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphMaxIterations, ralphRequireScreenshot, terminalAttachment]);
+  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphMaxIterations, ralphRequireScreenshot, terminalAttachment, imageAttachments]);
 
   // Handle sending terminal output to the agent
   const handleSendTerminalOutput = useCallback((output: string, lineCount: number) => {
@@ -1032,6 +1070,208 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     setPendingTerminalOutput(null);
     inputRef.current?.focus();
   }, []);
+
+  // Get model capabilities (with caching)
+  const getModelCapabilitiesForModel = useCallback(async (modelId: string): Promise<ModelCapabilities> => {
+    if (modelCapabilities[modelId]) {
+      return modelCapabilities[modelId];
+    }
+    try {
+      const capabilities = await window.electronAPI.copilot.getModelCapabilities(modelId);
+      const newCapabilities: ModelCapabilities = {
+        supportsVision: capabilities.supportsVision,
+        visionLimits: capabilities.visionLimits
+      };
+      setModelCapabilities(prev => ({ ...prev, [modelId]: newCapabilities }));
+      return newCapabilities;
+    } catch (error) {
+      console.error('Failed to get model capabilities:', error);
+      return { supportsVision: false };
+    }
+  }, [modelCapabilities]);
+
+  // Check if current model supports vision
+  const currentModelSupportsVision = useCallback((): boolean => {
+    if (!activeTab) return false;
+    const caps = modelCapabilities[activeTab.model];
+    return caps?.supportsVision ?? false;
+  }, [activeTab, modelCapabilities]);
+
+  // Handle image file selection
+  const handleImageSelect = useCallback(async (files: FileList | null) => {
+    console.log('handleImageSelect called with files:', files?.length);
+    if (!files || files.length === 0) return;
+    
+    const newAttachments: ImageAttachment[] = [];
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      console.log('Processing file:', file.name, 'type:', file.type);
+      if (!file.type.startsWith('image/')) {
+        console.log('Skipping non-image file:', file.name, file.type);
+        continue;
+      }
+      
+      // Read file as data URL for preview
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve) => {
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.readAsDataURL(file);
+      });
+      console.log('Read dataUrl, length:', dataUrl.length);
+      
+      // Save to temp file for SDK
+      const filename = `image-${Date.now()}-${i}${file.name.substring(file.name.lastIndexOf('.'))}`;
+      const result = await window.electronAPI.copilot.saveImageToTemp(dataUrl, filename);
+      console.log('saveImageToTemp result:', result);
+      
+      if (result.success && result.path) {
+        newAttachments.push({
+          id: generateId(),
+          path: result.path,
+          previewUrl: dataUrl,
+          name: file.name,
+          size: file.size,
+          mimeType: file.type
+        });
+      }
+    }
+    
+    console.log('newAttachments:', newAttachments.length);
+    if (newAttachments.length > 0) {
+      setImageAttachments(prev => [...prev, ...newAttachments]);
+      inputRef.current?.focus();
+    }
+  }, []);
+
+  // Handle removing an image attachment
+  const handleRemoveImage = useCallback((id: string) => {
+    setImageAttachments(prev => prev.filter(img => img.id !== id));
+  }, []);
+
+  // Handle paste event for images
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      const dataTransfer = new DataTransfer();
+      imageFiles.forEach(f => dataTransfer.items.add(f));
+      await handleImageSelect(dataTransfer.files);
+    }
+  }, [handleImageSelect]);
+
+  // Handle drag events for images
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const hasImages = Array.from(e.dataTransfer.items).some(
+      item => item.kind === 'file' && item.type.startsWith('image/')
+    );
+    
+    if (hasImages) {
+      setIsDraggingImage(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingImage(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingImage(false);
+    
+    // In Electron, we need to get file paths differently
+    const files = e.dataTransfer.files;
+    
+    // Try to get files from dataTransfer.files first
+    if (files.length > 0) {
+      console.log('Drop event - using files:', files.length);
+      await handleImageSelect(files);
+      return;
+    }
+    
+    // Try getting files from items
+    const items = e.dataTransfer.items;
+    if (items && items.length > 0) {
+      const imageFiles: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        console.log('Item:', item.kind, item.type);
+        if (item.kind === 'file') {
+          const file = item.getAsFile();
+          console.log('File from item:', file?.name, file?.type, file?.size);
+          if (file && (file.type.startsWith('image/') || file.name.match(/\.(png|jpg|jpeg|gif|webp|bmp)$/i))) {
+            imageFiles.push(file);
+          }
+        }
+      }
+      if (imageFiles.length > 0) {
+        const dataTransfer = new DataTransfer();
+        imageFiles.forEach(f => dataTransfer.items.add(f));
+        await handleImageSelect(dataTransfer.files);
+        return;
+      }
+    }
+    
+    // Try getting file paths from URI list
+    const uriList = e.dataTransfer.getData('text/uri-list');
+    console.log('URI list:', uriList);
+    if (uriList) {
+      const urls = uriList.split('\n').filter(uri => uri.trim());
+      
+      // Handle http/https image URLs - fetch via main process (bypasses CSP)
+      const httpUrls = urls.filter(uri => uri.startsWith('http://') || uri.startsWith('https://'));
+      if (httpUrls.length > 0) {
+        console.log('Fetching images from URLs:', httpUrls);
+        const newAttachments: ImageAttachment[] = [];
+        for (const url of httpUrls) {
+          try {
+            const result = await window.electronAPI.copilot.fetchImageFromUrl(url);
+            console.log('fetchImageFromUrl result:', result);
+            if (result.success && result.path && result.dataUrl) {
+              newAttachments.push({
+                id: generateId(),
+                path: result.path,
+                previewUrl: result.dataUrl,
+                name: result.filename || 'image.png',
+                size: result.size || 0,
+                mimeType: result.mimeType || 'image/png'
+              });
+            }
+          } catch (err) {
+            console.error('Failed to fetch image from URL:', url, err);
+          }
+        }
+        if (newAttachments.length > 0) {
+          setImageAttachments(prev => [...prev, ...newAttachments]);
+          inputRef.current?.focus();
+          return;
+        }
+      }
+      
+      // Handle file:// URLs
+      const filePaths = urls
+        .filter(uri => uri.startsWith('file://'))
+        .map(uri => decodeURIComponent(uri.replace('file://', '')));
+      console.log('File paths from URI:', filePaths);
+    }
+  }, [handleImageSelect]);
 
   const handleStop = useCallback(() => {
     if (!activeTab) return;
@@ -2385,9 +2625,24 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   >
                     <div className="text-sm break-words overflow-hidden">
                       {message.role === "user" ? (
-                        <span className="whitespace-pre-wrap break-words">
-                          {message.content}
-                        </span>
+                        <>
+                          {/* User message images */}
+                          {message.imageAttachments && message.imageAttachments.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              {message.imageAttachments.map((img) => (
+                                <img
+                                  key={img.id}
+                                  src={img.previewUrl}
+                                  alt={img.name}
+                                  className="max-h-32 w-auto rounded border border-white/20 object-contain"
+                                />
+                              ))}
+                            </div>
+                          )}
+                          <span className="whitespace-pre-wrap break-words">
+                            {message.content}
+                          </span>
+                        </>
                       ) : message.content ? (
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
@@ -2839,8 +3094,54 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 </button>
               </div>
             )}
+
+            {/* Image Attachments Preview */}
+            {imageAttachments.length > 0 && (
+              <div className={`flex flex-wrap gap-2 p-2 bg-copilot-surface border border-b-0 border-copilot-border ${terminalAttachment ? '' : 'rounded-t-lg'}`}>
+                {imageAttachments.map((img) => (
+                  <div key={img.id} className="relative group">
+                    <img
+                      src={img.previewUrl}
+                      alt={img.name}
+                      className="h-16 w-auto rounded border border-copilot-border object-cover"
+                      onError={(e) => console.error('Image preview failed to load:', img.name, img.previewUrl?.substring(0, 100))}
+                    />
+                    <button
+                      onClick={() => handleRemoveImage(img.id)}
+                      className="absolute -top-1.5 -right-1.5 bg-copilot-error text-white rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Remove image"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Vision Warning */}
+            {imageAttachments.length > 0 && activeTab && modelCapabilities[activeTab.model] && !modelCapabilities[activeTab.model].supportsVision && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-copilot-warning/10 border border-b-0 border-copilot-warning/30 text-copilot-warning text-xs">
+                <span>⚠️</span>
+                <span>The current model ({activeTab.model}) may not support image processing. If images aren't recognized, try switching models.</span>
+              </div>
+            )}
             
-            <div className={`flex items-center bg-copilot-bg border border-copilot-border focus-within:border-copilot-accent transition-colors ${terminalAttachment ? 'rounded-b-lg' : 'rounded-lg'}`}>
+            <div 
+              className={`flex items-center bg-copilot-bg border border-copilot-border focus-within:border-copilot-accent transition-colors ${(terminalAttachment || imageAttachments.length > 0 || (imageAttachments.length > 0 && activeTab && modelCapabilities[activeTab.model] && !modelCapabilities[activeTab.model].supportsVision)) ? 'rounded-b-lg' : 'rounded-lg'} ${isDraggingImage ? 'border-copilot-accent border-dashed bg-copilot-accent/5' : ''}`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {/* Hidden file input */}
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => handleImageSelect(e.target.files)}
+                className="hidden"
+              />
+              
               {/* Ralph Toggle Button */}
               {!activeTab?.isProcessing && (
                 <button
@@ -2857,12 +3158,29 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   <RalphIcon size={22} />
                 </button>
               )}
+              
+              {/* Image Attach Button */}
+              {!activeTab?.isProcessing && (
+                <button
+                  onClick={() => imageInputRef.current?.click()}
+                  className={`shrink-0 p-1.5 transition-colors ${
+                    imageAttachments.length > 0
+                      ? "text-copilot-accent"
+                      : "text-copilot-text-muted hover:text-copilot-text"
+                  }`}
+                  title="Attach image (or drag & drop, or paste)"
+                >
+                  <ImageIcon size={18} />
+                </button>
+              )}
+              
               <textarea
                 ref={inputRef}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
-                placeholder={ralphEnabled ? "Describe task with clear completion criteria..." : "Ask Copilot... (Shift+Enter for new line)"}
+                onPaste={handlePaste}
+                placeholder={isDraggingImage ? "Drop image here..." : (ralphEnabled ? "Describe task with clear completion criteria..." : "Ask Copilot... (Shift+Enter for new line)")}
                 className={`flex-1 bg-transparent py-2.5 ${activeTab?.isProcessing ? 'pl-3' : 'pl-1.5'} pr-2 text-copilot-text placeholder-copilot-text-muted outline-none text-sm resize-none min-h-[40px] max-h-[200px]`}
                 disabled={status !== "connected" || activeTab?.isProcessing}
                 autoFocus
@@ -2888,9 +3206,9 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 <button
                   onClick={handleSendMessage}
                   disabled={
-                    (!inputValue.trim() && !terminalAttachment) ||
+                    ((!inputValue.trim() && !terminalAttachment && imageAttachments.length === 0) ||
                     status !== "connected" ||
-                    activeTab?.isProcessing
+                    activeTab?.isProcessing)
                   }
                   className="shrink-0 px-4 py-2.5 text-copilot-accent hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
                 >

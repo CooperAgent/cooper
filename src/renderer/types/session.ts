@@ -8,6 +8,7 @@ export interface Message {
   toolName?: string;
   toolCallId?: string;
   timestamp?: number; // Unix timestamp in milliseconds for when the message was finalized
+  imageAttachments?: ImageAttachment[]; // Images attached to this message
 }
 
 export interface ActiveTool {
@@ -18,10 +19,30 @@ export interface ActiveTool {
   output?: unknown; // Tool output
 }
 
+export interface ModelCapabilities {
+  supportsVision: boolean;
+  visionLimits?: {
+    supportedMediaTypes: string[];
+    maxPromptImages: number;
+    maxPromptImageSize: number;
+  };
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
   multiplier: number;
+  capabilities?: ModelCapabilities;
+}
+
+// Image attachment for messages
+export interface ImageAttachment {
+  id: string;
+  path: string; // File path for SDK
+  previewUrl: string; // Data URL for preview
+  name: string;
+  size: number;
+  mimeType: string;
 }
 
 export interface PendingConfirmation {
