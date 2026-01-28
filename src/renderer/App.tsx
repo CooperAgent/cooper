@@ -307,7 +307,7 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Reset textarea height when input is cleared
+   // Reset textarea height when input is cleared
   useEffect(() => {
     if (!inputValue && inputRef.current) {
       inputRef.current.style.height = "auto";

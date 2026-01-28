@@ -31,5 +31,8 @@ release/
 test-results/
 src/renderer/build-info.json
 
+# Screenshots
+screenshot*.png
+
 # Evidence folder for testing
 evidence/
