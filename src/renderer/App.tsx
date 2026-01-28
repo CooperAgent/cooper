@@ -4686,7 +4686,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       {/* Image Lightbox Modal */}
       {lightboxImage && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 cursor-pointer"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm cursor-pointer"
           onClick={() => setLightboxImage(null)}
         >
           <div className="relative max-w-[90vw] max-h-[90vh]">
