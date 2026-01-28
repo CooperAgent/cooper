@@ -50,6 +50,7 @@ import {
   ImageAttachment,
   FileAttachment,
   PendingConfirmation,
+  PendingInjection,
   TabState,
   PreviousSession,
   MCPServerConfig,
@@ -174,6 +175,9 @@ const App: React.FC = () => {
 
   // Track user-attached file paths per session for auto-approval
   const userAttachedPathsRef = useRef<Map<string, Set<string>>>(new Map());
+  
+  // Track last processed idle timestamp per session to prevent duplicate handling
+  const lastIdleTimestampRef = useRef<Map<string, number>>(new Map());
 
   // Resizable panel state
   const [leftPanelWidth, setLeftPanelWidth] = useState(192); // default w-48
@@ -524,12 +528,18 @@ const App: React.FC = () => {
       setTabs((prev) =>
         prev.map((tab) => {
           if (tab.id !== sessionId) return tab;
-          const last = tab.messages[tab.messages.length - 1];
+          
+          // Clear pending injection flags on all user messages since agent has now responded
+          const messagesWithClearedPending = tab.messages.map(msg => 
+            msg.isPendingInjection ? { ...msg, isPendingInjection: false } : msg
+          );
+          
+          const last = messagesWithClearedPending[messagesWithClearedPending.length - 1];
           if (last && last.role === "assistant" && last.isStreaming) {
             return {
               ...tab,
               messages: [
-                ...tab.messages.slice(0, -1),
+                ...messagesWithClearedPending.slice(0, -1),
                 { ...last, content, isStreaming: false, timestamp: Date.now() },
               ],
             };
@@ -537,7 +547,7 @@ const App: React.FC = () => {
           return {
             ...tab,
             messages: [
-              ...tab.messages,
+              ...messagesWithClearedPending,
               {
                 id: generateId(),
                 role: "assistant",
@@ -553,11 +563,21 @@ const App: React.FC = () => {
 
     const unsubscribeIdle = window.electronAPI.copilot.onIdle((data) => {
       const { sessionId } = data;
+      
+      // Deduplicate idle events - if we processed one very recently for this session, skip
+      // This prevents double-processing from React StrictMode or rapid duplicate events
+      const now = Date.now();
+      const lastIdle = lastIdleTimestampRef.current.get(sessionId) || 0;
+      if (now - lastIdle < 500) {
+        console.log(`[Idle] Skipping duplicate idle event for session ${sessionId} (${now - lastIdle}ms since last)`);
+        return;
+      }
+      lastIdleTimestampRef.current.set(sessionId, now);
 
       // Play notification sound when session completes
       playNotificationSound();
 
-      // First update tab state
+      // Update tab state
       setTabs((prev) => {
         const tab = prev.find((t) => t.id === sessionId);
 
@@ -721,19 +741,19 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
               ),
           };
         });
-
-        // Focus textarea when response completes for the active tab
-        // (but not if there are pending confirmations requiring user action)
-        if (sessionId === activeTabIdRef.current) {
-          setTabs(currentTabs => {
-            const tab = currentTabs.find(t => t.id === sessionId);
-            if (tab && tab.pendingConfirmations.length === 0) {
-              inputRef.current?.focus();
-            }
-            return currentTabs;
-          });
-        }
       });
+
+      // Focus textarea when response completes for the active tab
+      // (but not if there are pending confirmations requiring user action)
+      if (sessionId === activeTabIdRef.current) {
+        setTabs(currentTabs => {
+          const tab = currentTabs.find(t => t.id === sessionId);
+          if (tab && tab.pendingConfirmations.length === 0) {
+            inputRef.current?.focus();
+          }
+          return currentTabs;
+        });
+      }
     });
 
     const unsubscribeToolStart = window.electronAPI.copilot.onToolStart(
@@ -1008,7 +1028,7 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
 
   const handleSendMessage = useCallback(async () => {
     if (!inputValue.trim() && !terminalAttachment && imageAttachments.length === 0 && fileAttachments.length === 0) return;
-    if (!activeTab || activeTab.isProcessing) return;
+    if (!activeTab) return;
 
     // Build message content with terminal attachment if present
     let messageContent = inputValue.trim();
@@ -1017,6 +1037,74 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       messageContent = messageContent 
         ? `${messageContent}\n\nTerminal output:\n${terminalBlock}`
         : `Terminal output:\n${terminalBlock}`;
+    }
+
+    // If agent is processing, send message immediately with enqueue mode
+    // This injects the message into the agent's thinking queue rather than waiting for idle
+    if (activeTab.isProcessing) {
+      const injection: PendingInjection = {
+        content: messageContent,
+        imageAttachments: imageAttachments.length > 0 ? [...imageAttachments] : undefined,
+        fileAttachments: fileAttachments.length > 0 ? [...fileAttachments] : undefined,
+        terminalAttachment: terminalAttachment ? { ...terminalAttachment } : undefined,
+      };
+      
+      // Build SDK attachments
+      const sdkAttachments = [
+        ...imageAttachments.map(img => ({
+          type: 'file' as const,
+          path: img.path,
+          displayName: img.name
+        })),
+        ...fileAttachments.map(file => ({
+          type: 'file' as const,
+          path: file.path,
+          displayName: file.name
+        }))
+      ];
+      
+      // Track attached paths for auto-approval
+      if (sdkAttachments.length > 0) {
+        const sessionPaths = userAttachedPathsRef.current.get(activeTab.id) || new Set<string>();
+        sdkAttachments.forEach(att => sessionPaths.add(att.path));
+        userAttachedPathsRef.current.set(activeTab.id, sessionPaths);
+      }
+      
+      // Create user message for display - mark as pending injection
+      const userMessage: Message = {
+        id: generateId(),
+        role: "user",
+        content: messageContent,
+        imageAttachments: imageAttachments.length > 0 ? [...imageAttachments] : undefined,
+        fileAttachments: fileAttachments.length > 0 ? [...fileAttachments] : undefined,
+        isPendingInjection: true, // Mark as pending until agent acknowledges
+      };
+      
+      // Add user message to conversation (but don't add assistant placeholder since agent is already working)
+      updateTab(activeTab.id, { 
+        messages: [...activeTab.messages, userMessage]
+      });
+      
+      // Clear input immediately
+      setInputValue("");
+      setTerminalAttachment(null);
+      setImageAttachments([]);
+      setFileAttachments([]);
+      
+      // Send with enqueue mode to inject into agent's processing queue
+      try {
+        console.log(`[Injection] Sending enqueued message to session ${activeTab.id}`);
+        await window.electronAPI.copilot.send(
+          activeTab.id, 
+          messageContent, 
+          sdkAttachments.length > 0 ? sdkAttachments : undefined,
+          'enqueue'
+        );
+      } catch (error) {
+        console.error("Send injection error:", error);
+        // Message is already shown to user, just log the error
+      }
+      return;
     }
 
     const userMessage: Message = {
@@ -1158,6 +1246,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     inputRef.current?.focus();
   }, []);
 
+  // Cancel a specific pending injection by index, or all if index not provided
   // Get model capabilities (with caching)
   const getModelCapabilitiesForModel = useCallback(async (modelId: string): Promise<ModelCapabilities> => {
     if (modelCapabilities[modelId]) {
@@ -2924,10 +3013,19 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   <div
                     className={`max-w-[85%] rounded-lg px-4 py-2.5 overflow-hidden ${
                       message.role === "user"
-                        ? "bg-copilot-success text-copilot-text-inverse"
+                        ? message.isPendingInjection
+                          ? "bg-copilot-warning text-white border border-dashed border-copilot-warning/50"
+                          : "bg-copilot-success text-copilot-text-inverse"
                         : "bg-copilot-surface text-copilot-text"
                     }`}
                   >
+                    {/* Pending injection indicator */}
+                    {message.isPendingInjection && (
+                      <div className="flex items-center gap-1.5 text-[10px] opacity-80 mb-1.5">
+                        <ClockIcon size={10} />
+                        <span>Pending — will be read by agent</span>
+                      </div>
+                    )}
                     <div className="text-sm break-words overflow-hidden">
                       {message.role === "user" ? (
                         <>
@@ -3401,7 +3499,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
             {/* Terminal Attachment Indicator */}
             {terminalAttachment && (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-copilot-surface rounded-t-lg border border-b-0 border-copilot-border">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-copilot-surface border border-b-0 border-copilot-border rounded-t-lg">
                 <TerminalIcon size={12} className="text-copilot-accent shrink-0" />
                 <span className="text-xs text-copilot-text">
                   Terminal output: {terminalAttachment.lineCount} lines
@@ -3518,9 +3616,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
                 onPaste={handlePaste}
-                placeholder={(isDraggingImage || isDraggingFile) ? "Drop files here..." : (ralphEnabled ? "Describe task with clear completion criteria..." : "Ask Copilot... (Shift+Enter for new line)")}
+                placeholder={(isDraggingImage || isDraggingFile) ? "Drop files here..." : (
+                  activeTab?.isProcessing ? "Type to inject message to agent..." : (
+                    ralphEnabled ? "Describe task with clear completion criteria..." : "Ask Copilot... (Shift+Enter for new line)"
+                  )
+                )}
                 className="flex-1 bg-transparent py-2.5 pl-3 pr-2 text-copilot-text placeholder-copilot-text-muted outline-none text-sm resize-none min-h-[40px] max-h-[200px]"
-                disabled={status !== "connected" || activeTab?.isProcessing}
+                disabled={status !== "connected"}
                 autoFocus
                 rows={1}
                 style={{ height: "auto" }}
@@ -3560,21 +3662,34 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 </button>
               )}
               {activeTab?.isProcessing ? (
-                <button
-                  onClick={handleStop}
-                  className="shrink-0 px-4 py-2.5 text-copilot-error hover:brightness-110 text-xs font-medium transition-colors flex items-center gap-1.5"
-                  title={activeTab?.ralphConfig?.active ? "Stop Ralph Loop" : "Stop"}
-                >
-                  <StopIcon size={10} />
-                  {activeTab?.ralphConfig?.active ? "Stop Loop" : "Stop"}
-                </button>
+                <>
+                  {/* Send button while processing - queues message */}
+                  {(inputValue.trim() || terminalAttachment || imageAttachments.length > 0 || fileAttachments.length > 0) && (
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={status !== "connected"}
+                      className="shrink-0 px-3 py-2.5 text-copilot-warning hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
+                      title="Send message (will be queued until agent finishes)"
+                    >
+                      Send
+                    </button>
+                  )}
+                  {/* Stop button */}
+                  <button
+                    onClick={handleStop}
+                    className="shrink-0 px-4 py-2.5 text-copilot-error hover:brightness-110 text-xs font-medium transition-colors flex items-center gap-1.5"
+                    title={activeTab?.ralphConfig?.active ? "Stop Ralph Loop" : "Stop"}
+                  >
+                    <StopIcon size={10} />
+                    {activeTab?.ralphConfig?.active ? "Stop Loop" : "Stop"}
+                  </button>
+                </>
               ) : (
                 <button
                   onClick={handleSendMessage}
                   disabled={
                     ((!inputValue.trim() && !terminalAttachment && imageAttachments.length === 0 && fileAttachments.length === 0) ||
-                    status !== "connected" ||
-                    activeTab?.isProcessing)
+                    status !== "connected")
                   }
                   className="shrink-0 px-4 py-2.5 text-copilot-accent hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
                 >

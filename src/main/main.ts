@@ -1273,7 +1273,7 @@ function createWindow(): void {
 }
 
 // IPC Handlers
-ipcMain.handle('copilot:send', async (_event, data: { sessionId: string, prompt: string, attachments?: { type: 'file'; path: string; displayName?: string }[] }) => {
+ipcMain.handle('copilot:send', async (_event, data: { sessionId: string, prompt: string, attachments?: { type: 'file'; path: string; displayName?: string }[], mode?: 'enqueue' | 'immediate' }) => {
   const sessionState = sessions.get(data.sessionId)
   if (!sessionState) {
     throw new Error(`Session not found: ${data.sessionId}`)
@@ -1281,9 +1281,14 @@ ipcMain.handle('copilot:send', async (_event, data: { sessionId: string, prompt:
   
   sessionState.isProcessing = true
   
-  const messageOptions = {
+  const messageOptions: { prompt: string; attachments?: typeof data.attachments; mode?: 'enqueue' | 'immediate' } = {
     prompt: data.prompt,
     attachments: data.attachments
+  }
+  
+  // Add mode if specified (for injected messages during processing)
+  if (data.mode) {
+    messageOptions.mode = data.mode
   }
   
   try {

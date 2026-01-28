@@ -5,6 +5,7 @@ export interface Message {
   role: "user" | "assistant" | "system" | "error";
   content: string;
   isStreaming?: boolean;
+  isPendingInjection?: boolean; // True for injected messages until agent acknowledges them
   toolName?: string;
   toolCallId?: string;
   timestamp?: number; // Unix timestamp in milliseconds for when the message was finalized
@@ -107,6 +108,14 @@ export interface DetectedChoice {
   id: string;
   label: string;
   description?: string;
+}
+
+// Pending injection - a message to be injected into agent's processing queue
+export interface PendingInjection {
+  content: string;
+  imageAttachments?: ImageAttachment[];
+  fileAttachments?: FileAttachment[];
+  terminalAttachment?: { output: string; lineCount: number };
 }
 
 // Tab/Session state

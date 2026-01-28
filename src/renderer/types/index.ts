@@ -13,6 +13,7 @@ export type {
   ContextUsage,
   CompactionStatus,
   DetectedChoice,
+  PendingInjection,
 } from "./session";
 
 export { RALPH_COMPLETION_SIGNAL } from "./session";

@@ -3,8 +3,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 const electronAPI = {
   // Copilot communication
   copilot: {
-    send: (sessionId: string, prompt: string, attachments?: { type: 'file'; path: string; displayName?: string }[]): Promise<string> => {
-      return ipcRenderer.invoke('copilot:send', { sessionId, prompt, attachments })
+    send: (sessionId: string, prompt: string, attachments?: { type: 'file'; path: string; displayName?: string }[], mode?: 'enqueue' | 'immediate'): Promise<string> => {
+      return ipcRenderer.invoke('copilot:send', { sessionId, prompt, attachments, mode })
     },
     sendAndWait: (sessionId: string, prompt: string, attachments?: { type: 'file'; path: string; displayName?: string }[]): Promise<string> => {
       return ipcRenderer.invoke('copilot:sendAndWait', { sessionId, prompt, attachments })
