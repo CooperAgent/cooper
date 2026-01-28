@@ -373,11 +373,28 @@ export async function removeWorktreeSession(
       cwd: session.repoPath 
     })
   } catch (error) {
-    // If worktree doesn't exist anymore, just clean up registry
-    if (!existsSync(session.worktreePath)) {
-      console.warn('Worktree already removed, cleaning up registry')
+    // If worktree doesn't exist or git doesn't recognize it, clean up manually
+    if (existsSync(session.worktreePath)) {
+      // Check if it's a valid git worktree or an orphaned directory
+      const gitPath = join(session.worktreePath, '.git')
+      const isOrphanedWorktree = existsSync(gitPath)
+      
+      if (isOrphanedWorktree) {
+        // The directory exists but git doesn't recognize it as a worktree
+        // This can happen when git metadata was deleted but directory remains
+        console.warn('Worktree is orphaned (git metadata missing), removing directory manually')
+        try {
+          rmSync(session.worktreePath, { recursive: true, force: true })
+        } catch (rmError) {
+          return { success: false, error: `Failed to remove orphaned worktree directory: ${rmError}` }
+        }
+      } else {
+        // Directory exists and might still be a valid worktree, but git command failed
+        return { success: false, error: `Failed to remove worktree: ${error}` }
+      }
     } else {
-      return { success: false, error: `Failed to remove worktree: ${error}` }
+      // Directory doesn't exist, just clean up the registry
+      console.warn('Worktree already removed, cleaning up registry')
     }
   }
   

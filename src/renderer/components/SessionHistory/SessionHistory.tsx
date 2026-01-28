@@ -13,6 +13,16 @@ interface DisplaySession extends PreviousSession {
   isActive?: boolean
 }
 
+// Full worktree data including lastAccessedAt for time categorization
+interface WorktreeData {
+  id: string
+  branch: string
+  worktreePath: string
+  status: 'active' | 'idle' | 'orphaned'
+  diskUsage?: string
+  lastAccessedAt: string
+}
+
 interface SessionHistoryProps {
   isOpen: boolean
   onClose: () => void
@@ -123,8 +133,8 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
   } | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   
-  // Worktree data fetched directly (for detecting active worktrees)
-  const [worktreeMap, setWorktreeMap] = useState<Map<string, PreviousSession['worktree']>>(new Map())
+  // Worktree data fetched directly (for detecting active worktrees and adding standalone worktrees)
+  const [worktreeMap, setWorktreeMap] = useState<Map<string, WorktreeData>>(new Map())
 
   // Fetch worktree list when modal opens to properly detect active worktrees
   useEffect(() => {
@@ -133,14 +143,15 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
         try {
           const result = await window.electronAPI.worktree.listSessions()
           if (result?.sessions) {
-            const map = new Map<string, PreviousSession['worktree']>()
-            result.sessions.forEach((wt: { id: string; branch: string; worktreePath: string; status: 'active' | 'idle' | 'orphaned'; diskUsage?: string }) => {
+            const map = new Map<string, WorktreeData>()
+            result.sessions.forEach((wt: { id: string; branch: string; worktreePath: string; status: 'active' | 'idle' | 'orphaned'; diskUsage?: string; lastAccessedAt?: string; createdAt?: string }) => {
               map.set(wt.worktreePath, {
                 id: wt.id,
                 branch: wt.branch,
                 worktreePath: wt.worktreePath,
                 status: wt.status,
                 diskUsage: wt.diskUsage,
+                lastAccessedAt: wt.lastAccessedAt || wt.createdAt || new Date().toISOString(),
               })
             })
             setWorktreeMap(map)
@@ -168,12 +179,20 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
     }
   }, [isOpen, initialFilter])
 
-  // Combine active sessions and previous sessions
+  // Combine active sessions, previous sessions, and standalone worktree sessions
   const allSessions: DisplaySession[] = useMemo(() => {
     // Convert active tabs to DisplaySession format, enriching with worktree data from live worktreeMap
     const activeDisplaySessions: DisplaySession[] = activeSessions.map(tab => {
       // Match tab.cwd to worktreePath to find worktree data (from live worktree list)
-      const worktree = tab.cwd ? worktreeMap.get(tab.cwd) : undefined
+      const worktreeData = tab.cwd ? worktreeMap.get(tab.cwd) : undefined
+      // Convert WorktreeData to PreviousSession['worktree'] format (exclude lastAccessedAt)
+      const worktree = worktreeData ? {
+        id: worktreeData.id,
+        branch: worktreeData.branch,
+        worktreePath: worktreeData.worktreePath,
+        status: worktreeData.status,
+        diskUsage: worktreeData.diskUsage,
+      } : undefined
       return {
         sessionId: tab.id,
         name: tab.name,
@@ -190,8 +209,42 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
       .filter(s => !activeIds.has(s.sessionId))
       .map(s => ({ ...s, isActive: false }))
     
-    // Combine: active sessions first (they're "today"), then previous
-    return [...activeDisplaySessions, ...filteredPrevious]
+    // Collect worktree paths that are already represented
+    const coveredWorktreePaths = new Set<string>()
+    for (const session of activeDisplaySessions) {
+      if (session.worktree?.worktreePath) {
+        coveredWorktreePaths.add(session.worktree.worktreePath)
+      }
+    }
+    for (const session of filteredPrevious) {
+      if (session.worktree?.worktreePath) {
+        coveredWorktreePaths.add(session.worktree.worktreePath)
+      }
+    }
+    
+    // Add standalone worktree sessions (worktrees without a matching Copilot session)
+    const standaloneWorktrees: DisplaySession[] = []
+    for (const [worktreePath, worktreeData] of worktreeMap) {
+      if (!coveredWorktreePaths.has(worktreePath)) {
+        standaloneWorktrees.push({
+          sessionId: `worktree-${worktreeData.id}`,
+          name: worktreeData.branch,
+          modifiedTime: worktreeData.lastAccessedAt,
+          cwd: worktreePath,
+          isActive: false,
+          worktree: {
+            id: worktreeData.id,
+            branch: worktreeData.branch,
+            worktreePath: worktreeData.worktreePath,
+            status: worktreeData.status,
+            diskUsage: worktreeData.diskUsage,
+          },
+        })
+      }
+    }
+    
+    // Combine: active sessions first (they're "today"), then previous, then standalone worktrees
+    return [...activeDisplaySessions, ...filteredPrevious, ...standaloneWorktrees]
   }, [activeSessions, sessions, worktreeMap])
 
   // Filter sessions based on search query AND filter type
@@ -288,14 +341,15 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
         // Refresh worktree list to remove the deleted session
         const refreshResult = await window.electronAPI.worktree.listSessions()
         if (refreshResult?.sessions) {
-          const map = new Map<string, PreviousSession['worktree']>()
-          refreshResult.sessions.forEach((wt: { id: string; branch: string; worktreePath: string; status: 'active' | 'idle' | 'orphaned'; diskUsage?: string }) => {
+          const map = new Map<string, WorktreeData>()
+          refreshResult.sessions.forEach((wt: { id: string; branch: string; worktreePath: string; status: 'active' | 'idle' | 'orphaned'; diskUsage?: string; lastAccessedAt?: string; createdAt?: string }) => {
             map.set(wt.worktreePath, {
               id: wt.id,
               branch: wt.branch,
               worktreePath: wt.worktreePath,
               status: wt.status,
               diskUsage: wt.diskUsage,
+              lastAccessedAt: wt.lastAccessedAt || wt.createdAt || new Date().toISOString(),
             })
           })
           setWorktreeMap(map)
