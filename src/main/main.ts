@@ -306,6 +306,81 @@ async function getClientForCwd(cwd: string): Promise<CopilotClient> {
   return client
 }
 
+// Repair corrupted session events (duplicate tool_result bug)
+// This can happen when a session is resumed while a tool is executing
+// The bug inserts a session.resume event between tool.execution_start and tool.execution_complete
+async function repairDuplicateToolResults(sessionId: string): Promise<boolean> {
+  const homedir = process.env.HOME || process.env.USERPROFILE || ''
+  const eventsPath = join(homedir, '.copilot', 'session-state', sessionId, 'events.jsonl')
+  
+  try {
+    if (!existsSync(eventsPath)) {
+      log.warn(`[${sessionId}] Cannot repair: events.jsonl not found`)
+      return false
+    }
+    
+    const content = await readFile(eventsPath, 'utf-8')
+    const lines = content.split('\n').filter(line => line.trim())
+    const linesToRemove = new Set<number>()
+    
+    // Parse all events
+    const events: Array<{ type: string; data?: { toolCallId?: string }; timestamp?: string }> = []
+    for (const line of lines) {
+      try {
+        events.push(JSON.parse(line))
+      } catch {
+        events.push({ type: 'parse_error' })
+      }
+    }
+    
+    // Find session.resume events that are out of order (inserted between tool.execution_start and tool.execution_complete)
+    for (let i = 1; i < events.length - 1; i++) {
+      const event = events[i]
+      if (event.type === 'session.resume') {
+        const prevEvent = events[i - 1]
+        const nextEvent = events[i + 1]
+        
+        // Check if this session.resume is between tool.execution_start and tool.execution_complete
+        if (prevEvent.type === 'tool.execution_start' && 
+            nextEvent.type === 'tool.execution_complete' &&
+            prevEvent.data?.toolCallId === nextEvent.data?.toolCallId) {
+          log.info(`[${sessionId}] Found out-of-order session.resume between tool events at line ${i + 1}`)
+          linesToRemove.add(i)
+        }
+      }
+    }
+    
+    // Also check for actual duplicate tool.execution_complete events
+    const completedToolCalls = new Map<string, number>() // toolCallId -> line index
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i]
+      if (event.type === 'tool.execution_complete' && event.data?.toolCallId) {
+        const toolCallId = event.data.toolCallId
+        if (completedToolCalls.has(toolCallId)) {
+          // Duplicate! Keep the later one (more likely to have actual result)
+          linesToRemove.add(completedToolCalls.get(toolCallId)!)
+          log.info(`[${sessionId}] Found duplicate tool_result for ${toolCallId}, marking earlier one for removal`)
+        }
+        completedToolCalls.set(toolCallId, i)
+      }
+    }
+    
+    if (linesToRemove.size === 0) {
+      log.info(`[${sessionId}] No corrupted events found`)
+      return false
+    }
+    
+    // Remove corrupted lines
+    const repairedLines = lines.filter((_, i) => !linesToRemove.has(i))
+    await writeFile(eventsPath, repairedLines.join('\n') + '\n', 'utf-8')
+    log.info(`[${sessionId}] Repaired session: removed ${linesToRemove.size} corrupted events`)
+    return true
+  } catch (err) {
+    log.error(`[${sessionId}] Failed to repair session:`, err)
+    return false
+  }
+}
+
 // Multi-session support
 interface SessionState {
   session: CopilotSession
@@ -416,7 +491,26 @@ async function resumeDisconnectedSession(sessionId: string, sessionState: Sessio
       mainWindow.webContents.send('copilot:confirm', { sessionId, ...event.data })
     } else if (event.type === 'session.error') {
       log.info(`[${sessionId}] Session error:`, event.data)
-      mainWindow.webContents.send('copilot:error', { sessionId, message: event.data?.message || JSON.stringify(event.data) })
+      const errorMessage = event.data?.message || JSON.stringify(event.data)
+      
+      // Auto-repair duplicate tool_result errors
+      if (errorMessage.includes('multiple `tool_result` blocks') || errorMessage.includes('each tool_use must have a single result')) {
+        log.info(`[${sessionId}] Detected duplicate tool_result error, attempting auto-repair...`)
+        repairDuplicateToolResults(sessionId).then(repaired => {
+          if (repaired) {
+            mainWindow?.webContents.send('copilot:error', { 
+              sessionId, 
+              message: 'Session repaired. Please resend your last message.',
+              isRepaired: true
+            })
+          } else {
+            mainWindow?.webContents.send('copilot:error', { sessionId, message: errorMessage })
+          }
+        })
+        return
+      }
+      
+      mainWindow.webContents.send('copilot:error', { sessionId, message: errorMessage })
     } else if (event.type === 'session.usage_info') {
       mainWindow.webContents.send('copilot:usageInfo', { 
         sessionId,
@@ -986,7 +1080,26 @@ Browser tools available: browser_navigate, browser_click, browser_fill, browser_
       mainWindow.webContents.send('copilot:confirm', { sessionId, ...event.data })
     } else if (event.type === 'session.error') {
       console.log(`[${sessionId}] Session error:`, event.data)
-      mainWindow.webContents.send('copilot:error', { sessionId, message: event.data?.message || JSON.stringify(event.data) })
+      const errorMessage = event.data?.message || JSON.stringify(event.data)
+      
+      // Auto-repair duplicate tool_result errors
+      if (errorMessage.includes('multiple `tool_result` blocks') || errorMessage.includes('each tool_use must have a single result')) {
+        log.info(`[${sessionId}] Detected duplicate tool_result error, attempting auto-repair...`)
+        repairDuplicateToolResults(sessionId).then(repaired => {
+          if (repaired) {
+            mainWindow?.webContents.send('copilot:error', { 
+              sessionId, 
+              message: 'Session repaired. Please resend your last message.',
+              isRepaired: true
+            })
+          } else {
+            mainWindow?.webContents.send('copilot:error', { sessionId, message: errorMessage })
+          }
+        })
+        return
+      }
+      
+      mainWindow.webContents.send('copilot:error', { sessionId, message: errorMessage })
     } else if (event.type === 'session.usage_info') {
       mainWindow.webContents.send('copilot:usageInfo', { 
         sessionId,
