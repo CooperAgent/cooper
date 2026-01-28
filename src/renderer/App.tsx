@@ -2675,7 +2675,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
   const handleWorktreeSessionCreated = async (
     worktreePath: string,
     branch: string,
-    autoStart?: { issueInfo: { url: string; title: string; body: string | null; comments?: Array<{ body: string; user: { login: string }; created_at: string }> }; useRalphWiggum?: boolean; ralphMaxIterations?: number }
+    autoStart?: { issueInfo: { url: string; title: string; body: string | null; comments?: Array<{ body: string; user: { login: string }; created_at: string }> }; useRalphWiggum?: boolean; ralphMaxIterations?: number; useLisaSimpson?: boolean }
   ) => {
     try {
       // Check trust for the worktree directory
@@ -2692,16 +2692,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         cwd: worktreePath,
       });
 
-      // If autoStart is enabled, pre-approve GitHub web fetches and file writes
-      const preApprovedCommands = autoStart
-        ? ['write', 'url:github.com']
-        : [];
+      // Pre-approve file writes, mkdir (for evidence folders), and GitHub web fetches for all worktree sessions
+      // This enables smooth operation in both Ralph Wiggum and Lisa Simpson modes
+      const preApprovedCommands = ['write', 'mkdir', 'url:github.com'];
       
       // Add pre-approved commands to the session
-      if (autoStart) {
-        for (const cmd of preApprovedCommands) {
-          await window.electronAPI.copilot.addAlwaysAllowed(result.sessionId, cmd);
-        }
+      for (const cmd of preApprovedCommands) {
+        await window.electronAPI.copilot.addAlwaysAllowed(result.sessionId, cmd);
       }
 
       const newTab: TabState = {
@@ -2749,9 +2746,38 @@ ${issueContext}${commentsContext}
 
 Start by exploring the codebase to understand the current implementation, then make the necessary changes to address this issue.`;
 
-        // If Ralph Wiggum is enabled, append completion instructions
-        const promptToSend = autoStart.useRalphWiggum
-          ? `${initialPrompt}
+        // Build the prompt based on mode (Lisa Simpson, Ralph Wiggum, or plain)
+        let promptToSend: string;
+        let ralphConfig: RalphConfig | undefined = undefined;
+        let lisaConfig: LisaConfig | undefined = undefined;
+
+        if (autoStart.useLisaSimpson) {
+          // Lisa Simpson mode - start with Plan phase
+          promptToSend = buildLisaPhasePrompt(
+            'plan',
+            1,
+            initialPrompt,
+            '', // No previous response yet
+            undefined
+          );
+          lisaConfig = {
+            originalPrompt: initialPrompt,
+            currentPhase: 'plan',
+            phaseIterations: { 
+              'plan': 1, 
+              'plan-review': 0, 
+              'execute': 0, 
+              'code-review': 0, 
+              'validate': 0, 
+              'final-review': 0 
+            },
+            active: true,
+            phaseHistory: [{ phase: 'plan', iteration: 1, timestamp: Date.now() }],
+            evidenceFolderPath: `${worktreePath}/evidence`,
+          };
+        } else if (autoStart.useRalphWiggum) {
+          // Ralph Wiggum mode
+          promptToSend = `${initialPrompt}
 
 ## COMPLETION REQUIREMENTS
 
@@ -2767,18 +2793,17 @@ When you have finished the task, please verify:
 
 5. **Verify Completion**: Go through each item in your plan one more time to ensure nothing was missed.
 
-Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETION_SIGNAL}`
-          : initialPrompt;
-
-        // Set up Ralph config if enabled
-        const ralphConfig: RalphConfig | undefined = autoStart.useRalphWiggum
-          ? {
-              originalPrompt: initialPrompt,
-              maxIterations: autoStart.ralphMaxIterations || 20,
-              currentIteration: 1,
-              active: true,
-            }
-          : undefined;
+Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETION_SIGNAL}`;
+          ralphConfig = {
+            originalPrompt: initialPrompt,
+            maxIterations: autoStart.ralphMaxIterations || 20,
+            currentIteration: 1,
+            active: true,
+          };
+        } else {
+          // Plain mode
+          promptToSend = initialPrompt;
+        }
 
         const userMessage: Message = {
           id: generateId(),
@@ -2803,6 +2828,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   ],
                   isProcessing: true,
                   ralphConfig,
+                  lisaConfig,
                 }
               : tab
           )
@@ -2816,7 +2842,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
           setTabs((prev) =>
             prev.map((tab) =>
               tab.id === result.sessionId
-                ? { ...tab, isProcessing: false, ralphConfig: undefined }
+                ? { ...tab, isProcessing: false, ralphConfig: undefined, lisaConfig: undefined }
                 : tab
             )
           );

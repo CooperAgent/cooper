@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Modal } from '../Modal'
 import { Button } from '../Button'
 import { Spinner } from '../Spinner'
-import { RalphIcon, ChevronDownIcon, ChevronRightIcon } from '../Icons/Icons'
+import { RalphIcon, LisaIcon, ChevronDownIcon, ChevronRightIcon } from '../Icons/Icons'
 
 export interface IssueComment {
   body: string
@@ -21,7 +21,7 @@ interface CreateWorktreeSessionProps {
   isOpen: boolean
   onClose: () => void
   repoPath: string
-  onSessionCreated: (worktreePath: string, branch: string, autoStart?: { issueInfo: IssueInfo; useRalphWiggum?: boolean; ralphMaxIterations?: number }) => void
+  onSessionCreated: (worktreePath: string, branch: string, autoStart?: { issueInfo: IssueInfo; useRalphWiggum?: boolean; ralphMaxIterations?: number; useLisaSimpson?: boolean }) => void
 }
 
 export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
@@ -42,7 +42,8 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
   const [issueComments, setIssueComments] = useState<IssueComment[] | undefined>(undefined)
   const [autoStart, setAutoStart] = useState(false)
   const [useRalphWiggum, setUseRalphWiggum] = useState(false)
-  const [ralphMaxIterations, setRalphMaxIterations] = useState(20)
+  const [ralphMaxIterations, setRalphMaxIterations] = useState(5)
+  const [useLisaSimpson, setUseLisaSimpson] = useState(false)
   const [showIssueSection, setShowIssueSection] = useState(false)
 
   useEffect(() => {
@@ -55,7 +56,8 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
       setIssueComments(undefined)
       setAutoStart(false)
       setUseRalphWiggum(false)
-      setRalphMaxIterations(20)
+      setRalphMaxIterations(5)
+      setUseLisaSimpson(false)
       setShowIssueSection(false)
       checkGitVersion()
     }
@@ -120,7 +122,8 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
             comments: issueComments
           },
           useRalphWiggum,
-          ralphMaxIterations
+          ralphMaxIterations,
+          useLisaSimpson
         } : undefined
         onSessionCreated(result.session.worktreePath, result.session.branch, autoStartInfo)
         onClose()
@@ -212,34 +215,62 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
                       </label>
                       
                       {autoStart && (
-                        <div className="mt-2 ml-6">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <RalphIcon size={18} />
-                            <input
-                              type="checkbox"
-                              checked={useRalphWiggum}
-                              onChange={(e) => setUseRalphWiggum(e.target.checked)}
-                              className="w-4 h-4 accent-copilot-warning"
+                        <div className="mt-3 ml-6">
+                          <div className="text-xs text-copilot-text-muted mb-2">Agent Mode <span className="opacity-60">(optional)</span></div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUseRalphWiggum(!useRalphWiggum)
+                                if (!useRalphWiggum) setUseLisaSimpson(false)
+                              }}
                               disabled={isCreating}
-                            />
-                            <span className="text-sm text-copilot-text">
-                              Ralph Wiggum loop
-                            </span>
-                            {useRalphWiggum && (
-                              <span className="flex items-center gap-1 ml-2">
-                                <input
-                                  type="number"
-                                  value={ralphMaxIterations}
-                                  onChange={(e) => setRalphMaxIterations(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))}
-                                  className="w-14 bg-copilot-bg border border-copilot-border rounded px-2 py-0.5 text-xs text-copilot-text"
-                                  min={1}
-                                  max={100}
-                                  disabled={isCreating}
-                                />
-                                <span className="text-xs text-copilot-text-muted">iterations</span>
-                              </span>
-                            )}
-                          </label>
+                              className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
+                                useRalphWiggum
+                                  ? 'bg-blue-500/20 border-blue-500/50 text-blue-400'
+                                  : 'bg-copilot-bg border-copilot-border text-copilot-text-muted hover:border-copilot-border-hover'
+                              }`}
+                            >
+                              <RalphIcon size={18} />
+                              <div className="text-left">
+                                <div className="text-sm font-medium">Ralph</div>
+                                <div className="text-xs opacity-70">Autonomous</div>
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUseLisaSimpson(!useLisaSimpson)
+                                if (!useLisaSimpson) setUseRalphWiggum(false)
+                              }}
+                              disabled={isCreating}
+                              className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
+                                useLisaSimpson
+                                  ? 'bg-blue-500/20 border-blue-500/50 text-blue-400'
+                                  : 'bg-copilot-bg border-copilot-border text-copilot-text-muted hover:border-copilot-border-hover'
+                              }`}
+                            >
+                              <LisaIcon size={18} />
+                              <div className="text-left">
+                                <div className="text-sm font-medium">Lisa</div>
+                                <div className="text-xs opacity-70">Plan → Code → Review</div>
+                              </div>
+                            </button>
+                          </div>
+                          {useRalphWiggum && (
+                            <div className="mt-2 flex items-center gap-2">
+                              <span className="text-xs text-copilot-text-muted">Max iterations:</span>
+                              <input
+                                type="number"
+                                value={ralphMaxIterations}
+                                onChange={(e) => setRalphMaxIterations(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))}
+                                className="w-14 bg-copilot-bg border border-copilot-border rounded px-2 py-1 text-xs text-copilot-text"
+                                min={1}
+                                max={100}
+                                disabled={isCreating}
+                              />
+                            </div>
+                          )}
                         </div>
                       )}
                     </>
