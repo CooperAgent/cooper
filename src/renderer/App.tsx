@@ -95,6 +95,11 @@ const enrichSessionsWithWorktreeData = async (sessions: PreviousSession[]): Prom
           }
         };
       }
+      // Worktree no longer exists - clear stale worktree data
+      if (session.worktree) {
+        const { worktree: _, ...sessionWithoutWorktree } = session;
+        return sessionWithoutWorktree;
+      }
       return session;
     });
   } catch (error) {
