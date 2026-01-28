@@ -10,13 +10,20 @@ export type {
   TabState,
   PreviousSession,
   RalphConfig,
+  LisaConfig,
+  LisaPhase,
   ContextUsage,
   CompactionStatus,
   DetectedChoice,
   PendingInjection,
 } from "./session";
 
-export { RALPH_COMPLETION_SIGNAL } from "./session";
+export { 
+  RALPH_COMPLETION_SIGNAL,
+  LISA_PHASE_COMPLETE_SIGNAL,
+  LISA_REVIEW_APPROVE_SIGNAL,
+  LISA_REVIEW_REJECT_PREFIX,
+} from "./session";
 
 export type {
   MCPServerConfigBase,

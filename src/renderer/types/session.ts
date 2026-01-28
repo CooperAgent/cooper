@@ -107,6 +107,23 @@ export interface RalphConfig {
   requireScreenshot?: boolean; // When true, agent must take screenshot of delivered feature
 }
 
+// Lisa Simpson loop configuration - multi-phase analytical workflow
+// Phases: Plan → Plan Review → Execute → Code Review → Validate → Final Review → COMPLETE
+// The Reviewer engages after each phase, providing feedback and can send back to any previous phase
+export type LisaPhase = 'plan' | 'plan-review' | 'execute' | 'code-review' | 'validate' | 'final-review';
+export const LISA_PHASE_COMPLETE_SIGNAL = "<lisa-phase>COMPLETE</lisa-phase>";
+export const LISA_REVIEW_APPROVE_SIGNAL = "<lisa-review>APPROVED</lisa-review>";
+export const LISA_REVIEW_REJECT_PREFIX = "<lisa-review>REJECT:"; // followed by phase name to return to
+export interface LisaConfig {
+  originalPrompt: string;
+  currentPhase: LisaPhase;
+  phaseIterations: Record<LisaPhase, number>; // Visit count per phase (for display only)
+  active: boolean;
+  planPath?: string; // Path to plan.md once created
+  evidenceFolderPath?: string; // Path to evidence folder once created
+  phaseHistory: Array<{ phase: LisaPhase; iteration: number; timestamp: number }>; // Track phase transitions
+}
+
 // Context usage information from the SDK
 export interface ContextUsage {
   tokenLimit: number;
@@ -152,6 +169,7 @@ export interface TabState {
   isRenaming?: boolean;
   renameDraft?: string;
   ralphConfig?: RalphConfig; // Ralph Wiggum loop configuration
+  lisaConfig?: LisaConfig; // Lisa Simpson loop configuration
   contextUsage?: ContextUsage; // Current context window usage
   compactionStatus?: CompactionStatus; // Status of context compaction
   detectedChoices?: DetectedChoice[]; // Choices detected in last assistant message

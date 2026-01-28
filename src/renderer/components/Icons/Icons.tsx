@@ -1,5 +1,6 @@
 import React from 'react'
 import ralphImage from '../../assets/ralph-head.png'
+import lisaImage from '../../assets/lisa-head.webp'
 
 export interface IconProps {
   size?: number | string
@@ -210,14 +211,34 @@ export const ExternalLinkIcon: React.FC<IconProps> = ({ size = 24, className, st
 
 // Ralph Wiggum icon - uses the Ralph Wiggum image
 export const RalphIcon: React.FC<IconProps> = ({ size = 24, className }) => (
-  <img 
-    src={ralphImage} 
-    alt="Ralph" 
-    width={size} 
-    height={size} 
-    className={className}
-    style={{ objectFit: 'contain' }}
-  />
+  <div 
+    className={`rounded-full bg-white flex items-center justify-center overflow-hidden ${className || ''}`}
+    style={{ width: size, height: size }}
+  >
+    <img 
+      src={ralphImage} 
+      alt="Ralph" 
+      width={size} 
+      height={size} 
+      style={{ objectFit: 'contain' }}
+    />
+  </div>
+)
+
+// Lisa Simpson icon - uses the Lisa Simpson image
+export const LisaIcon: React.FC<IconProps> = ({ size = 24, className }) => (
+  <div 
+    className={`rounded-full bg-white flex items-center justify-center overflow-hidden ${className || ''}`}
+    style={{ width: size, height: size }}
+  >
+    <img 
+      src={lisaImage} 
+      alt="Lisa" 
+      width={size} 
+      height={size} 
+      style={{ objectFit: 'cover' }}
+    />
+  </div>
 )
 
 // Icons object for convenient access
@@ -250,6 +271,7 @@ export const Icons = {
   Zap: ZapIcon,
   ExternalLink: ExternalLinkIcon,
   Ralph: RalphIcon,
+  Lisa: LisaIcon,
 }
 
 export default Icons

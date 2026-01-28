@@ -28,6 +28,7 @@ import {
   TrashIcon,
   GlobeIcon,
   RalphIcon,
+  LisaIcon,
   TerminalIcon,
   PaletteIcon,
   BookIcon,
@@ -58,8 +59,13 @@ import {
   MCPLocalServerConfig,
   MCPRemoteServerConfig,
   RalphConfig,
+  LisaConfig,
+  LisaPhase,
   DetectedChoice,
   RALPH_COMPLETION_SIGNAL,
+  LISA_PHASE_COMPLETE_SIGNAL,
+  LISA_REVIEW_APPROVE_SIGNAL,
+  LISA_REVIEW_REJECT_PREFIX,
   Skill,
 } from "./types";
 import {
@@ -73,7 +79,6 @@ import { LONG_OUTPUT_LINE_THRESHOLD } from "./utils/cliOutputCompression";
 import { useClickOutside } from "./hooks";
 import buildInfo from "./build-info.json";
 
-// Helper to enrich sessions with worktree metadata
 const enrichSessionsWithWorktreeData = async (sessions: PreviousSession[]): Promise<PreviousSession[]> => {
   try {
     const worktreeSessions = await window.electronAPI.worktree.listSessions();
@@ -107,6 +112,280 @@ const enrichSessionsWithWorktreeData = async (sessions: PreviousSession[]): Prom
     return sessions;
   }
 };
+function buildLisaPhasePrompt(
+  phase: LisaPhase,
+  visitCount: number,
+  originalPrompt: string,
+  lastResponse: string,
+  reviewerFeedback?: string
+): string {
+  const phaseEmoji: Record<LisaPhase, string> = { 
+    'plan': '📋', 
+    'plan-review': '👀', 
+    'execute': '💻', 
+    'code-review': '👀', 
+    'validate': '🧪', 
+    'final-review': '👀' 
+  };
+  const phaseName: Record<LisaPhase, string> = { 
+    'plan': 'PLANNER', 
+    'plan-review': 'PLAN REVIEW', 
+    'execute': 'CODE', 
+    'code-review': 'CODE REVIEW', 
+    'validate': 'TEST', 
+    'final-review': 'FINAL REVIEW' 
+  };
+  
+  const feedbackSection = reviewerFeedback 
+    ? `\n---\n\n## Reviewer Feedback (ADDRESS THIS):\n\n${reviewerFeedback}\n` 
+    : '';
+
+  // Show visit count only if revisiting (more than once)
+  const visitLabel = visitCount > 1 ? ` (Visit #${visitCount})` : '';
+
+  // Common instruction for all phases - no git commits during the loop
+  const noCommitWarning = `
+⚠️ **IMPORTANT: DO NOT commit or push changes during this loop!**
+- Do NOT run \`git add\`, \`git commit\`, or \`git push\`
+- The user will commit changes after the loop completes
+- Only make code changes to files, do not stage or commit them
+`;
+
+  const phaseInstructions: Record<LisaPhase, string> = {
+    'plan': `## 📋 PLANNER PHASE${visitLabel}
+${noCommitWarning}
+You are the **Planner** agent. Your job is to create a comprehensive plan for the task.
+
+### Your Responsibilities:
+1. **Analyze** the user's request thoroughly
+2. **Create plan.md** in the current working directory with:
+   - Problem statement
+   - Proposed approach  
+   - Detailed workplan with checkboxes for each task
+   - Acceptance criteria (what "done" looks like)
+   - Architecture decisions and rationale
+   - Testing strategy
+3. **Be specific** - break down into atomic, verifiable tasks
+4. **Consider edge cases** and error handling
+
+### Output Requirements:
+- Create/update \`plan.md\` file
+- The plan should be detailed enough for the Coder to implement without ambiguity
+- Include clear acceptance criteria for the Reviewer to verify
+
+When your plan is complete and ready for review, output exactly:
+${LISA_PHASE_COMPLETE_SIGNAL}`,
+
+    'plan-review': `## 👀 PLAN REVIEW${visitLabel}
+${noCommitWarning}
+You are the **Reviewer** agent. The Planner has created a plan. Your job is to review it BEFORE any code is written.
+
+### Review plan.md for:
+1. **Completeness** - Does it cover all aspects of the user's request?
+2. **Clarity** - Is each task specific and unambiguous?
+3. **Architecture** - Is the proposed approach sound? Any concerns?
+4. **Acceptance criteria** - Are they clear and verifiable?
+5. **Risk assessment** - Are edge cases and error handling considered?
+6. **Scope** - Is the scope appropriate? Not too big, not missing things?
+
+### Your Decision:
+- If the plan is solid and ready for implementation → APPROVE
+- If the plan needs work (unclear tasks, bad architecture, missing requirements) → REJECT back to Planner
+
+### Output Requirements:
+If APPROVING (plan is ready for implementation):
+${LISA_REVIEW_APPROVE_SIGNAL}
+
+If REJECTING (plan needs improvements):
+${LISA_REVIEW_REJECT_PREFIX}plan</lisa-review>
+
+**Always include specific feedback** - what's good, what needs to change, and why.`,
+
+    'execute': `## 💻 CODER PHASE${visitLabel}
+${noCommitWarning}
+You are the **Coder** agent. The plan has been reviewed and approved. Now implement it.
+
+### Your Responsibilities:
+1. **Read plan.md** and understand the requirements
+2. **Implement** each task in the plan systematically
+3. **Update plan.md** by checking off completed items as you go
+4. **Document** any significant decisions or deviations from the plan
+5. **Build** and verify the code compiles without errors
+6. **Self-test** - do basic sanity checks as you code
+
+### Output Requirements:
+- All code changes saved to files (DO NOT commit)
+- plan.md updated with completed checkboxes
+- Build passes without errors
+- Note any deviations from the plan and why
+
+When all planned items are implemented and the build passes, output exactly:
+${LISA_PHASE_COMPLETE_SIGNAL}`,
+
+    'code-review': `## 👀 CODE REVIEW${visitLabel}
+${noCommitWarning}
+You are the **Reviewer** agent. The Coder has implemented the plan. Review the code BEFORE QA testing.
+
+### Review the code changes for:
+1. **Correctness** - Does it implement what the plan specified?
+2. **Code quality** - Clean code, good naming, no duplication
+3. **Security** - Any vulnerabilities introduced?
+4. **Architecture** - Does it fit the codebase patterns?
+5. **Error handling** - Are edge cases handled?
+6. **Performance** - Any obvious performance issues?
+
+### Use git diff to see changes:
+Run \`git diff\` to see all changes made by the Coder.
+
+### Your Decision:
+- If code is solid and ready for QA testing → APPROVE
+- If code needs fixes → REJECT back to Coder
+- If you realize the plan was wrong → REJECT back to Planner
+
+### Output Requirements:
+If APPROVING (code is ready for QA):
+${LISA_REVIEW_APPROVE_SIGNAL}
+
+If REJECTING (specify which phase):
+${LISA_REVIEW_REJECT_PREFIX}execute</lisa-review>
+OR
+${LISA_REVIEW_REJECT_PREFIX}plan</lisa-review>
+
+**Always include specific feedback** - what's good, what needs to change, line numbers if relevant.`,
+
+    'validate': `## 🧪 QA PHASE${visitLabel}
+${noCommitWarning}
+You are the **QA** agent. Code has been reviewed. Now thoroughly validate it works.
+
+### Your Responsibilities:
+1. **Create test plan** in \`evidence/test-plan.md\`
+2. **Run existing tests** - \`npm test\` or equivalent
+3. **Write new tests** if appropriate for the changes - mock dependencies as needed
+4. **Visual testing with Playwright** - THIS IS REQUIRED:
+   - Use Playwright to automate the application
+   - Navigate to and interact with the new features programmatically
+   - **Capture screenshots using Playwright's screenshot API**
+   - Example: \`await page.screenshot({ path: 'evidence/screenshots/01-feature.png' })\`
+5. **Create evidence folder** at \`evidence/\` containing:
+   - \`test-plan.md\` - what you're testing and how
+   - \`test-results.md\` - pass/fail summary, any errors
+   - \`screenshots/\` - Playwright-captured screenshots showing the feature
+   - \`ux-notes.md\` - observations about the user experience
+   - \`checklist.md\` - verification of each acceptance criterion
+6. **Generate HTML summary** at \`evidence/summary.html\`:
+   - Create a polished, readable HTML page summarizing all evidence
+   - Include inline CSS for styling (no external dependencies)
+   - Structure:
+     * **Header**: Task title, completion date, status badge
+     * **Executive Summary**: Brief description of what was implemented
+     * **Test Results**: Table showing all tests run with pass/fail status
+     * **Screenshots Gallery**: All screenshots in a scrollable grid/gallery
+       - Each screenshot should be displayed inline with \`<img src="screenshots/filename.png">\`
+       - Add captions describing what each screenshot shows
+     * **Code Changes Summary**: Files modified, lines added/removed
+     * **Acceptance Criteria Checklist**: Visual checklist with ✅/❌
+     * **UX Notes**: Any observations about user experience
+     * **Reviewer Notes Section**: Space for final review comments
+   - Make it visually appealing - use colors, spacing, and clear typography
+   - This HTML should convince a reviewer that the feature is complete and well-tested
+
+### Testing Approach:
+- Even if something seems hard to test, find creative ways to verify it
+- Mock external dependencies, APIs, or complex components as needed
+- Use Playwright for UI testing - it can handle Electron apps
+- For non-visual changes, write unit tests with appropriate mocks
+- **Do not skip testing** - find a way or explain why it's truly impossible
+
+### Screenshot Requirements (using Playwright):
+- Take screenshots of EVERY major state of the new feature
+- Use Playwright: \`await page.screenshot({ path: 'evidence/screenshots/XX-description.png' })\`
+- Name them descriptively: \`01-initial-state.png\`, \`02-after-click.png\`, etc.
+- Capture any error states or edge cases tested
+- Full page screenshots when relevant: \`{ fullPage: true }\`
+
+When validation is complete with all evidence gathered, output exactly:
+${LISA_PHASE_COMPLETE_SIGNAL}`,
+
+    'final-review': `## 👀 FINAL REVIEW${visitLabel}
+${noCommitWarning}
+You are the **Reviewer** agent. This is the FINAL review before completion. Be STRICT.
+
+### You MUST review ALL artifacts:
+
+1. **Review plan.md**:
+   - Are ALL tasks checked off?
+   - Were there any deviations? Are they acceptable?
+
+2. **Review code changes** (\`git diff\`):
+   - Final quality check
+   - Any last concerns?
+
+3. **Review evidence folder** - THIS IS CRITICAL:
+   - **Open \`evidence/summary.html\`** - this is the main evidence document
+     * Read the HTML file to review the complete summary
+     * Verify all sections are present and complete
+   - **USE THE VIEW TOOL** to look at \`evidence/screenshots/*.png\`
+   - Analyze each screenshot for UX quality:
+     * Is the UI visually correct?
+     * Is the layout good?
+     * Any visual bugs or glitches?
+     * Is it user-friendly?
+   - Review \`evidence/test-results.md\` - did all tests pass?
+   - Review \`evidence/ux-notes.md\` - any concerns noted?
+
+4. **Enforce proper testing**:
+   - Were tests written for the changes? If not, REJECT back to QA
+   - Were Playwright screenshots captured? If not, REJECT back to QA
+   - Is \`evidence/summary.html\` present and complete? If not, REJECT back to QA
+   - Even "hard to test" changes need verification - QA should mock, stub, or find creative approaches
+   - Do not accept "this can't be tested" - demand evidence or alternative verification
+
+5. **Make final decision**:
+   - If everything is satisfactory → APPROVE (loop ends!)
+   - If missing summary.html → REJECT to QA: "Generate the HTML evidence summary"
+   - If missing screenshots → REJECT to QA: "Capture screenshots with Playwright"
+   - If missing tests → REJECT to QA: "Write tests with mocks if needed"
+   - If UX issues in screenshots → REJECT to QA with specific feedback
+   - If code issues found → REJECT to Coder
+   - If fundamental problems → REJECT to Planner
+
+### IMPORTANT: Actually view the screenshots!
+Use: \`view evidence/screenshots/[filename].png\` for each screenshot.
+Do not approve without visually inspecting the evidence.
+If no screenshots exist, REJECT immediately to QA phase.
+
+### Output Requirements:
+If APPROVING (everything is complete and satisfactory):
+${LISA_REVIEW_APPROVE_SIGNAL}
+
+If REJECTING (specify which phase and detailed feedback):
+${LISA_REVIEW_REJECT_PREFIX}validate</lisa-review>
+OR
+${LISA_REVIEW_REJECT_PREFIX}execute</lisa-review>
+OR
+${LISA_REVIEW_REJECT_PREFIX}plan</lisa-review>
+
+**Include detailed feedback on what was reviewed and the decision rationale.**`
+  };
+
+  return `${phaseEmoji[phase]} **Lisa Simpson Loop - ${phaseName[phase]}**
+${feedbackSection}
+---
+
+## Original Task:
+
+${originalPrompt}
+
+---
+
+## Previous Response (context):
+
+${lastResponse.slice(0, 2000)}${lastResponse.length > 2000 ? '\n\n... (truncated)' : ''}
+
+---
+
+${phaseInstructions[phase]}`;
+}
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<Status>("connecting");
@@ -179,8 +458,12 @@ const App: React.FC = () => {
   // Ralph Wiggum loop state
   const [showRalphSettings, setShowRalphSettings] = useState(false);
   const [ralphEnabled, setRalphEnabled] = useState(false);
-  const [ralphMaxIterations, setRalphMaxIterations] = useState(20);
+  const [ralphMaxIterations, setRalphMaxIterations] = useState(5);
   const [ralphRequireScreenshot, setRalphRequireScreenshot] = useState(false);
+
+  // Lisa Simpson loop state - multi-phase analytical workflow
+  const [showLisaSettings, setShowLisaSettings] = useState(false);
+  const [lisaEnabled, setLisaEnabled] = useState(false);
 
   // Worktree session state
   const [showCreateWorktree, setShowCreateWorktree] = useState(false);
@@ -396,6 +679,15 @@ const App: React.FC = () => {
     );
   }, []);
 
+  // Persist lisaConfig to sessionStorage when it changes
+  useEffect(() => {
+    tabs.forEach(tab => {
+      if (tab.lisaConfig) {
+        sessionStorage.setItem(`lisaConfig-${tab.id}`, JSON.stringify(tab.lisaConfig));
+      }
+    });
+  }, [tabs]);
+
   // Set up IPC listeners
   useEffect(() => {
     const unsubscribeReady = window.electronAPI.copilot.onReady(
@@ -463,23 +755,30 @@ const App: React.FC = () => {
         }
 
         // Create tabs for all resumed/created sessions
-        const initialTabs: TabState[] = data.sessions.map((s, idx) => ({
-          id: s.sessionId,
-          name: s.name || `Session ${idx + 1}`,
-          messages: [], // Will be loaded below
-          model: s.model,
-          cwd: s.cwd,
-          isProcessing: false,
-          activeTools: [],
-          hasUnreadCompletion: false,
-          pendingConfirmations: [],
-          needsTitle: !s.name, // Only need title if no name provided
-          alwaysAllowed: s.alwaysAllowed || [],
-          editedFiles: s.editedFiles || [],
-          currentIntent: null,
-          currentIntentTimestamp: null,
-          gitBranchRefresh: 0,
-        }));
+        const initialTabs: TabState[] = data.sessions.map((s, idx) => {
+          // Restore lisaConfig from sessionStorage if available
+          const storedLisaConfig = sessionStorage.getItem(`lisaConfig-${s.sessionId}`);
+          const lisaConfig = storedLisaConfig ? JSON.parse(storedLisaConfig) : undefined;
+          
+          return {
+            id: s.sessionId,
+            name: s.name || `Session ${idx + 1}`,
+            messages: [], // Will be loaded below
+            model: s.model,
+            cwd: s.cwd,
+            isProcessing: false,
+            activeTools: [],
+            hasUnreadCompletion: false,
+            pendingConfirmations: [],
+            needsTitle: !s.name, // Only need title if no name provided
+            alwaysAllowed: s.alwaysAllowed || [],
+            editedFiles: s.editedFiles || [],
+            currentIntent: null,
+            currentIntentTimestamp: null,
+            gitBranchRefresh: 0,
+            lisaConfig,
+          };
+        });
 
         // Update tab counter to avoid duplicate names
         setTabCounter(data.sessions.length);
@@ -689,8 +988,139 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
               };
             });
           } else {
-            // Ralph loop complete - stop it
+            // Ralph loop complete - stop it and close settings
             console.log(`[Ralph] Loop complete. Reason: ${hasCompletionPromise ? 'completion promise found' : 'max iterations reached'}`);
+            setShowRalphSettings(false);
+            setShowLisaSettings(false);
+          }
+        }
+
+        // Check for Lisa Simpson loop continuation
+        if (tab?.lisaConfig?.active) {
+          const lastMessage = tab.messages[tab.messages.length - 1];
+          const lastContent = lastMessage?.content || '';
+          const hasPhaseComplete = lastContent.includes(LISA_PHASE_COMPLETE_SIGNAL);
+          const hasReviewApprove = lastContent.includes(LISA_REVIEW_APPROVE_SIGNAL);
+          const hasReviewReject = lastContent.includes(LISA_REVIEW_REJECT_PREFIX);
+          const currentPhase = tab.lisaConfig.currentPhase;
+          const currentVisitCount = tab.lisaConfig.phaseIterations[currentPhase] || 1;
+
+          // New phase flow: plan → plan-review → execute → code-review → validate → final-review → COMPLETE
+          const getNextPhase = (phase: LisaPhase): LisaPhase | null => {
+            const phaseFlow: Record<LisaPhase, LisaPhase | null> = {
+              'plan': 'plan-review',
+              'plan-review': 'execute',      // After plan approved
+              'execute': 'code-review',
+              'code-review': 'validate',     // After code approved
+              'validate': 'final-review',
+              'final-review': null           // Loop complete after final approval
+            };
+            return phaseFlow[phase];
+          };
+
+          // Helper to get phase display name
+          const getPhaseDisplayName = (phase: LisaPhase): string => {
+            const names: Record<LisaPhase, string> = { 
+              'plan': 'Planner', 
+              'plan-review': 'Plan Review', 
+              'execute': 'Coder', 
+              'code-review': 'Code Review', 
+              'validate': 'Tester', 
+              'final-review': 'Final Review' 
+            };
+            return names[phase];
+          };
+
+          // Is this a review phase?
+          const isReviewPhase = ['plan-review', 'code-review', 'final-review'].includes(currentPhase);
+
+          // Check if we should continue or transition
+          let shouldContinue = false;
+          let nextPhase: LisaPhase | null = null;
+          let rejectToPhase: LisaPhase | null = null;
+
+          if (isReviewPhase && hasReviewApprove) {
+            // Review approved - move to next phase (or complete if final-review)
+            nextPhase = getNextPhase(currentPhase);
+            if (nextPhase) {
+              console.log(`[Lisa] ${getPhaseDisplayName(currentPhase)} approved! Moving to ${getPhaseDisplayName(nextPhase)}`);
+              shouldContinue = true;
+            } else {
+              // Final review approved - Lisa loop complete!
+              console.log(`[Lisa] Final review approved! Loop complete.`);
+              shouldContinue = false;
+            }
+          } else if (isReviewPhase && hasReviewReject) {
+            // Review rejected - extract phase to return to
+            const rejectMatch = lastContent.match(new RegExp(`${LISA_REVIEW_REJECT_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(plan|execute|validate)`));
+            if (rejectMatch) {
+              rejectToPhase = rejectMatch[1] as LisaPhase;
+              console.log(`[Lisa] ${getPhaseDisplayName(currentPhase)} rejected, returning to ${getPhaseDisplayName(rejectToPhase)}`);
+              shouldContinue = true;
+            }
+          } else if (hasPhaseComplete && !isReviewPhase) {
+            // Non-review phase complete - move to its review phase
+            nextPhase = getNextPhase(currentPhase);
+            if (nextPhase) {
+              console.log(`[Lisa] ${getPhaseDisplayName(currentPhase)} complete, moving to ${getPhaseDisplayName(nextPhase)}`);
+              shouldContinue = true;
+            }
+          } else if (!hasPhaseComplete && !hasReviewApprove && !hasReviewReject) {
+            // Continue current phase (no signal received yet)
+            shouldContinue = true;
+          }
+
+          if (shouldContinue) {
+            const targetPhase = rejectToPhase || nextPhase || currentPhase;
+            const isNewPhase = targetPhase !== currentPhase;
+            const targetVisitCount = isNewPhase ? 1 : currentVisitCount + 1;
+            
+            console.log(`[Lisa] ${getPhaseDisplayName(targetPhase)} - Visit #${targetVisitCount}`);
+
+            // Build phase-specific continuation prompt
+            const continuationPrompt = buildLisaPhasePrompt(
+              targetPhase,
+              targetVisitCount,
+              tab.lisaConfig.originalPrompt,
+              lastContent,
+              rejectToPhase ? `Reviewer feedback: ${lastContent}` : undefined
+            );
+
+            // Schedule the re-send after state update
+            setTimeout(() => {
+              window.electronAPI.copilot.send(sessionId, continuationPrompt);
+            }, 100);
+
+            // Update phase and visit count
+            return prev.map((t) => {
+              if (t.id !== sessionId) return t;
+              const newPhaseIterations = { ...t.lisaConfig!.phaseIterations };
+              if (isNewPhase) {
+                newPhaseIterations[targetPhase] = 1;
+              } else {
+                newPhaseIterations[targetPhase] = targetVisitCount;
+              }
+              return {
+                ...t,
+                lisaConfig: {
+                  ...t.lisaConfig!,
+                  currentPhase: targetPhase,
+                  phaseIterations: newPhaseIterations,
+                  phaseHistory: [
+                    ...t.lisaConfig!.phaseHistory,
+                    { phase: targetPhase, iteration: targetVisitCount, timestamp: Date.now() }
+                  ],
+                },
+                messages: t.messages.map((msg) =>
+                  msg.isStreaming ? { ...msg, isStreaming: false } : msg
+                ),
+              };
+            });
+          } else {
+            // Lisa loop complete - close settings
+            console.log(`[Lisa] Loop complete. Phase: ${currentPhase}, Reason: ${hasReviewApprove ? 'final review approved' : 'no continuation needed'}`);
+            setShowRalphSettings(false);
+            setShowLisaSettings(false);
           }
         }
 
@@ -771,6 +1201,10 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
             ralphConfig: tab.ralphConfig?.active 
               ? { ...tab.ralphConfig, active: false }
               : tab.ralphConfig,
+            // Deactivate Lisa if it was active
+            lisaConfig: tab.lisaConfig?.active 
+              ? { ...tab.lisaConfig, active: false }
+              : tab.lisaConfig,
             // Mark as unread if this tab is not currently active
             hasUnreadCompletion: tab.id !== activeTabIdRef.current,
             messages: tab.messages
@@ -1166,6 +1600,25 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
           requireScreenshot: ralphRequireScreenshot,
         }
       : undefined;
+
+    // Set up Lisa config if enabled - multi-phase analytical workflow
+    const lisaConfig: LisaConfig | undefined = lisaEnabled
+      ? {
+          originalPrompt: userMessage.content,
+          currentPhase: 'plan',
+          phaseIterations: { 
+            'plan': 1, 
+            'plan-review': 0, 
+            'execute': 0, 
+            'code-review': 0, 
+            'validate': 0, 
+            'final-review': 0 
+          },
+          active: true,
+          phaseHistory: [{ phase: 'plan', iteration: 1, timestamp: Date.now() }],
+          evidenceFolderPath: activeTab?.cwd ? `${activeTab.cwd}/evidence` : 'evidence',
+        }
+      : undefined;
     
     // Build screenshot requirement text if enabled
     const screenshotRequirement = ralphRequireScreenshot
@@ -1178,8 +1631,19 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       : '';
 
     // If Ralph is enabled, append detailed completion instructions to the prompt
-    const promptToSend = ralphEnabled
-      ? `${userMessage.content}
+    // If Lisa is enabled, start with the Plan phase prompt
+    let promptToSend: string;
+    if (lisaEnabled) {
+      // Lisa Simpson loop - start with Plan phase
+      promptToSend = buildLisaPhasePrompt(
+        'plan',
+        1,
+        userMessage.content,
+        '', // No previous response yet
+        undefined
+      );
+    } else if (ralphEnabled) {
+      promptToSend = `${userMessage.content}
 
 ## COMPLETION REQUIREMENTS
 
@@ -1201,8 +1665,10 @@ You are running in an autonomous loop. Before signaling completion, you MUST ver
 
 5. **Verify Completion**: Go through each item in your plan one more time to ensure nothing was missed.${screenshotRequirement}
 
-Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETION_SIGNAL}`
-      : userMessage.content;
+Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETION_SIGNAL}`;
+    } else {
+      promptToSend = userMessage.content;
+    }
 
     // Build SDK attachments from image and file attachments
     const sdkAttachments = [
@@ -1240,6 +1706,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       isProcessing: true,
       activeTools: [],
       ralphConfig,
+      lisaConfig,
       detectedChoices: undefined, // Clear any detected choices
     });
     setInputValue("");
@@ -1254,13 +1721,19 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       setRalphRequireScreenshot(false);
     }
 
+    // Reset Lisa UI state after sending
+    if (lisaEnabled) {
+      setLisaEnabled(false);
+      setShowLisaSettings(false);
+    }
+
     try {
       await window.electronAPI.copilot.send(tabId, promptToSend, sdkAttachments.length > 0 ? sdkAttachments : undefined);
     } catch (error) {
       console.error("Send error:", error);
-      updateTab(tabId, { isProcessing: false, ralphConfig: undefined });
+      updateTab(tabId, { isProcessing: false, ralphConfig: undefined, lisaConfig: undefined });
     }
-  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphMaxIterations, ralphRequireScreenshot, terminalAttachment, imageAttachments, fileAttachments]);
+  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphMaxIterations, ralphRequireScreenshot, lisaEnabled, terminalAttachment, imageAttachments, fileAttachments]);
 
   // Handle sending terminal output to the agent
   const handleSendTerminalOutput = useCallback((output: string, lineCount: number) => {
@@ -1611,11 +2084,14 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
   const handleStop = useCallback(() => {
     if (!activeTab) return;
     window.electronAPI.copilot.abort(activeTab.id);
-    // Also stop Ralph loop if active
+    // Also stop Ralph and Lisa loops if active
     updateTab(activeTab.id, { 
       isProcessing: false,
       ralphConfig: activeTab.ralphConfig 
         ? { ...activeTab.ralphConfig, active: false }
+        : undefined,
+      lisaConfig: activeTab.lisaConfig 
+        ? { ...activeTab.lisaConfig, active: false }
         : undefined,
     });
   }, [activeTab, updateTab]);
@@ -3472,57 +3948,258 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
           {/* Input Area */}
           <div className="shrink-0 p-3 bg-copilot-surface border-t border-copilot-border">
-            {/* Ralph Settings Panel */}
-            {showRalphSettings && !activeTab?.isProcessing && (
+            {/* Agent Modes Panel - Combined Ralph & Lisa */}
+            {(showRalphSettings || showLisaSettings) && !activeTab?.isProcessing && (
               <div className="mb-2 p-3 bg-copilot-bg rounded-lg border border-copilot-border">
-                <div className={`flex items-center gap-2 ${ralphEnabled ? 'mb-2' : ''}`}>
-                  <RalphIcon size={28} />
-                  <span className="text-xs font-medium text-copilot-text">Ralph Wiggum Loop</span>
-                  <label className="ml-auto flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={ralphEnabled}
-                      onChange={(e) => setRalphEnabled(e.target.checked)}
-                      className="rounded border-copilot-border w-3.5 h-3.5"
-                    />
-                    <span className="text-[10px] text-copilot-text-muted">Enable</span>
-                  </label>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xs font-medium text-copilot-text">Agent Modes</span>
+                  <span className="flex-1" />
                   <button
-                    onClick={() => setShowRalphSettings(false)}
+                    onClick={() => {
+                      setShowRalphSettings(false);
+                      setShowLisaSettings(false);
+                    }}
                     className="p-1 rounded hover:bg-copilot-surface-hover"
                   >
                     <CloseIcon size={10} className="text-copilot-text-muted" />
                   </button>
                 </div>
-                {ralphEnabled && (
-                  <div className="space-y-2">
-                    <div>
-                      <label className="text-[10px] text-copilot-text-muted block mb-1">
-                        Max iterations (safety limit)
-                      </label>
-                      <input
-                        type="number"
-                        value={ralphMaxIterations}
-                        onChange={(e) => setRalphMaxIterations(Math.max(1, parseInt(e.target.value) || 1))}
-                        className="w-20 bg-copilot-surface border border-copilot-border rounded px-2 py-1 text-xs text-copilot-text"
-                        min={1}
-                        max={100}
-                      />
+                
+                {/* Mode Selection Row */}
+                <div className="flex gap-2 mb-3">
+                  {/* Ralph Option */}
+                  <button
+                    onClick={() => {
+                      setRalphEnabled(!ralphEnabled);
+                      if (!ralphEnabled) setLisaEnabled(false);
+                    }}
+                    className={`flex-1 p-2 rounded-lg border transition-all ${
+                      ralphEnabled 
+                        ? 'border-copilot-warning bg-copilot-warning/10' 
+                        : 'border-copilot-border hover:border-copilot-text-muted'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <RalphIcon size={24} />
+                      <div className="text-left">
+                        <div className="text-xs font-medium text-copilot-text">Ralph Wiggum</div>
+                        <div className="text-[10px] text-copilot-text-muted">Simple loop</div>
+                      </div>
                     </div>
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={ralphRequireScreenshot}
-                        onChange={(e) => setRalphRequireScreenshot(e.target.checked)}
-                        className="rounded border-copilot-border w-3.5 h-3.5"
-                      />
-                      <span className="text-[10px] text-copilot-text-muted">Require screenshot of delivered feature</span>
-                    </label>
+                  </button>
+                  
+                  {/* Lisa Option */}
+                  <button
+                    onClick={() => {
+                      setLisaEnabled(!lisaEnabled);
+                      if (!lisaEnabled) setRalphEnabled(false);
+                    }}
+                    className={`flex-1 p-2 rounded-lg border transition-all ${
+                      lisaEnabled 
+                        ? 'border-copilot-accent bg-copilot-accent/10' 
+                        : 'border-copilot-border hover:border-copilot-text-muted'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <LisaIcon size={24} />
+                      <div className="text-left">
+                        <div className="text-xs font-medium text-copilot-text">Lisa Simpson</div>
+                        <div className="text-[10px] text-copilot-text-muted">Multi-phase</div>
+                      </div>
+                    </div>
+                  </button>
+                </div>
+
+                {/* Ralph Settings */}
+                {ralphEnabled && (
+                  <div className="space-y-2 pt-2 border-t border-copilot-border">
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <label className="text-[10px] text-copilot-text-muted block mb-1">
+                          Max iterations
+                        </label>
+                        <input
+                          type="number"
+                          value={ralphMaxIterations}
+                          onChange={(e) => setRalphMaxIterations(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="w-16 bg-copilot-surface border border-copilot-border rounded px-2 py-1 text-xs text-copilot-text"
+                          min={1}
+                          max={100}
+                        />
+                      </div>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={ralphRequireScreenshot}
+                          onChange={(e) => setRalphRequireScreenshot(e.target.checked)}
+                          className="rounded border-copilot-border w-3.5 h-3.5"
+                        />
+                        <span className="text-[10px] text-copilot-text-muted">Require screenshot</span>
+                      </label>
+                    </div>
                     <p className="text-[10px] text-copilot-text-muted">
-                      The agent will loop until verified complete. Each iteration includes context from the previous response. The agent must: follow a plan, test the feature, fix errors, add tests if possible, and verify all plan items.
+                      Agent loops until verified complete: plan, test, fix errors, verify all items.
                     </p>
                   </div>
                 )}
+
+                {/* Lisa Settings */}
+                {lisaEnabled && (
+                  <div className="pt-2 border-t border-copilot-border">
+                    <div className="text-[10px] text-copilot-text-muted space-y-1">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="px-1.5 py-0.5 bg-copilot-surface rounded">📋 Plan</span>
+                        <span>→</span>
+                        <span className="px-1 py-0.5 bg-copilot-warning/20 rounded text-[9px]">👀</span>
+                        <span>→</span>
+                        <span className="px-1.5 py-0.5 bg-copilot-surface rounded">💻 Code</span>
+                        <span>→</span>
+                        <span className="px-1 py-0.5 bg-copilot-warning/20 rounded text-[9px]">👀</span>
+                        <span>→</span>
+                        <span className="px-1.5 py-0.5 bg-copilot-surface rounded">🧪 Test</span>
+                        <span>→</span>
+                        <span className="px-1 py-0.5 bg-copilot-warning/20 rounded text-[9px]">👀</span>
+                      </div>
+                      <p>Reviewer checks after each phase. Can reject back to <strong>any</strong> earlier phase (e.g., from Code Review back to Plan if architecture needs rethinking).</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Lisa Phase Progress - Shows during active Lisa loop or after completion */}
+            {(activeTab?.lisaConfig?.active || activeTab?.lisaConfig?.phaseHistory?.length) && (
+              <div className="mb-2 p-3 bg-copilot-bg rounded-lg border border-copilot-border">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-medium text-copilot-text flex items-center gap-2">
+                    <LisaIcon size={16} />
+                    Lisa Simpson Loop
+                  </span>
+                </div>
+                
+                {/* Phase progress as a horizontal pipeline */}
+                <div className="flex items-center gap-2">
+                  {[
+                    { work: 'plan' as const, review: 'plan-review' as const, emoji: '📋', workLabel: 'Plan', reviewLabel: 'Review' },
+                    { work: 'execute' as const, review: 'code-review' as const, emoji: '💻', workLabel: 'Code', reviewLabel: 'Review' },
+                    { work: 'validate' as const, review: 'final-review' as const, emoji: '🧪', workLabel: 'Test', reviewLabel: 'Final' },
+                  ].map((group, groupIdx) => {
+                    const workIteration = activeTab.lisaConfig?.phaseIterations[group.work] || 0;
+                    const reviewIteration = activeTab.lisaConfig?.phaseIterations[group.review] || 0;
+                    const isCurrentWork = activeTab.lisaConfig?.currentPhase === group.work;
+                    const isCurrentReview = activeTab.lisaConfig?.currentPhase === group.review;
+                    const workDone = workIteration > 0 && !isCurrentWork;
+                    const reviewDone = reviewIteration > 0 && !isCurrentReview;
+                    
+                    return (
+                      <React.Fragment key={group.work}>
+                        {/* Arrow connector between groups */}
+                        {groupIdx > 0 && (
+                          <span className="text-sm text-copilot-warning/70">→</span>
+                        )}
+                        
+                        {/* Work phase */}
+                        <div 
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all ${
+                            isCurrentWork 
+                              ? 'bg-copilot-accent/20 ring-2 ring-copilot-accent' 
+                              : workDone 
+                                ? 'bg-copilot-success/15 text-copilot-success'
+                                : 'bg-copilot-surface text-copilot-text-muted'
+                          }`}
+                          title={`${group.workLabel}: ${workIteration} iteration(s)`}
+                        >
+                          <span className="text-sm">{group.emoji}</span>
+                          <span className={`text-xs font-medium ${isCurrentWork ? 'text-copilot-accent' : ''}`}>
+                            {group.workLabel}
+                          </span>
+                          {workDone && <span className="text-xs">✓</span>}
+                          {isCurrentWork && <span className="text-[10px] text-copilot-text-muted">{workIteration}</span>}
+                        </div>
+                        
+                        {/* Arrow to review */}
+                        <span className="text-xs text-copilot-warning/70">→</span>
+                        
+                        {/* Review phase */}
+                        <div 
+                          className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-all ${
+                            isCurrentReview 
+                              ? 'bg-copilot-warning/20 ring-2 ring-copilot-warning' 
+                              : reviewDone 
+                                ? 'bg-copilot-success/15 text-copilot-success'
+                                : 'bg-copilot-surface text-copilot-text-muted'
+                          }`}
+                          title={`${group.reviewLabel} Review: ${reviewIteration} iteration(s)`}
+                        >
+                          <span className="text-xs">👀</span>
+                          <span className={`text-xs font-medium ${isCurrentReview ? 'text-copilot-warning' : ''}`}>
+                            {group.reviewLabel}
+                          </span>
+                          {reviewDone && <span className="text-xs">✓</span>}
+                          {isCurrentReview && <span className="text-[10px] text-copilot-text-muted">{reviewIteration}</span>}
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+                
+                {/* Current status */}
+                <div className="mt-2 pt-2 border-t border-copilot-border/50">
+                  <div className="text-xs text-copilot-text-muted">
+                    {activeTab?.lisaConfig?.active ? (
+                      (() => {
+                        const phase = activeTab.lisaConfig?.currentPhase;
+                        const iter = activeTab.lisaConfig?.phaseIterations[phase!] || 1;
+                        const descriptions: Record<LisaPhase, string> = {
+                          'plan': 'Planner is creating the implementation plan...',
+                          'plan-review': 'Reviewer is checking the plan before coding begins...',
+                          'execute': 'Coder is implementing the plan...',
+                          'code-review': 'Reviewer is checking code quality & architecture...',
+                          'validate': 'Tester is testing and gathering evidence...',
+                          'final-review': 'Reviewer is analyzing screenshots and approving...'
+                        };
+                        return (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="animate-pulse">●</span>
+                              <span>{descriptions[phase!]}</span>
+                              <span className="text-copilot-text-muted/50">(iteration {iter})</span>
+                            </div>
+                            {(phase === 'validate' || phase === 'final-review') && activeTab?.lisaConfig?.evidenceFolderPath && (
+                              <button 
+                                onClick={() => {
+                                  window.electronAPI.file.revealInFinder(activeTab.lisaConfig!.evidenceFolderPath!);
+                                }}
+                                className="px-2 py-1 text-xs bg-copilot-surface text-copilot-text-muted rounded hover:bg-copilot-border flex items-center gap-1"
+                                title="Open evidence folder"
+                              >
+                                📁 Evidence
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-copilot-success">
+                          <span>✅</span>
+                          <span>Loop completed - all phases approved</span>
+                        </div>
+                        {activeTab?.lisaConfig?.evidenceFolderPath && (
+                          <button 
+                            onClick={() => {
+                              window.electronAPI.file.revealInFinder(activeTab.lisaConfig!.evidenceFolderPath!);
+                            }}
+                            className="px-2 py-1 text-xs bg-copilot-accent/20 text-copilot-accent rounded hover:bg-copilot-accent/30 flex items-center gap-1"
+                            title="Open evidence folder"
+                          >
+                            📁 View Evidence
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -3650,23 +4327,33 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 className="hidden"
               />
               
-              {/* Modes Chevron - directly toggles Ralph settings */}
+              {/* Agent Mode Selector - toggles settings panel */}
               {!activeTab?.isProcessing && (
                 <button
-                  onClick={() => setShowRalphSettings(!showRalphSettings)}
+                  onClick={() => {
+                    const isOpen = showRalphSettings || showLisaSettings;
+                    setShowRalphSettings(!isOpen);
+                    setShowLisaSettings(false);
+                  }}
                   className={`shrink-0 p-2 pl-2.5 pr-0 transition-colors ${
-                    ralphEnabled
+                    ralphEnabled || lisaEnabled
                       ? "text-copilot-warning"
-                      : showRalphSettings
+                      : showRalphSettings || showLisaSettings
                         ? "text-copilot-accent"
                         : "text-copilot-text-muted hover:text-copilot-text"
                   }`}
-                  title="Ralph Wiggum Loop - Iterative agent mode"
+                  title="Agent Modes - Ralph Wiggum (Simple Loop) or Lisa Simpson (Multi-Phase)"
                 >
-                  <ChevronRightIcon 
-                    size={14} 
-                    className={`transition-transform ${showRalphSettings ? "rotate-90" : ""}`} 
-                  />
+                  {lisaEnabled ? (
+                    <LisaIcon size={16} />
+                  ) : ralphEnabled ? (
+                    <RalphIcon size={16} />
+                  ) : (
+                    <ChevronRightIcon 
+                      size={14} 
+                      className={`transition-transform ${showRalphSettings || showLisaSettings ? "rotate-90" : ""}`} 
+                    />
+                  )}
                 </button>
               )}
               
@@ -3678,7 +4365,9 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 onPaste={handlePaste}
                 placeholder={(isDraggingImage || isDraggingFile) ? "Drop files here..." : (
                   activeTab?.isProcessing ? "Type to inject message to agent..." : (
-                    ralphEnabled ? "Describe task with clear completion criteria..." : "Ask Copilot... (Shift+Enter for new line)"
+                    lisaEnabled ? "Describe task for multi-phase analysis (Plan → Execute → Validate → Review)..." : (
+                      ralphEnabled ? "Describe task with clear completion criteria..." : "Ask Copilot... (Shift+Enter for new line)"
+                    )
                   )
                 )}
                 className="flex-1 bg-transparent py-2.5 pl-3 pr-2 text-copilot-text placeholder-copilot-text-muted outline-none text-sm resize-none min-h-[40px] max-h-[200px]"
@@ -3738,10 +4427,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   <button
                     onClick={handleStop}
                     className="shrink-0 px-4 py-2.5 text-copilot-error hover:brightness-110 text-xs font-medium transition-colors flex items-center gap-1.5"
-                    title={activeTab?.ralphConfig?.active ? "Stop Ralph Loop" : "Stop"}
+                    title={activeTab?.lisaConfig?.active ? "Stop Lisa Loop" : (activeTab?.ralphConfig?.active ? "Stop Ralph Loop" : "Stop")}
                   >
                     <StopIcon size={10} />
-                    {activeTab?.ralphConfig?.active ? "Stop Loop" : "Stop"}
+                    {(activeTab?.ralphConfig?.active || activeTab?.lisaConfig?.active) ? "Stop Loop" : "Stop"}
                   </button>
                 </>
               ) : (
@@ -3753,7 +4442,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   }
                   className="shrink-0 px-4 py-2.5 text-copilot-accent hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
                 >
-                  {ralphEnabled ? "Start Loop" : "Send"}
+                  {lisaEnabled ? "Start Lisa Loop" : (ralphEnabled ? "Start Loop" : "Send")}
                 </button>
               )}
             </div>
@@ -3778,17 +4467,34 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             <div className="flex items-center gap-2">
               {activeTab?.isProcessing ? (
                 <>
-                  {activeTab?.ralphConfig?.active ? (
+                  {activeTab?.lisaConfig?.active ? (
+                    <LisaIcon size={12} className="animate-pulse" />
+                  ) : activeTab?.ralphConfig?.active ? (
                     <RalphIcon size={12} className="text-copilot-warning animate-pulse" />
                   ) : (
                     <span className="w-2 h-2 rounded-full bg-copilot-warning animate-pulse" />
                   )}
                   <span className="text-xs font-medium text-copilot-text truncate">
-                    {activeTab?.ralphConfig?.active 
-                      ? `Ralph ${activeTab.ralphConfig.currentIteration}/${activeTab.ralphConfig.maxIterations}`
-                      : (activeTab?.currentIntent || "Working...")}
+                    {activeTab?.lisaConfig?.active 
+                      ? (() => {
+                          const phase = activeTab.lisaConfig.currentPhase;
+                          const emoji: Record<LisaPhase, string> = { 
+                            'plan': '📋', 'plan-review': '👀', 
+                            'execute': '💻', 'code-review': '👀', 
+                            'validate': '🧪', 'final-review': '👀' 
+                          };
+                          const shortName: Record<LisaPhase, string> = { 
+                            'plan': 'Plan', 'plan-review': 'Review', 
+                            'execute': 'Code', 'code-review': 'Review', 
+                            'validate': 'Test', 'final-review': 'Final' 
+                          };
+                          return `Lisa ${emoji[phase]} ${shortName[phase]} ${activeTab.lisaConfig.phaseIterations[phase] || 1}`;
+                        })()
+                      : activeTab?.ralphConfig?.active 
+                        ? `Ralph ${activeTab.ralphConfig.currentIteration}/${activeTab.ralphConfig.maxIterations}`
+                        : (activeTab?.currentIntent || "Working...")}
                   </span>
-                  {activeTab?.ralphConfig?.active && activeTab?.currentIntent && (
+                  {(activeTab?.ralphConfig?.active || activeTab?.lisaConfig?.active) && activeTab?.currentIntent && (
                     <span className="text-[10px] text-copilot-text-muted truncate">
                       — {activeTab.currentIntent}
                     </span>
