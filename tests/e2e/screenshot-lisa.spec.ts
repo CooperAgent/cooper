@@ -1,42 +1,37 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test'
+import path from 'path'
 
-test('capture Lisa Simpson option in CreateWorktreeSession', async ({ page }) => {
-  // Mock the electronAPI
-  await page.addInitScript(() => {
-    (window as any).electronAPI = {
-      copilot: {
-        getSettings: async () => ({ autoApproveMode: 'ask', model: 'claude-sonnet-4' }),
-        addAlwaysAllowed: async () => {},
-        sessions: async () => [],
-        startSession: async () => ({ sessionId: 'test-123' }),
-        getAvailableModels: async () => []
-      },
-      worktree: {
-        list: async () => [],
-        listOrphaned: async () => [],
-        getTrackedRepos: async () => [
-          { path: '/path/to/repo', name: 'copilot-ui', url: 'https://github.com/idofrizler/copilot-ui' }
-        ],
-        create: async () => ({ success: true, worktreePath: '/tmp/worktree' })
-      },
-      git: {
-        getRemoteUrl: async () => 'https://github.com/idofrizler/copilot-ui',
-        getCurrentBranch: async () => 'main'
-      },
-      system: {
-        getVersion: async () => '1.0.0',
-        platform: () => 'darwin',
-        openExternal: async () => {}
-      },
-      github: {
-        getIssue: async () => ({ title: 'Test Issue', body: 'Test body' })
-      }
-    };
-  });
+let electronApp: ElectronApplication
+let window: Page
 
-  await page.goto('http://localhost:5173/');
-  await page.waitForTimeout(2000);
-  
-  // Take initial screenshot
-  await page.screenshot({ path: 'evidence/screenshots/06-app-loaded.png', fullPage: true });
-});
+const screenshotPath = path.join(__dirname, '../../evidence/screenshots/06-lisa-option.png')
+
+test.beforeAll(async () => {
+  electronApp = await electron.launch({
+    args: [path.join(__dirname, '../../out/main/index.js')],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+    },
+  })
+
+  window = await electronApp.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
+  await window.waitForTimeout(2000)
+})
+
+test.afterAll(async () => {
+  await electronApp?.close()
+})
+
+test('capture Lisa Simpson option in CreateWorktreeSession', async () => {
+  const agentModeBtn = window.locator('button[title*="Agent Modes"]').first()
+  if (await agentModeBtn.isVisible().catch(() => false)) {
+    await agentModeBtn.click()
+    await window.waitForTimeout(500)
+  }
+
+  await expect(window.locator('text=Lisa Simpson').first()).toBeVisible({ timeout: 10000 })
+
+  await window.screenshot({ path: screenshotPath, fullPage: true })
+})

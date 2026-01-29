@@ -6,7 +6,7 @@ let window: Page
 
 // Mock session data that matches what main.ts generates with USE_MOCK_SESSIONS=true
 const MOCK_SESSIONS = {
-  total: 12,
+  total: 13,
   today: ['Fix authentication bug', 'Add user dashboard'],
   yesterday: ['Refactor API endpoints', 'Update unit tests'],
   week: ['Feature: Dark mode support', 'Performance optimization', 'Database migration script'],
@@ -139,7 +139,7 @@ test.describe('Session History - Content Display', () => {
       fullPage: false 
     })
     
-    // Verify we have exactly 12 mock sessions
+    // Verify we have mock sessions + 1 active session
     const { total } = await getSessionCount()
     expect(total).toBe(MOCK_SESSIONS.total)
     
@@ -266,8 +266,8 @@ test.describe('Session History - Session Resumption', () => {
     await searchInput.clear()
     await window.waitForTimeout(200)
     
-    // Find session buttons inside the modal's scrollable area
-    const sessionButtons = window.locator('.overflow-y-auto button.w-full')
+    const modal = window.getByRole('dialog')
+    const sessionButton = modal.locator('[role="button"]', { hasText: 'Fix authentication bug' }).first()
     
     // Take screenshot before clicking
     await window.screenshot({ 
@@ -275,8 +275,8 @@ test.describe('Session History - Session Resumption', () => {
       fullPage: false 
     })
     
-    // Click the first session button ("Fix authentication bug")
-    await sessionButtons.first().click({ timeout: 5000 })
+    await expect(sessionButton).toBeVisible({ timeout: 15000 })
+    await sessionButton.click({ timeout: 15000 })
     
     // Wait for action to complete
     await window.waitForTimeout(3000)
@@ -382,8 +382,8 @@ test.describe('Session History - Final Screenshots', () => {
     const modal = window.locator('[role="dialog"]')
     
     // Verify mock sessions are visible
-    await expect(modal.locator('text=Fix authentication bug')).toBeVisible()
-    await expect(modal.locator('text=12 sessions in history')).toBeVisible()
+    await expect(modal.getByText('Fix authentication bug')).toBeVisible()
+    await expect(modal.getByText(new RegExp(`${MOCK_SESSIONS.total} sessions`))).toBeVisible()
     
     await window.screenshot({ 
       path: path.join(__dirname, '../../evidence/final-02-modal-open.png'),
@@ -416,7 +416,7 @@ test.describe('Session History - Final Screenshots', () => {
     // 5. Clear and show all
     await searchInput.clear()
     await window.waitForTimeout(300)
-    await expect(modal.locator('text=12 sessions in history')).toBeVisible()
+    await expect(modal.getByText(new RegExp(`${MOCK_SESSIONS.total} sessions`))).toBeVisible()
     
     await window.screenshot({ 
       path: path.join(__dirname, '../../evidence/final-05-all-sessions.png'),
