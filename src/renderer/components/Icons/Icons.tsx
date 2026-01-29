@@ -200,7 +200,7 @@ export const ZapIcon: React.FC<IconProps> = ({ size = 24, className, strokeWidth
   </svg>
 )
 
-// External link icon - for "Reveal in Finder" functionality
+// External link icon - for "Reveal in Folder" functionality
 export const ExternalLinkIcon: React.FC<IconProps> = ({ size = 24, className, strokeWidth = 2 }) => (
   <svg width={size} height={size} className={className} {...defaultProps} strokeWidth={strokeWidth}>
     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />

@@ -92,7 +92,7 @@ test.describe('File Preview Modal - Screenshot Evidence', () => {
       // Get file content
       const result = await (window as any).electronAPI.file.readContent(filePath)
       
-      const fileName = filePath.split('/').pop() || filePath
+      const fileName = filePath.split(/[/\\]/).pop() || filePath
       const content = result.success ? result.content : result.error
       const fileSize = result.fileSize || 0
       const fileSizeStr = fileSize < 1024 
@@ -115,7 +115,7 @@ test.describe('File Preview Modal - Screenshot Evidence', () => {
                   <polyline points="15 3 21 3 21 9"></polyline>
                   <line x1="10" y1="14" x2="21" y2="3"></line>
                 </svg>
-                <span>Reveal in Finder</span>
+                <span>Reveal in Folder</span>
               </button>
               <button class="text-copilot-text-muted hover:text-copilot-text transition-colors p-1" id="close-demo-modal">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -193,7 +193,7 @@ test.describe('File Preview Modal - Screenshot Evidence', () => {
       overlay.className = 'fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50'
       overlay.setAttribute('data-testid', 'file-preview-modal-demo')
       
-      const fileName = filePath.split('/').pop() || filePath
+      const fileName = filePath.split(/[/\\]/).pop() || filePath
       
       overlay.innerHTML = `
         <div class="bg-copilot-surface border border-copilot-border rounded-lg shadow-xl flex flex-col" style="width: 80%; max-width: 900px; max-height: 80vh;">
@@ -221,7 +221,7 @@ test.describe('File Preview Modal - Screenshot Evidence', () => {
                   <polyline points="15 3 21 3 21 9"></polyline>
                   <line x1="10" y1="14" x2="21" y2="3"></line>
                 </svg>
-                <span>Open in Finder</span>
+                <span>Open in Folder</span>
               </button>
             </div>
           </div>

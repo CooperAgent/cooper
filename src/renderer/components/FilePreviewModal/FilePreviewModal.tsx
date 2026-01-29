@@ -60,11 +60,11 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
 
-  const handleRevealInFinder = async () => {
+  const handleRevealInFolder = async () => {
     try {
-      await window.electronAPI.file.revealInFinder(filePath)
+      await window.electronAPI.file.revealInFolder(filePath)
     } catch (error) {
-      console.error('Failed to reveal in finder:', error)
+      console.error('Failed to reveal in folder:', error)
     }
   }
 
@@ -76,7 +76,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
 
   if (!isOpen) return null
 
-  const fileName = filePath.split('/').pop() || filePath
+  const fileName = filePath.split(/[/\\]/).pop() || filePath
 
   return (
     <div
@@ -103,12 +103,12 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={handleRevealInFinder}
+              onClick={handleRevealInFolder}
               className="flex items-center gap-1.5 px-2 py-1 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-bg rounded transition-colors"
-              title="Reveal in Finder"
+              title="Reveal in Folder"
             >
               <ExternalLinkIcon size={14} />
-              <span>Reveal in Finder</span>
+              <span>Reveal in Folder</span>
             </button>
             <button
               onClick={onClose}
@@ -151,11 +151,11 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
               </p>
               {(fileContent?.errorType === 'binary' || fileContent?.errorType === 'too_large') && (
                 <button
-                  onClick={handleRevealInFinder}
+                  onClick={handleRevealInFolder}
                   className="mt-4 flex items-center gap-1.5 px-3 py-1.5 text-xs text-copilot-accent hover:bg-copilot-bg rounded transition-colors border border-copilot-border"
                 >
                   <ExternalLinkIcon size={12} />
-                  <span>Open in Finder</span>
+                  <span>Open in Folder</span>
                 </button>
               )}
             </div>

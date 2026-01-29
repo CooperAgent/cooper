@@ -141,6 +141,7 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
     if (isOpen) {
       const fetchWorktrees = async () => {
         try {
+          if (!window.electronAPI?.worktree?.listSessions) return
           const result = await window.electronAPI.worktree.listSessions()
           if (result?.sessions) {
             const map = new Map<string, WorktreeData>()
@@ -339,20 +340,22 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
         setSuccessMessage('Worktree removed successfully')
         setTimeout(() => setSuccessMessage(null), 3000)
         // Refresh worktree list to remove the deleted session
-        const refreshResult = await window.electronAPI.worktree.listSessions()
-        if (refreshResult?.sessions) {
-          const map = new Map<string, WorktreeData>()
-          refreshResult.sessions.forEach((wt: { id: string; branch: string; worktreePath: string; status: 'active' | 'idle' | 'orphaned'; diskUsage?: string; lastAccessedAt?: string; createdAt?: string }) => {
-            map.set(wt.worktreePath, {
-              id: wt.id,
-              branch: wt.branch,
-              worktreePath: wt.worktreePath,
-              status: wt.status,
-              diskUsage: wt.diskUsage,
-              lastAccessedAt: wt.lastAccessedAt || wt.createdAt || new Date().toISOString(),
+        if (window.electronAPI?.worktree?.listSessions) {
+          const refreshResult = await window.electronAPI.worktree.listSessions()
+          if (refreshResult?.sessions) {
+            const map = new Map<string, WorktreeData>()
+            refreshResult.sessions.forEach((wt: { id: string; branch: string; worktreePath: string; status: 'active' | 'idle' | 'orphaned'; diskUsage?: string; lastAccessedAt?: string; createdAt?: string }) => {
+              map.set(wt.worktreePath, {
+                id: wt.id,
+                branch: wt.branch,
+                worktreePath: wt.worktreePath,
+                status: wt.status,
+                diskUsage: wt.diskUsage,
+                lastAccessedAt: wt.lastAccessedAt || wt.createdAt || new Date().toISOString(),
+              })
             })
-          })
-          setWorktreeMap(map)
+            setWorktreeMap(map)
+          }
         }
       } else {
         setError(result.error || 'Failed to remove worktree')
@@ -369,6 +372,7 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
     setIsPruning(true)
     setError(null)
     try {
+      if (!window.electronAPI?.worktree?.pruneSessions) return
       const result = await window.electronAPI.worktree.pruneSessions()
       if (result.pruned.length > 0) {
         setSuccessMessage(`Pruned ${result.pruned.length} stale session(s)`)

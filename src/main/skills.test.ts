@@ -1,4 +1,7 @@
+// @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+const normalizePath = (p: unknown): string => String(p).replace(/\\/g, '/')
 
 // Create hoisted mock functions using vi.hoisted
 const mocks = vi.hoisted(() => ({
@@ -122,8 +125,9 @@ description: still works
 
     it('should find valid skills in directory', async () => {
       mocks.existsSync.mockImplementation((path: string) => {
+        const p = normalizePath(path)
         // Directory and SKILL.md both exist
-        return path === '/test/skills' || path === '/test/skills/my-skill/SKILL.md'
+        return p === '/test/skills' || p === '/test/skills/my-skill/SKILL.md'
       })
       
       mocks.readdirSync.mockReturnValue([
@@ -143,13 +147,14 @@ Content`)
       expect(result.skills[0].description).toBe('Test skill')
       expect(result.skills[0].type).toBe('personal')
       expect(result.skills[0].source).toBe('copilot')
-      expect(result.skills[0].path).toBe('/test/skills/my-skill')
+      expect(normalizePath(result.skills[0].path)).toBe('/test/skills/my-skill')
     })
 
     it('should skip directories without SKILL.md', async () => {
       mocks.existsSync.mockImplementation((path: string) => {
+        const p = normalizePath(path)
         // Directory exists but no SKILL.md
-        return path === '/test/skills'
+        return p === '/test/skills'
       })
       
       mocks.readdirSync.mockReturnValue([
@@ -208,9 +213,10 @@ No description!`)
 
     it('should scan project directories when cwd provided', async () => {
       mocks.existsSync.mockImplementation((path: string) => {
+        const p = normalizePath(path)
         // Only .github/skills exists with a valid skill
-        return path === '/project/.github/skills' || 
-               path === '/project/.github/skills/test-skill/SKILL.md'
+        return p === '/project/.github/skills' || 
+               p === '/project/.github/skills/test-skill/SKILL.md'
       })
       
       mocks.readdirSync.mockReturnValue([
@@ -232,18 +238,20 @@ description: A project skill
 
     it('should combine skills from multiple directories', async () => {
       mocks.existsSync.mockImplementation((path: string) => {
+        const p = normalizePath(path)
         // Personal copilot and project claude skills exist
-        return path === '/tmp/test-home/.copilot/skills' ||
-               path === '/tmp/test-home/.copilot/skills/personal-skill/SKILL.md' ||
-               path === '/project/.claude/skills' ||
-               path === '/project/.claude/skills/project-skill/SKILL.md'
+        return p === '/tmp/test-home/.copilot/skills' ||
+               p === '/tmp/test-home/.copilot/skills/personal-skill/SKILL.md' ||
+               p === '/project/.claude/skills' ||
+               p === '/project/.claude/skills/project-skill/SKILL.md'
       })
       
       mocks.readdirSync.mockImplementation((path: string) => {
-        if (path === '/tmp/test-home/.copilot/skills') {
+        const p = normalizePath(path)
+        if (p === '/tmp/test-home/.copilot/skills') {
           return [{ name: 'personal-skill', isDirectory: () => true }]
         }
-        if (path === '/project/.claude/skills') {
+        if (p === '/project/.claude/skills') {
           return [{ name: 'project-skill', isDirectory: () => true }]
         }
         return []

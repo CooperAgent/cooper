@@ -2833,7 +2833,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       } else {
         // Fallback to simple message
         const fileNames = actualChangedFiles
-          .map((f) => f.split("/").pop())
+          .map((f) => f.split(/[/\\]/).pop())
           .join(", ");
         setCommitMessage(`Update ${fileNames}`);
       }
@@ -2854,7 +2854,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     } catch (error) {
       console.error("Failed to generate commit message:", error);
       const fileNames = activeTab.editedFiles
-        .map((f) => f.split("/").pop())
+        .map((f) => f.split(/[/\\]/).pop())
         .join(", ");
       setCommitMessage(`Update ${fileNames}`);
     } finally {
@@ -2934,7 +2934,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         
         if (removeWorktreeAfterMerge && isWorktreePath) {
           // Find the worktree session by path
-          const sessionId = activeTab.cwd.split('/').pop() || ''
+          const sessionId = activeTab.cwd.split(/[/\\]/).pop() || ''
           if (sessionId) {
             await window.electronAPI.worktree.removeSession({ sessionId, force: true })
             // Close this tab
@@ -3036,7 +3036,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       const trustResult = await window.electronAPI.copilot.checkDirectoryTrust(worktreePath);
       if (!trustResult.trusted) {
         // User declined trust - remove the worktree we just created
-        const sessionId = worktreePath.split('/').pop() || '';
+        const sessionId = worktreePath.split(/[/\\]/).pop() || '';
         await window.electronAPI.worktree.removeSession({ sessionId, force: true });
         return;
       }
@@ -5199,7 +5199,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                       </div>
                     ) : (
                       activeTab.editedFiles.map((filePath) => {
-                        const isConflicted = conflictedFiles.some(cf => filePath.endsWith(cf) || cf.endsWith(filePath.split('/').pop() || ''));
+                        const isConflicted = conflictedFiles.some(cf => filePath.endsWith(cf) || cf.endsWith(filePath.split(/[/\\]/).pop() || ''));
                         return (
                           <button
                             key={filePath}
@@ -5212,7 +5212,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               className={`shrink-0 ${isConflicted ? 'text-copilot-error' : 'text-copilot-success'}`}
                             />
                             <span className="truncate font-mono">
-                              {filePath.split("/").pop()}
+                              {filePath.split(/[/\\]/).pop()}
                             </span>
                             {isConflicted && <span className="text-[8px] text-copilot-error">!</span>}
                           </button>
@@ -5837,7 +5837,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   const result = await window.electronAPI.git.mergeToMain(activeTab.cwd, removeWorktreeAfterMerge);
                   if (result.success) {
                     if (removeWorktreeAfterMerge && activeTab.cwd.includes('.copilot-sessions')) {
-                      const sessionId = activeTab.cwd.split('/').pop() || '';
+                      const sessionId = activeTab.cwd.split(/[/\\]/).pop() || '';
                       if (sessionId) {
                         await window.electronAPI.worktree.removeSession({ sessionId, force: true });
                         handleCloseTab(activeTab.id);

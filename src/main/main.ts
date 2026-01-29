@@ -743,7 +743,7 @@ function getExecutableIdentifier(request: PermissionRequest): string {
   // For read, use kind + filename
   if (request.kind === 'read' && req.path) {
     const path = req.path as string
-    const filename = path.split('/').pop() || path
+    const filename = path.split(/[/\\]/).pop() || path
     return `${request.kind}:${filename}`
   }
 
@@ -3193,14 +3193,15 @@ nativeTheme.on('updated', () => {
   }
 })
 
-// App lifecycle - enforce single instance (skip in dev mode to allow dev and production to run together)
+// App lifecycle - enforce single instance (skip in dev/test mode)
 const isDev = !!process.env.ELECTRON_RENDERER_URL
-const gotTheLock = isDev ? true : app.requestSingleInstanceLock()
+const isTest = process.env.NODE_ENV === 'test'
+const gotTheLock = isDev || isTest ? true : app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
   app.quit()
 } else {
-  if (!isDev) {
+  if (!isDev && !isTest) {
     app.on('second-instance', () => {
       // Focus existing window if someone tries to open a second instance
       if (mainWindow) {
@@ -3456,7 +3457,7 @@ ipcMain.handle('file:readContent', async (_event, filePath: string) => {
       success: true, 
       content, 
       fileSize,
-      fileName: filePath.split('/').pop() || filePath
+      fileName: filePath.split(/[/\\]/).pop() || filePath
     }
   } catch (error) {
     console.error('Failed to read file:', error)
@@ -3469,7 +3470,7 @@ ipcMain.handle('file:readContent', async (_event, filePath: string) => {
 })
 
 // File operations - reveal file in system file explorer
-ipcMain.handle('file:revealInFinder', async (_event, filePath: string) => {
+ipcMain.handle('file:revealInFolder', async (_event, filePath: string) => {
   try {
     if (!existsSync(filePath)) {
       return { success: false, error: 'File not found' }
