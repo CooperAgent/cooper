@@ -45,6 +45,7 @@ import {
   UpdateAvailableModal,
   ReleaseNotesModal,
   SearchableBranchSelect,
+  CodeBlockWithCopy,
 } from "./components";
 import {
   Status,
@@ -4144,11 +4145,12 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               
                               if (isBlock) {
                                 return (
-                                  <pre className={`bg-copilot-bg rounded p-2 my-2 overflow-x-auto text-xs max-w-full ${isDiagram ? 'ascii-diagram' : ''}`}>
-                                    <code className="text-copilot-text">
-                                      {children}
-                                    </code>
-                                  </pre>
+                                  <CodeBlockWithCopy
+                                    isDiagram={isDiagram}
+                                    textContent={textContent}
+                                  >
+                                    {children}
+                                  </CodeBlockWithCopy>
                                 );
                               } else {
                                 return (
