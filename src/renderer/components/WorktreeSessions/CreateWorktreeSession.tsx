@@ -320,8 +320,31 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
             </div>
 
             {error && (
-              <div className="text-copilot-error text-sm mb-4 p-2 bg-copilot-error-muted rounded">
-                {error}
+              <div className="text-copilot-error text-sm mb-4 p-3 bg-copilot-error-muted rounded">
+                {(() => {
+                  // Check if error contains a code block
+                  const codeBlockMatch = error.match(/```([\s\S]*?)```/)
+                  if (codeBlockMatch) {
+                    const [before, after] = error.split(/```[\s\S]*?```/)
+                    return (
+                      <>
+                        {before.split('\n').map((line, i) => (
+                          line.trim() ? <div key={i} className="mb-1">{line}</div> : <div key={i} className="h-2" />
+                        ))}
+                        <pre className="bg-copilot-surface p-3 rounded text-copilot-text font-mono text-xs mt-2 mb-2 overflow-x-auto whitespace-pre">
+                          {codeBlockMatch[1].trim()}
+                        </pre>
+                        {after && after.split('\n').map((line, i) => (
+                          line.trim() ? <div key={`after-${i}`} className="mb-1">{line}</div> : null
+                        ))}
+                      </>
+                    )
+                  }
+                  // Fallback to simple line rendering
+                  return error.split('\n').map((line, i) => (
+                    line.trim() ? <div key={i} className="mb-1">{line}</div> : <div key={i} className="h-2" />
+                  ))
+                })()}
               </div>
             )}
           </>

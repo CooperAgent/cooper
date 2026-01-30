@@ -966,7 +966,7 @@ export async function fetchAzureDevOpsWorkItem(workItemUrl: string): Promise<{
     
     // Check for auth errors from CLI
     if (errorMessage.includes('login') || errorMessage.includes('authenticate') || errorMessage.includes('unauthorized')) {
-      return { success: false, error: 'Azure CLI authentication required. Run "az login" to authenticate, or ensure the project is public.' }
+      return { success: false, error: 'Azure CLI authentication required. Run "az login" to authenticate.' }
     }
     
     // For other CLI errors, try the public API as fallback
@@ -990,6 +990,22 @@ async function fetchAzureDevOpsWorkItemViaApi(
 }> {
   const apiUrl = `https://dev.azure.com/${organization}/${project}/_apis/wit/workitems/${workItemId}?api-version=7.0`
   
+  const authInstructions = `To access private Azure DevOps projects:
+
+1. Make sure you have the Azure CLI (az cli) installed.
+
+2. Run these commands:
+\`\`\`
+# Add the Azure DevOps extension
+az extension add --name azure-devops
+
+# Login to Azure
+az login
+
+# Set your default organization
+az devops configure --defaults organization=https://dev.azure.com/${organization}
+\`\`\``
+  
   return new Promise((resolve) => {
     const request = net.request({
       method: 'GET',
@@ -1003,23 +1019,23 @@ async function fetchAzureDevOpsWorkItemViaApi(
     
     request.on('response', (response) => {
       if (response.statusCode === 404) {
-        resolve({ success: false, error: 'Work item not found. Check the URL and ensure the project is public or you have access.' })
+        resolve({ success: false, error: `Work item not found. Check the URL and ensure the project is public or you have access.\n\n${authInstructions}` })
         return
       }
       
       if (response.statusCode === 401 || response.statusCode === 403) {
-        resolve({ success: false, error: 'Access denied. The project may be private or require authentication.' })
+        resolve({ success: false, error: `Access denied. This project requires authentication.\n\n${authInstructions}` })
         return
       }
       
       // Azure DevOps returns 203 with an HTML login page for private projects
       if (response.statusCode === 203 || response.statusCode === 302) {
-        resolve({ success: false, error: 'Authentication required. This appears to be a private Azure DevOps project. Public projects can be accessed without authentication.' })
+        resolve({ success: false, error: `Authentication required. This is a private Azure DevOps project.\n\n${authInstructions}` })
         return
       }
       
       if (response.statusCode !== 200) {
-        resolve({ success: false, error: `Azure DevOps API error: ${response.statusCode}` })
+        resolve({ success: false, error: `Azure DevOps API error: ${response.statusCode}\n\n${authInstructions}` })
         return
       }
       
@@ -1031,7 +1047,7 @@ async function fetchAzureDevOpsWorkItemViaApi(
         try {
           // Check if we got HTML instead of JSON (sign-in page)
           if (responseBody.trim().startsWith('<!DOCTYPE') || responseBody.trim().startsWith('<html')) {
-            resolve({ success: false, error: 'Authentication required. This appears to be a private Azure DevOps project. Public projects can be accessed without authentication.' })
+            resolve({ success: false, error: `Authentication required. This is a private Azure DevOps project.\n\n${authInstructions}` })
             return
           }
           
