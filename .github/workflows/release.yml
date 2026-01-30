@@ -146,19 +146,6 @@ jobs:
           git commit -m "chore: bump version to $new_version [skip ci]"
           git push
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts && npm run rebuild-pty || true
-
-      - name: Build DMG
-        run: npm run dist
-
-      - name: Normalize DMG filename
-        run: |
-          set -euo pipefail
-          new_version="${{ needs.validate.outputs.new_version }}"
-          dmg="$(ls -1 release/*.dmg | head -n 1)"
-          mv -f "$dmg" "release/Copilot-Skins-${new_version}-arm64.dmg"
-
       - name: Extract release notes for this version
         id: release_notes
         run: |
@@ -180,20 +167,19 @@ jobs:
         with:
           tag: v${{ needs.validate.outputs.new_version }}
           name: v${{ needs.validate.outputs.new_version }}
-          body: ${{ steps.release_notes.outputs.notes }}
-          artifacts: release/Copilot-Skins-${{ needs.validate.outputs.new_version }}-arm64.dmg
-          makeLatest: true
-
-      - name: Update latest release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: latest
-          name: Latest
-          prerelease: true
-          allowUpdates: true
-          replacesArtifacts: true
-          artifacts: release/Copilot-Skins-${{ needs.validate.outputs.new_version }}-arm64.dmg
           body: |
-            Latest release: v${{ needs.validate.outputs.new_version }}
+            ## Release Notes
             
             ${{ steps.release_notes.outputs.notes }}
+            
+            ---
+            
+            **Note:** This release does not include pre-built binaries. To run Copilot Skins, clone the repository and build locally:
+            
+            ```bash
+            git clone https://github.com/idofrizler/copilot-ui.git
+            cd copilot-ui
+            npm install
+            npm run dev
+            ```
+          makeLatest: true
