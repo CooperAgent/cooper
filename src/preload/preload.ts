@@ -209,8 +209,8 @@ const electronAPI = {
     getDiff: (cwd: string, files: string[]): Promise<{ diff: string; success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:getDiff', { cwd, files })
     },
-    commitAndPush: (cwd: string, files: string[], message: string, mergeToMain?: boolean): Promise<{ success: boolean; error?: string; mergedToMain?: boolean; finalBranch?: string; mainSyncedWithChanges?: boolean; incomingFiles?: string[] }> => {
-      return ipcRenderer.invoke('git:commitAndPush', { cwd, files, message, mergeToMain })
+    commitAndPush: (cwd: string, files: string[], message: string): Promise<{ success: boolean; error?: string; finalBranch?: string }> => {
+      return ipcRenderer.invoke('git:commitAndPush', { cwd, files, message })
     },
     generateCommitMessage: (diff: string): Promise<string> => {
       return ipcRenderer.invoke('git:generateCommitMessage', { diff })
@@ -222,18 +222,18 @@ const electronAPI = {
       return ipcRenderer.invoke('git:listBranches', cwd)
     },
     checkMainAhead: (cwd: string, targetBranch?: string): Promise<{ success: boolean; isAhead: boolean; commits: string[]; targetBranch?: string; error?: string }> => {
-      return ipcRenderer.invoke('git:checkMainAhead', targetBranch ? { cwd, targetBranch } : cwd)
+      return ipcRenderer.invoke('git:checkMainAhead', { cwd, targetBranch })
     },
-    mergeMainIntoBranch: (cwd: string, targetBranch?: string): Promise<{ success: boolean; targetBranch?: string; error?: string; warning?: string; conflictedFiles?: string[] }> => {
-      return ipcRenderer.invoke('git:mergeMainIntoBranch', targetBranch ? { cwd, targetBranch } : cwd)
+    mergeMainIntoBranch: (cwd: string, targetBranch: string): Promise<{ success: boolean; targetBranch?: string; error?: string; warning?: string; conflictedFiles?: string[] }> => {
+      return ipcRenderer.invoke('git:mergeMainIntoBranch', { cwd, targetBranch })
     },
     checkoutBranch: (cwd: string, branchName: string): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:checkoutBranch', { cwd, branchName })
     },
-    mergeToMain: (cwd: string, deleteBranch?: boolean, targetBranch?: string): Promise<{ success: boolean; error?: string; mergedBranch?: string; targetBranch?: string }> => {
+    mergeToMain: (cwd: string, deleteBranch: boolean, targetBranch: string): Promise<{ success: boolean; error?: string; mergedBranch?: string; targetBranch?: string }> => {
       return ipcRenderer.invoke('git:mergeToMain', { cwd, deleteBranch, targetBranch })
     },
-    createPullRequest: (cwd: string, title?: string, draft?: boolean, targetBranch?: string): Promise<{ success: boolean; error?: string; prUrl?: string; branch?: string; targetBranch?: string }> => {
+    createPullRequest: (cwd: string, title: string | undefined, draft: boolean | undefined, targetBranch: string): Promise<{ success: boolean; error?: string; prUrl?: string; branch?: string; targetBranch?: string }> => {
       return ipcRenderer.invoke('git:createPullRequest', { cwd, title, draft, targetBranch })
     },
     getWorkingStatus: (cwd: string): Promise<{ success: boolean; hasUncommittedChanges: boolean; hasUnpushedCommits: boolean; error?: string }> => {

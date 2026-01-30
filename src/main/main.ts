@@ -2291,26 +2291,11 @@ ipcMain.handle('git:getDiff', async (_event, data: { cwd: string; files: string[
 })
 
 // Git operations - commit and push
-ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: string[]; message: string; mergeToMain?: boolean }) => {
+ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: string[]; message: string }) => {
   try {
     // Get current branch name
     const { stdout: branchOutput } = await execAsync('git branch --show-current', { cwd: data.cwd })
     const currentBranch = branchOutput.trim()
-    const isMainBranch = currentBranch === 'main' || currentBranch === 'master'
-    
-    // Determine the target main branch by checking which exists
-    let targetBranch = 'main'
-    try {
-      await execAsync('git rev-parse --verify main', { cwd: data.cwd })
-    } catch {
-      // 'main' doesn't exist, try 'master'
-      try {
-        await execAsync('git rev-parse --verify master', { cwd: data.cwd })
-        targetBranch = 'master'
-      } catch {
-        // Neither exists, default to 'main'
-      }
-    }
     
     // Stage the files
     for (const file of data.files) {
@@ -2334,120 +2319,7 @@ ipcMain.handle('git:commitAndPush', async (_event, data: { cwd: string; files: s
       }
     }
     
-    // If mergeToMain is requested and not already on main/master
-    if (data.mergeToMain && !isMainBranch && currentBranch) {
-      console.log(`Merging ${currentBranch} to ${targetBranch}...`)
-      
-      // Check if we're in a worktree by comparing git-dir and git-common-dir
-      const { stdout: gitDir } = await execAsync('git rev-parse --git-dir', { cwd: data.cwd })
-      const { stdout: commonDir } = await execAsync('git rev-parse --git-common-dir', { cwd: data.cwd })
-      const isWorktree = gitDir.trim() !== commonDir.trim()
-      
-      // Get the main repository path (where main/master is checked out)
-      let mainRepoPath = data.cwd
-      if (isWorktree) {
-        // commonDir points to the .git folder of the main repo
-        // The main repo is one level up from the .git folder
-        const commonDirPath = commonDir.trim()
-        mainRepoPath = dirname(commonDirPath)
-      }
-      
-      if (isWorktree) {
-        // For worktrees, run merge commands from the main repo
-        // Pull latest on main in the main repo
-        try {
-          await execAsync('git pull', { cwd: mainRepoPath })
-        } catch {
-          // Ignore pull errors
-        }
-        
-        // Fetch latest to ensure we have origin's main
-        try {
-          await execAsync('git fetch origin', { cwd: data.cwd })
-        } catch {
-          // Ignore fetch errors
-        }
-        
-        // Get HEAD before merge to detect if sync brought in changes
-        const { stdout: headBefore } = await execAsync('git rev-parse HEAD', { cwd: data.cwd })
-        
-        // Merge main into the feature branch first (in the worktree) to ensure it's up-to-date
-        // This prevents losing changes when the feature branch was based on an older main
-        try {
-          await execAsync(`git merge origin/${targetBranch}`, { cwd: data.cwd })
-          console.log(`Merged ${targetBranch} into ${currentBranch} to sync`)
-        } catch (mergeError) {
-          const errorMsg = String(mergeError)
-          if (errorMsg.includes('CONFLICT')) {
-            throw new Error(`Merge conflicts detected when syncing '${targetBranch}' into '${currentBranch}'. Please resolve conflicts first.`)
-          }
-          // Continue if no conflicts - branch might already be up to date
-        }
-        
-        // Get HEAD after merge to check if changes were brought in
-        const { stdout: headAfter } = await execAsync('git rev-parse HEAD', { cwd: data.cwd })
-        const syncBroughtChanges = headBefore.trim() !== headAfter.trim()
-        
-        // Push the updated feature branch
-        try {
-          await execAsync('git push', { cwd: data.cwd })
-        } catch {
-          // Ignore - might already be up to date
-        }
-        
-        // If sync brought in changes, return early so user can test before merging
-        if (syncBroughtChanges) {
-          // Get list of files that were changed by the merge
-          let incomingFiles: string[] = []
-          try {
-            const { stdout: diffFiles } = await execAsync(`git diff --name-only ${headBefore.trim()} ${headAfter.trim()}`, { cwd: data.cwd })
-            incomingFiles = diffFiles.trim().split('\n').filter(f => f)
-          } catch {
-            // Ignore errors
-          }
-          
-          return { 
-            success: true, 
-            mergedToMain: false, 
-            finalBranch: currentBranch,
-            mainSyncedWithChanges: true,
-            incomingFiles
-          }
-        }
-        
-        // Merge the feature branch into main (from the main repo)
-        await execAsync(`git merge ${currentBranch}`, { cwd: mainRepoPath })
-        console.log(`Merged ${currentBranch} into ${targetBranch}`)
-        
-        // Push main/master from the main repo
-        await execAsync('git push', { cwd: mainRepoPath })
-        console.log(`Pushed ${targetBranch} to origin`)
-      } else {
-        // Standard flow for non-worktree repos
-        // Switch to main/master
-        await execAsync(`git checkout ${targetBranch}`, { cwd: data.cwd })
-        console.log(`Switched to ${targetBranch}`)
-        
-        // Pull latest
-        try {
-          await execAsync('git pull', { cwd: data.cwd })
-        } catch {
-          // Ignore pull errors
-        }
-        
-        // Merge the feature branch
-        await execAsync(`git merge ${currentBranch}`, { cwd: data.cwd })
-        console.log(`Merged ${currentBranch} into ${targetBranch}`)
-        
-        // Push main/master
-        await execAsync('git push', { cwd: data.cwd })
-        console.log(`Pushed ${targetBranch} to origin`)
-      }
-      
-      return { success: true, mergedToMain: true, finalBranch: targetBranch }
-    }
-    
-    return { success: true, mergedToMain: false, finalBranch: currentBranch }
+    return { success: true, finalBranch: currentBranch }
   } catch (error) {
     console.error('Git commit/push failed:', error)
     return { success: false, error: String(error) }
@@ -2565,42 +2437,23 @@ ipcMain.handle('settings:setTargetBranch', async (_event, data: { repoPath: stri
   }
 })
 
-// Git operations - check if origin/main is ahead of current branch
-ipcMain.handle('git:checkMainAhead', async (_event, data: string | { cwd: string; targetBranch?: string }) => {
+// Git operations - check if origin/targetBranch is ahead of current branch
+ipcMain.handle('git:checkMainAhead', async (_event, data: { cwd: string; targetBranch: string }) => {
   try {
-    // Support both old string format and new object format for backwards compatibility
-    const cwd = typeof data === 'string' ? data : data.cwd
-    const providedTargetBranch = typeof data === 'string' ? undefined : data.targetBranch
+    const cwd = data.cwd
+    const targetBranch = data.targetBranch
+    
+    if (!targetBranch) {
+      return { success: false, isAhead: false, commits: [], error: 'Target branch must be specified' }
+    }
     
     // Get current branch
     const { stdout: branchOutput } = await execAsync('git branch --show-current', { cwd })
     const currentBranch = branchOutput.trim()
     
-    // Determine target branch - use provided, or auto-detect main/master
-    let targetBranch = providedTargetBranch || 'main'
-    if (!providedTargetBranch) {
-      // If already on main/master, no need to check
-      if (currentBranch === 'main' || currentBranch === 'master') {
-        return { success: true, isAhead: false, commits: [] }
-      }
-      
-      // Auto-detect main/master
-      try {
-        await execAsync('git rev-parse --verify origin/main', { cwd })
-        targetBranch = 'main'
-      } catch {
-        try {
-          await execAsync('git rev-parse --verify origin/master', { cwd })
-          targetBranch = 'master'
-        } catch {
-          return { success: true, isAhead: false, commits: [] }
-        }
-      }
-    } else {
-      // Check if current branch is the target branch
-      if (currentBranch === providedTargetBranch) {
-        return { success: true, isAhead: false, commits: [] }
-      }
+    // Check if current branch is the target branch
+    if (currentBranch === targetBranch) {
+      return { success: true, isAhead: false, commits: [] }
     }
     
     // Fetch latest from origin
@@ -2626,12 +2479,15 @@ ipcMain.handle('git:checkMainAhead', async (_event, data: string | { cwd: string
   }
 })
 
-// Git operations - merge origin/main into current branch
-ipcMain.handle('git:mergeMainIntoBranch', async (_event, data: string | { cwd: string; targetBranch?: string }) => {
+// Git operations - merge origin/targetBranch into current branch
+ipcMain.handle('git:mergeMainIntoBranch', async (_event, data: { cwd: string; targetBranch: string }) => {
   try {
-    // Support both old string format and new object format for backwards compatibility
-    const cwd = typeof data === 'string' ? data : data.cwd
-    const providedTargetBranch = typeof data === 'string' ? undefined : data.targetBranch
+    const cwd = data.cwd
+    const targetBranch = data.targetBranch
+    
+    if (!targetBranch) {
+      return { success: false, error: 'Target branch must be specified' }
+    }
     
     // Check for uncommitted changes
     const { stdout: statusOutput } = await execAsync('git status --porcelain', { cwd })
@@ -2640,29 +2496,9 @@ ipcMain.handle('git:mergeMainIntoBranch', async (_event, data: string | { cwd: s
     // Stash changes if needed
     if (hasUncommittedChanges) {
       try {
-        await execAsync('git stash push -m "Auto-stash before merging main"', { cwd })
+        await execAsync('git stash push -m "Auto-stash before merging target branch"', { cwd })
       } catch (stashError) {
         return { success: false, error: `Failed to stash changes: ${String(stashError)}` }
-      }
-    }
-
-    // Determine target branch - use provided, or auto-detect main/master
-    let targetBranch = providedTargetBranch || 'main'
-    if (!providedTargetBranch) {
-      try {
-        await execAsync('git rev-parse --verify origin/main', { cwd })
-        targetBranch = 'main'
-      } catch {
-        try {
-          await execAsync('git rev-parse --verify origin/master', { cwd })
-          targetBranch = 'master'
-        } catch {
-          // Pop stash before returning error
-          if (hasUncommittedChanges) {
-            try { await execAsync('git stash pop', { cwd }) } catch { /* ignore */ }
-          }
-          return { success: false, error: 'Neither origin/main nor origin/master exists' }
-        }
       }
     }
 
@@ -2741,7 +2577,7 @@ ipcMain.handle('git:checkoutBranch', async (_event, data: { cwd: string; branchN
 })
 
 // Git operations - merge worktree branch to main/master
-ipcMain.handle('git:mergeToMain', async (_event, data: { cwd: string; deleteBranch?: boolean; targetBranch?: string }) => {
+ipcMain.handle('git:mergeToMain', async (_event, data: { cwd: string; deleteBranch?: boolean; targetBranch: string }) => {
   try {
     // Get current branch name
     const { stdout: branchOutput } = await execAsync('git branch --show-current', { cwd: data.cwd })
@@ -2751,30 +2587,15 @@ ipcMain.handle('git:mergeToMain', async (_event, data: { cwd: string; deleteBran
       return { success: false, error: 'Not on a branch (detached HEAD)' }
     }
     
-    // Determine the target branch - use provided, or auto-detect main/master
-    let targetBranch = data.targetBranch || 'main'
-    if (!data.targetBranch) {
-      const isMainBranch = currentBranch === 'main' || currentBranch === 'master'
-      if (isMainBranch) {
-        return { success: false, error: 'Already on main/master branch' }
-      }
-      
-      try {
-        await execAsync('git rev-parse --verify main', { cwd: data.cwd })
-        targetBranch = 'main'
-      } catch {
-        try {
-          await execAsync('git rev-parse --verify master', { cwd: data.cwd })
-          targetBranch = 'master'
-        } catch {
-          return { success: false, error: 'Neither main nor master branch exists' }
-        }
-      }
-    } else {
-      // Check if already on the target branch
-      if (currentBranch === data.targetBranch) {
-        return { success: false, error: `Already on ${data.targetBranch} branch` }
-      }
+    // Target branch is required - must be provided by caller
+    const targetBranch = data.targetBranch
+    if (!targetBranch) {
+      return { success: false, error: 'Target branch must be specified' }
+    }
+    
+    // Check if already on the target branch
+    if (currentBranch === targetBranch) {
+      return { success: false, error: `Already on ${targetBranch} branch` }
     }
     
     // Check if we're in a worktree by comparing git-dir and git-common-dir
@@ -2965,7 +2786,7 @@ ipcMain.handle('git:mergeToMain', async (_event, data: { cwd: string; deleteBran
 })
 
 // Git operations - create pull request via gh CLI
-ipcMain.handle('git:createPullRequest', async (_event, data: { cwd: string; title?: string; draft?: boolean; targetBranch?: string }) => {
+ipcMain.handle('git:createPullRequest', async (_event, data: { cwd: string; title?: string; draft?: boolean; targetBranch: string }) => {
   try {
     // Check if gh CLI is available (use augmented PATH for packaged apps)
     try {
@@ -2982,18 +2803,15 @@ ipcMain.handle('git:createPullRequest', async (_event, data: { cwd: string; titl
       return { success: false, error: 'Not on a branch (detached HEAD)' }
     }
     
-    // Determine the target branch - use provided, or default to main
-    let targetBranch = data.targetBranch || 'main'
-    if (!data.targetBranch) {
-      const isMainBranch = currentBranch === 'main' || currentBranch === 'master'
-      if (isMainBranch) {
-        return { success: false, error: 'Cannot create PR from main/master branch' }
-      }
-    } else {
-      // Check if trying to create PR from target branch to itself
-      if (currentBranch === data.targetBranch) {
-        return { success: false, error: `Cannot create PR from ${data.targetBranch} to itself` }
-      }
+    // Target branch is required - must be provided by caller
+    const targetBranch = data.targetBranch
+    if (!targetBranch) {
+      return { success: false, error: 'Target branch must be specified' }
+    }
+    
+    // Check if trying to create PR from target branch to itself
+    if (currentBranch === targetBranch) {
+      return { success: false, error: `Cannot create PR from ${targetBranch} to itself` }
     }
     
     // Check for uncommitted changes
