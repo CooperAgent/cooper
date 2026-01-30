@@ -46,6 +46,7 @@ import {
   ReleaseNotesModal,
   SearchableBranchSelect,
   CodeBlockWithCopy,
+  RepeatIcon,
 } from "./components";
 import {
   Status,
@@ -603,6 +604,7 @@ const App: React.FC = () => {
   );
   const [showMcpServers, setShowMcpServers] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
+  const [showMcpJsonModal, setShowMcpJsonModal] = useState(false);
   const [editingMcpServer, setEditingMcpServer] = useState<{
     name: string;
     server: MCPServerConfig;
@@ -2855,6 +2857,28 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       setMcpServers(config.mcpServers || {});
     } catch (error) {
       console.error("Failed to delete MCP server:", error);
+    }
+  };
+
+  const handleRefreshMcpServers = async () => {
+    try {
+      const config = await window.electronAPI.mcp.getConfig();
+      setMcpServers(config.mcpServers || {});
+      console.log("Refreshed MCP servers:", Object.keys(config.mcpServers || {}));
+    } catch (error) {
+      console.error("Failed to refresh MCP servers:", error);
+    }
+  };
+
+  const handleOpenMcpConfigInEditor = async () => {
+    try {
+      const { path } = await window.electronAPI.mcp.getConfigPath();
+      const result = await window.electronAPI.file.openFile(path);
+      if (!result.success) {
+        console.error("Failed to open MCP config file:", result.error);
+      }
+    } catch (error) {
+      console.error("Failed to open MCP config in editor:", error);
     }
   };
 
@@ -5552,6 +5576,22 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     )}
                   </button>
                   <IconButton
+                    icon={<FileIcon size={12} />}
+                    onClick={() => setShowMcpJsonModal(true)}
+                    variant="accent"
+                    size="sm"
+                    title="View JSON config"
+                    className="mr-1"
+                  />
+                  <IconButton
+                    icon={<RepeatIcon size={12} />}
+                    onClick={handleRefreshMcpServers}
+                    variant="accent"
+                    size="sm"
+                    title="Refresh MCP servers"
+                    className="mr-1"
+                  />
+                  <IconButton
                     icon={<PlusIcon size={12} />}
                     onClick={openAddMcpModal}
                     variant="success"
@@ -6157,6 +6197,33 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               }
             >
               {editingMcpServer ? "Save Changes" : "Add Server"}
+            </Button>
+          </Modal.Footer>
+        </Modal.Body>
+      </Modal>
+
+      {/* MCP JSON View Modal */}
+      <Modal
+        isOpen={showMcpJsonModal}
+        onClose={() => setShowMcpJsonModal(false)}
+        title="MCP Configuration"
+        width="600px"
+      >
+        <Modal.Body>
+          <div className="mb-3">
+            <pre className="bg-copilot-bg border border-copilot-border rounded p-3 text-xs text-copilot-text font-mono overflow-auto max-h-96 whitespace-pre-wrap">
+              {JSON.stringify({ mcpServers }, null, 2)}
+            </pre>
+          </div>
+          <Modal.Footer className="pt-2">
+            <Button variant="ghost" onClick={() => setShowMcpJsonModal(false)}>
+              Close
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleOpenMcpConfigInEditor}
+            >
+              Open in Editor
             </Button>
           </Modal.Footer>
         </Modal.Body>
