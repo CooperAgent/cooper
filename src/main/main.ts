@@ -3016,6 +3016,10 @@ ipcMain.handle('mcp:deleteServer', async (_event, name: string) => {
   return { success: false, error: 'Server not found' }
 })
 
+ipcMain.handle('mcp:getConfigPath', async () => {
+  return { path: getMcpConfigPath() }
+})
+
 // Agent Skills handlers
 ipcMain.handle('skills:getAll', async (_event, cwd?: string) => {
   // Use provided cwd or try to get from active session

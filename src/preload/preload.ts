@@ -291,6 +291,9 @@ const electronAPI = {
     },
     deleteServer: (name: string): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('mcp:deleteServer', name)
+    },
+    getConfigPath: (): Promise<{ path: string }> => {
+      return ipcRenderer.invoke('mcp:getConfigPath')
     }
   },
   // Agent Skills Management
