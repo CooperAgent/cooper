@@ -6,6 +6,10 @@ import '@xterm/xterm/css/xterm.css'
 // Regex to split paths on both Unix (/) and Windows (\) separators
 const PATH_SEP_REGEX = /[\\/]/
 
+const MIN_HEIGHT = 100
+const MAX_HEIGHT = 600
+const DEFAULT_HEIGHT = 192 // h-48 equivalent
+
 interface TerminalPanelProps {
   sessionId: string
   cwd: string
@@ -27,6 +31,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const [isInitialized, setIsInitialized] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [bufferLineCount, setBufferLineCount] = useState(0)
+  const [terminalHeight, setTerminalHeight] = useState(DEFAULT_HEIGHT)
+  const [isResizing, setIsResizing] = useState(false)
   const sessionIdRef = useRef(sessionId)
 
   // Keep sessionId ref in sync
@@ -208,6 +214,44 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     }
   }, [cwd])
 
+  // Handle resize drag
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+    const startY = e.clientY
+    const startHeight = terminalHeight
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY
+      const newHeight = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, startHeight + deltaY))
+      setTerminalHeight(newHeight)
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      // Refit terminal after resize
+      if (fitAddonRef.current) {
+        fitAddonRef.current.fit()
+        const dims = fitAddonRef.current.proposeDimensions()
+        if (dims && isConnected) {
+          window.electronAPI.pty.resize(sessionIdRef.current, dims.cols, dims.rows)
+        }
+      }
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [terminalHeight, isConnected])
+
+  // Refit terminal when height changes during drag
+  useEffect(() => {
+    if (isResizing && fitAddonRef.current) {
+      fitAddonRef.current.fit()
+    }
+  }, [terminalHeight, isResizing])
+
   return (
     <div className={`flex flex-col border-b border-copilot-border bg-copilot-terminal-bg ${!isOpen ? 'hidden' : ''}`}>
       {/* Terminal Header */}
@@ -259,9 +303,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       {/* Terminal Container */}
       <div 
         ref={terminalRef} 
-        className="h-48 overflow-hidden"
-        style={{ padding: '4px' }}
+        className="overflow-hidden"
+        style={{ height: `${terminalHeight}px`, backgroundColor: '#000' }}
       />
+      
+      {/* Resize Handle */}
+      <div
+        onMouseDown={handleResizeStart}
+        className="h-0 cursor-ns-resize shrink-0 relative z-10"
+      >
+        <div className="absolute inset-x-0 -bottom-1 h-2 hover:bg-copilot-accent/50 transition-colors" />
+      </div>
     </div>
   )
 }
