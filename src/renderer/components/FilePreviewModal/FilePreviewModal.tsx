@@ -51,14 +51,11 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
         let linesAdded = 0
         let linesRemoved = 0
         let isNew = false
-        let isModified = false
         
         // Check if it's a new file or modified file
         for (const line of diffLines) {
           if (line.startsWith('new file mode')) {
             isNew = true
-          } else if (line.startsWith('+++') || line.startsWith('---')) {
-            isModified = true
           } else if (line.startsWith('+') && !line.startsWith('+++')) {
             linesAdded++
           } else if (line.startsWith('-') && !line.startsWith('---')) {
@@ -70,7 +67,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
           success: true,
           diff: result.diff,
           isNew,
-          isModified: isModified || linesAdded > 0 || linesRemoved > 0,
+          isModified: !isNew && (linesAdded > 0 || linesRemoved > 0),
           linesAdded,
           linesRemoved,
         })

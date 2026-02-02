@@ -5746,7 +5746,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     </div>
                     <div className="bg-copilot-bg rounded border border-copilot-surface max-h-32 overflow-y-auto">
                       {activeTab.editedFiles.map((filePath) => {
-                        const isConflicted = conflictedFiles.some(cf => filePath.endsWith(cf) || cf.endsWith(filePath.split(/[/\\]/).pop() || ''));
+                        const fileName = filePath.split(/[/\\]/).pop() || '';
+                        const isConflicted = conflictedFiles.some(cf => filePath.endsWith(cf) || cf.endsWith(fileName));
                         return (
                           <button
                             key={filePath}
