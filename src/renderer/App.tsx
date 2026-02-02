@@ -88,6 +88,11 @@ import { isAsciiDiagram, extractTextContent } from "./utils/isAsciiDiagram";
 import { useClickOutside } from "./hooks";
 import buildInfo from "./build-info.json";
 
+// Helper function to deduplicate and filter edited files
+const getCleanEditedFiles = (files: string[]): string[] => {
+  return Array.from(new Set(files.filter(f => f && f.trim() !== '')));
+};
+
 const enrichSessionsWithWorktreeData = async (sessions: PreviousSession[]): Promise<PreviousSession[]> => {
   try {
     const worktreeSessions = await window.electronAPI.worktree.listSessions();
@@ -589,11 +594,6 @@ const App: React.FC = () => {
     setShowAllowDropdown(false);
   }, []);
   useClickOutside(allowDropdownRef, closeAllowDropdown, showAllowDropdown);
-
-  // Helper function to deduplicate and filter edited files
-  const getCleanEditedFiles = useCallback((files: string[]): string[] => {
-    return Array.from(new Set(files.filter(f => f && f.trim() !== '')));
-  }, []);
 
   // Theme context
   const {
@@ -3710,7 +3710,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
   // Memoize cleaned edited files for the active tab
   const cleanedEditedFiles = useMemo(() => {
     return activeTab ? getCleanEditedFiles(activeTab.editedFiles) : [];
-  }, [activeTab?.editedFiles, getCleanEditedFiles]);
+  }, [activeTab?.editedFiles]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-copilot-bg rounded-xl">
