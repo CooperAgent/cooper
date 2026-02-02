@@ -44,6 +44,8 @@ export interface DropdownProps<T = string> {
   disabled?: boolean
   /** Test ID for automated testing */
   testId?: string
+  /** Callback when dropdown is opened */
+  onOpen?: () => void
 }
 
 export function Dropdown<T = string>({
@@ -61,6 +63,7 @@ export function Dropdown<T = string>({
   title,
   disabled = false,
   testId,
+  onOpen,
 }: DropdownProps<T>): React.ReactElement {
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -77,7 +80,11 @@ export function Dropdown<T = string>({
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!disabled) {
-      setIsOpen(!isOpen)
+      const nextOpen = !isOpen
+      if (nextOpen) {
+        onOpen?.()
+      }
+      setIsOpen(nextOpen)
     }
   }
 

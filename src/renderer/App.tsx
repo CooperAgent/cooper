@@ -1111,6 +1111,9 @@ const App: React.FC = () => {
 
         setTabs(initialTabs);
         setActiveTabId(data.sessions[0]?.sessionId || null);
+        if (data.sessions.length > 0) {
+          setTabCounter(Math.max(tabCounterRef.current, data.sessions.length));
+        }
 
         // Load message history and attachments for each session
         for (const s of data.sessions) {
@@ -1153,7 +1156,78 @@ const App: React.FC = () => {
       },
     );
 
-    // Also fetch models in case ready event was missed
+    const unsubscribeSessionResumed = window.electronAPI.copilot.onSessionResumed(
+      (data) => {
+        const s = data.session;
+        setTabs((prev) => {
+          if (prev.some((tab) => tab.id === s.sessionId)) return prev;
+          const storedLisaConfig = sessionStorage.getItem(`lisaConfig-${s.sessionId}`);
+          const lisaConfig = storedLisaConfig ? JSON.parse(storedLisaConfig) : undefined;
+          return [
+            ...prev,
+            {
+              id: s.sessionId,
+              name: s.name || `Session ${prev.length + 1}`,
+              messages: [],
+              model: s.model,
+              cwd: s.cwd,
+              isProcessing: false,
+              activeTools: [],
+              hasUnreadCompletion: false,
+              pendingConfirmations: [],
+              needsTitle: !s.name,
+              alwaysAllowed: s.alwaysAllowed || [],
+              editedFiles: s.editedFiles || [],
+              currentIntent: null,
+              currentIntentTimestamp: null,
+              gitBranchRefresh: 0,
+              lisaConfig,
+            },
+          ];
+        });
+
+        if (!activeTabId) {
+          setActiveTabId(s.sessionId);
+        }
+
+        Promise.all([
+          window.electronAPI.copilot.getMessages(s.sessionId),
+          window.electronAPI.copilot.loadMessageAttachments(s.sessionId),
+        ])
+          .then(([messages, attachmentsResult]) => {
+            if (messages.length > 0) {
+              const attachmentMap = new Map(
+                attachmentsResult.attachments.map((a) => [a.messageIndex, a]),
+              );
+              setTabs((prev) =>
+                prev.map((tab) =>
+                  tab.id === s.sessionId
+                    ? {
+                        ...tab,
+                        messages: messages.map((m, i) => {
+                          const att = attachmentMap.get(i);
+                          return {
+                            id: `hist-${i}`,
+                            ...m,
+                            isStreaming: false,
+                            imageAttachments: att?.imageAttachments,
+                            fileAttachments: att?.fileAttachments,
+                          };
+                        }),
+                        needsTitle: false,
+                      }
+                    : tab,
+                ),
+              );
+            }
+          })
+          .catch((err) =>
+            console.error(`Failed to load history for ${s.sessionId}:`, err),
+          );
+      },
+    );
+
+    // Also fetch models in case ready event was missed (baseline list only)
     window.electronAPI.copilot
       .getModels()
       .then((data) => {
@@ -1882,12 +1956,14 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeToolEnd();
       unsubscribePermission();
       unsubscribeError();
+      unsubscribeSessionResumed();
       unsubscribeModelsVerified();
       unsubscribeUsageInfo();
       unsubscribeCompactionStart();
       unsubscribeCompactionComplete();
     };
   }, []);
+
 
   const handleSendMessage = useCallback(async () => {
     if (!inputValue.trim() && !terminalAttachment && imageAttachments.length === 0 && fileAttachments.length === 0) return;
@@ -3845,7 +3921,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               ),
             }))}
             onSelect={handleModelChange}
-            placeholder="Loading..."
+            placeholder={availableModels.length > 0 ? "Select..." : "Loading..."}
             title="Model"
             minWidth="240px"
           />
