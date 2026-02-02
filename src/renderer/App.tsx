@@ -1868,6 +1868,8 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
     if (!activeTab) return;
 
     // If there are pending confirmations, automatically deny them when sending a new message
+    // Note: Only the first confirmation is denied (confirmations are processed sequentially)
+    // This matches the behavior of handleConfirmation which also processes one at a time
     if (activeTab.pendingConfirmations.length > 0) {
       const pendingConfirmation = activeTab.pendingConfirmations[0];
       
