@@ -90,7 +90,7 @@ import buildInfo from "./build-info.json";
 
 // Helper function to deduplicate and filter edited files
 const getCleanEditedFiles = (files: string[]): string[] => {
-  return Array.from(new Set(files.filter(f => f && f.trim() !== '')));
+  return Array.from(new Set(files.filter(f => f?.trim())));
 };
 
 const enrichSessionsWithWorktreeData = async (sessions: PreviousSession[]): Promise<PreviousSession[]> => {
@@ -3710,7 +3710,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
   // Memoize cleaned edited files for the active tab
   const cleanedEditedFiles = useMemo(() => {
     return activeTab ? getCleanEditedFiles(activeTab.editedFiles) : [];
-  }, [activeTab?.editedFiles]);
+  }, [activeTab]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-copilot-bg rounded-xl">
