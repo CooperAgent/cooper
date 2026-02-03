@@ -7,16 +7,6 @@ on:
       - '*.md'
       - 'docs/**'
   workflow_dispatch:
-    inputs:
-      version_bump:
-        description: 'Version bump type'
-        required: true
-        default: 'minor'
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
 
 permissions:
   contents: write
@@ -30,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
-      new_version: ${{ steps.version.outputs.new_version }}
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -60,30 +50,18 @@ jobs:
         with:
           node-version: 22
 
-      - name: Calculate new version
+      - name: Get current version
         id: version
         run: |
-          current_version=$(node -p "require('./package.json').version.split('+')[0].split('-')[0]")
-          echo "Current version: $current_version"
+          version=$(node -p "require('./package.json').version")
+          echo "Version: $version"
+          echo "version=$version" >> $GITHUB_OUTPUT
           
-          IFS='.' read -r major minor patch <<< "$current_version"
-          
-          bump_type="${{ github.event.inputs.version_bump || 'patch' }}"
-          
-          case $bump_type in
-            major)
-              new_version="$((major + 1)).0.0"
-              ;;
-            minor)
-              new_version="$major.$((minor + 1)).0"
-              ;;
-            patch)
-              new_version="$major.$minor.$((patch + 1))"
-              ;;
-          esac
-          
-          echo "New version: $new_version"
-          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+          # Check if tag already exists
+          if git rev-parse "v$version" >/dev/null 2>&1; then
+            echo "⚠️ Tag v$version already exists - skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
 
   test:
     needs: validate
@@ -125,7 +103,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -133,28 +110,15 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Bump version
-        run: |
-          new_version="${{ needs.validate.outputs.new_version }}"
-          npm version $new_version --no-git-tag-version
-          git add package.json package-lock.json
-          git commit -m "chore: bump version to $new_version [skip ci]"
-          git push
-
       - name: Extract release notes for this version
         id: release_notes
         run: |
-          new_version="${{ needs.validate.outputs.new_version }}"
+          version="${{ needs.validate.outputs.version }}"
           # Extract notes between this version header and the next one (or EOF)
-          notes=$(awk "/^## ${new_version//./\\.}/,/^## [0-9]+\.[0-9]+\.[0-9]+/{if(/^## [0-9]+\.[0-9]+\.[0-9]+/ && !/^## ${new_version//./\\.}/)exit; print}" RELEASE_NOTES.md | tail -n +2)
+          notes=$(awk "/^## ${version//./\\.}/,/^## [0-9]+\.[0-9]+\.[0-9]+/{if(/^## [0-9]+\.[0-9]+\.[0-9]+/ && !/^## ${version//./\\.}/)exit; print}" RELEASE_NOTES.md | tail -n +2)
           
           if [ -z "$notes" ]; then
-            notes="Release $new_version"
+            notes="Release $version"
           fi
           
           # Handle multiline output
@@ -165,7 +129,7 @@ jobs:
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
-          tag: v${{ needs.validate.outputs.new_version }}
-          name: v${{ needs.validate.outputs.new_version }}
+          tag: v${{ needs.validate.outputs.version }}
+          name: v${{ needs.validate.outputs.version }}
           body: ${{ steps.release_notes.outputs.notes }}
           makeLatest: true

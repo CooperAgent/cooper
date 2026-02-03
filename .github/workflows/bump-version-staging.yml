@@ -1,0 +1,79 @@
+name: Bump Version (Staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-version-staging
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/staging'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Calculate new version
+        id: version
+        run: |
+          current_version=$(node -p "require('./package.json').version.split('+')[0].split('-')[0]")
+          echo "Current version: $current_version"
+          
+          IFS='.' read -r major minor patch <<< "$current_version"
+          
+          bump_type="${{ github.event.inputs.version_bump }}"
+          
+          case $bump_type in
+            major)
+              new_version="$((major + 1)).0.0"
+              ;;
+            minor)
+              new_version="$major.$((minor + 1)).0"
+              ;;
+            patch)
+              new_version="$major.$minor.$((patch + 1))"
+              ;;
+          esac
+          
+          echo "New version: $new_version"
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bump version
+        run: |
+          new_version="${{ steps.version.outputs.new_version }}"
+          npm version $new_version --no-git-tag-version
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to $new_version [skip ci]"
+          git push
+          
+          echo "✅ Version bumped to $new_version on staging"
