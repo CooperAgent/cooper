@@ -699,6 +699,7 @@ const App: React.FC = () => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputValueRef = useRef<string>("");
   const activeTabIdRef = useRef<string | null>(null);
   const prevActiveTabIdRef = useRef<string | null>(null);
 
@@ -707,6 +708,11 @@ const App: React.FC = () => {
     prevActiveTabIdRef.current = activeTabIdRef.current;
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
+
+  // Keep inputValueRef in sync with inputValue for stable callback access
+  useEffect(() => {
+    inputValueRef.current = inputValue;
+  }, [inputValue]);
 
   // Expose test helpers for E2E testing (only when __ENABLE_TEST_HELPERS__ is set by test runner)
   useEffect(() => {
@@ -855,13 +861,15 @@ const App: React.FC = () => {
     // Save current input state to the previous tab's draftInput (if it still exists)
     if (prevActiveTabIdRef.current && prevActiveTabIdRef.current !== activeTabId) {
       const prevTabId = prevActiveTabIdRef.current;
+      // Read from ref since we're using uncontrolled textarea
+      const currentText = inputValueRef.current;
       setTabs((prev) =>
         prev.map((tab) =>
           tab.id === prevTabId
             ? {
                 ...tab,
                 draftInput: {
-                  text: inputValue,
+                  text: currentText,
                   imageAttachments: [...imageAttachments],
                   fileAttachments: [...fileAttachments],
                   terminalAttachment: terminalAttachment ? { ...terminalAttachment } : null,
@@ -878,12 +886,16 @@ const App: React.FC = () => {
       const draft = newActiveTab?.draftInput;
       if (draft) {
         setInputValue(draft.text);
+        inputValueRef.current = draft.text;
+        if (inputRef.current) inputRef.current.value = draft.text;
         setImageAttachments(draft.imageAttachments);
         setFileAttachments(draft.fileAttachments);
         setTerminalAttachment(draft.terminalAttachment);
       } else {
         // No draft saved for this tab - clear inputs
         setInputValue("");
+        inputValueRef.current = "";
+        if (inputRef.current) inputRef.current.value = "";
         setImageAttachments([]);
         setFileAttachments([]);
         setTerminalAttachment(null);
@@ -998,7 +1010,7 @@ const App: React.FC = () => {
     };
   }, []);
 
-   // Reset textarea height when input is cleared
+   // Reset textarea height when input is cleared programmatically
   useEffect(() => {
     if (!inputValue && inputRef.current) {
       inputRef.current.style.height = "auto";
@@ -2013,7 +2025,8 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
 
 
   const handleSendMessage = useCallback(async () => {
-    if (!inputValue.trim() && !terminalAttachment && imageAttachments.length === 0 && fileAttachments.length === 0) return;
+    const currentInputValue = inputValueRef.current;
+    if (!currentInputValue.trim() && !terminalAttachment && imageAttachments.length === 0 && fileAttachments.length === 0) return;
     if (!activeTab) return;
 
     // If there are pending confirmations, automatically deny them when sending a new message
@@ -2085,7 +2098,7 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
     }
 
     // Build message content with terminal attachment if present
-    let messageContent = inputValue.trim();
+    let messageContent = currentInputValue.trim();
     if (terminalAttachment) {
       const terminalBlock = `\`\`\`\n${terminalAttachment.output}\n\`\`\``;
       messageContent = messageContent 
@@ -2171,6 +2184,8 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       
       // Clear input immediately
       setInputValue("");
+      inputValueRef.current = "";
+      if (inputRef.current) inputRef.current.value = "";
       setTerminalAttachment(null);
       setImageAttachments([]);
       setFileAttachments([]);
@@ -2364,6 +2379,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       draftInput: undefined, // Clear draft after sending
     });
     setInputValue("");
+    inputValueRef.current = "";
+    if (inputRef.current) inputRef.current.value = "";
     setTerminalAttachment(null);
     setImageAttachments([]);
     setFileAttachments([]);
@@ -2387,7 +2404,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       console.error("Send error:", error);
       updateTab(tabId, { isProcessing: false, ralphConfig: undefined, lisaConfig: undefined });
     }
-  }, [inputValue, activeTab, updateTab, ralphEnabled, ralphMaxIterations, ralphRequireScreenshot, ralphClearContext, lisaEnabled, terminalAttachment, imageAttachments, fileAttachments]);
+  }, [activeTab, updateTab, ralphEnabled, ralphMaxIterations, ralphRequireScreenshot, ralphClearContext, lisaEnabled, terminalAttachment, imageAttachments, fileAttachments]);
 
   // Handle sending terminal output to the agent
   const handleSendTerminalOutput = useCallback((output: string, lineCount: number) => {
@@ -5251,8 +5268,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               
               <textarea
                 ref={inputRef}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
+                defaultValue={inputValue}
+                onChange={(e) => {
+                  // Update ref immediately for callbacks, but don't trigger re-render
+                  inputValueRef.current = e.target.value;
+                }}
                 onKeyDown={handleKeyPress}
                 onPaste={handlePaste}
                 placeholder={(isDraggingImage || isDraggingFile) ? "Drop files here..." : (
@@ -5306,16 +5326,14 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               {activeTab?.isProcessing ? (
                 <>
                   {/* Send button while processing - queues message */}
-                  {(inputValue.trim() || terminalAttachment || imageAttachments.length > 0 || fileAttachments.length > 0) && (
-                    <button
-                      onClick={handleSendMessage}
-                      disabled={status !== "connected"}
-                      className="shrink-0 px-3 py-2.5 text-copilot-warning hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
-                      title="Send message (will be queued until agent finishes)"
-                    >
-                      Send
-                    </button>
-                  )}
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={status !== "connected"}
+                    className="shrink-0 px-3 py-2.5 text-copilot-warning hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
+                    title="Send message (will be queued until agent finishes)"
+                  >
+                    Send
+                  </button>
                   {/* Stop button */}
                   <button
                     onClick={handleStop}
@@ -5329,10 +5347,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               ) : (
                 <button
                   onClick={handleSendMessage}
-                  disabled={
-                    ((!inputValue.trim() && !terminalAttachment && imageAttachments.length === 0 && fileAttachments.length === 0) ||
-                    status !== "connected")
-                  }
+                  disabled={status !== "connected"}
                   className="shrink-0 px-4 py-2.5 text-copilot-accent hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
                 >
                   {lisaEnabled ? "Start Lisa Loop" : (ralphEnabled ? "Start Loop" : "Send")}
