@@ -142,10 +142,19 @@ process.on('uncaughtException', (err) => {
 // Replace console with electron-log
 Object.assign(console, log.functions)
 
-// Bounce dock icon to get user attention (macOS only)
-function bounceDock(): void {
-  if (process.platform === 'darwin' && !mainWindow?.isFocused()) {
+// Get user attention visually (cross-platform accessibility)
+// - macOS: bounces dock icon
+// - Windows/Linux: flashes taskbar icon
+function requestUserAttention(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) {
+    return
+  }
+  
+  if (process.platform === 'darwin') {
     app.dock?.bounce('informational')
+  } else {
+    // Flash taskbar icon on Windows/Linux for accessibility (deaf users, etc.)
+    mainWindow.flashFrame(true)
   }
 }
 
@@ -516,7 +525,7 @@ async function resumeDisconnectedSession(sessionId: string, sessionState: Sessio
       const currentSessionState = sessions.get(sessionId)
       if (currentSessionState) currentSessionState.isProcessing = false
       mainWindow.webContents.send('copilot:idle', { sessionId })
-      bounceDock()
+      requestUserAttention()
     } else if (event.type === 'tool.execution_start') {
       log.info(`[${sessionId}] Tool start FULL:`, JSON.stringify(event.data, null, 2))
       mainWindow.webContents.send('copilot:tool-start', { 
@@ -829,7 +838,7 @@ async function handlePermissionRequest(
           filesToDelete,  // Issue #101: Show which files will be deleted
           ...request
         })
-        bounceDock()
+        requestUserAttention()
       })
     }
     
@@ -867,7 +876,7 @@ async function handlePermissionRequest(
         isDestructive: false,
         ...request
       })
-      bounceDock()
+      requestUserAttention()
     })
   }
   
@@ -1007,7 +1016,7 @@ async function handlePermissionRequest(
       isOutOfScope,
       ...request
     })
-    bounceDock()
+    requestUserAttention()
   })
   
   // Track the in-flight request
@@ -1100,7 +1109,7 @@ Browser tools available: browser_navigate, browser_click, browser_fill, browser_
       const currentSessionState = sessions.get(sessionId)
       if (currentSessionState) currentSessionState.isProcessing = false
       mainWindow.webContents.send('copilot:idle', { sessionId })
-      bounceDock()
+      requestUserAttention()
     } else if (event.type === 'tool.execution_start') {
       console.log(`[${sessionId}] Tool start FULL:`, JSON.stringify(event.data, null, 2))
       mainWindow.webContents.send('copilot:tool-start', { 
@@ -1307,7 +1316,7 @@ async function initCopilot(): Promise<void> {
             const currentSessionState = sessions.get(sessionId)
             if (currentSessionState) currentSessionState.isProcessing = false
             mainWindow.webContents.send('copilot:idle', { sessionId })
-            bounceDock()
+            requestUserAttention()
           } else if (event.type === 'tool.execution_start') {
             console.log(`[${sessionId}] Tool start FULL:`, JSON.stringify(event.data, null, 2))
             mainWindow.webContents.send('copilot:tool-start', { 
@@ -1455,6 +1464,7 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
 }
 
 // IPC Handlers
@@ -2938,7 +2948,7 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
       const currentSessionState = sessions.get(sessionId)
       if (currentSessionState) currentSessionState.isProcessing = false
       mainWindow.webContents.send('copilot:idle', { sessionId })
-      bounceDock()
+      requestUserAttention()
     } else if (event.type === 'tool.execution_start') {
       console.log(`[${sessionId}] Tool start FULL:`, JSON.stringify(event.data, null, 2))
       mainWindow.webContents.send('copilot:tool-start', { 
