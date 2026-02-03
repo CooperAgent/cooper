@@ -256,6 +256,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     <div 
       className={`flex flex-col border-b border-copilot-border bg-copilot-terminal-bg ${!isOpen ? 'hidden' : ''}`}
       data-tour="terminal-panel"
+      data-clarity-mask="true"
     >
       {/* Terminal Header */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-copilot-surface border-b border-copilot-border">

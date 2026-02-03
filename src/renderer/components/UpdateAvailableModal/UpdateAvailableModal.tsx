@@ -94,7 +94,7 @@ export const UpdateAvailableModal: React.FC<UpdateAvailableModalProps> = ({
       testId="update-available-modal"
       showCloseButton={!isUpdating}
     >
-      <Modal.Body>
+      <Modal.Body data-clarity-mask="true">
         <div className="space-y-4">
           {updateStage === 'idle' && (
             <>
