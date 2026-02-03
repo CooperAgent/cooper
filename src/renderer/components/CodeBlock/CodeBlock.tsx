@@ -33,7 +33,7 @@ export const CodeBlockWithCopy: React.FC<CodeBlockWithCopyProps> = ({
   }, [textContent])
 
   return (
-    <div className="relative group">
+    <div className="relative group" data-clarity-mask="true">
       <pre className={`bg-copilot-bg rounded p-2 my-2 overflow-x-auto text-xs max-w-full ${isDiagram ? 'ascii-diagram' : ''}`}>
         <code className="text-copilot-text">
           {children}
