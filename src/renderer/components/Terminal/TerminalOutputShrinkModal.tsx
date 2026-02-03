@@ -56,7 +56,7 @@ export const TerminalOutputShrinkModal: React.FC<TerminalOutputShrinkModalProps>
       width="450px"
       testId="terminal-shrink-modal"
     >
-      <Modal.Body>
+      <Modal.Body data-clarity-mask="true">
         <div className="space-y-3">
           <p className="text-sm text-copilot-text-muted">
             The terminal output is <span className="text-copilot-accent font-medium">{lineCount} lines</span>. 

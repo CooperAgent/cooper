@@ -172,7 +172,7 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="New Worktree Session" width="450px">
-      <Modal.Body>
+      <Modal.Body data-clarity-mask="true">
         {gitSupported === false ? (
           <div className="text-copilot-error text-sm mb-4">
             Git 2.20+ required for worktree support. Found: {gitVersion}
