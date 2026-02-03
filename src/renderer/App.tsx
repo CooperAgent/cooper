@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import logo from "./assets/logo.png";
 import { useTheme } from "./context/ThemeContext";
+import { trackEvent, TelemetryEvents } from "./utils/telemetry";
 import {
   Spinner,
   GitBranchWidget,
@@ -981,10 +982,14 @@ const App: React.FC = () => {
       try {
         const config = await window.electronAPI.mcp.getConfig();
         setMcpServers(config.mcpServers || {});
+        const serverCount = Object.keys(config.mcpServers || {}).length;
         console.log(
           "Loaded MCP servers:",
           Object.keys(config.mcpServers || {}),
         );
+        if (serverCount > 0) {
+          trackEvent(TelemetryEvents.FEATURE_MCP_CONNECTED);
+        }
       } catch (error) {
         console.error("Failed to load MCP config:", error);
       }
@@ -1066,6 +1071,7 @@ const App: React.FC = () => {
           // Create initial session
           try {
             const result = await window.electronAPI.copilot.createSession();
+            trackEvent(TelemetryEvents.SESSION_CREATED);
             const newTab: TabState = {
               id: result.sessionId,
               name: generateTabName(),
@@ -1123,6 +1129,9 @@ const App: React.FC = () => {
 
         setTabs(initialTabs);
         setActiveTabId(data.sessions[0]?.sessionId || null);
+        if (data.sessions.length > 0) {
+          setTabCounter(Math.max(tabCounterRef.current, data.sessions.length));
+        }
 
         // Load message history and attachments for each session
         for (const s of data.sessions) {
@@ -1168,7 +1177,78 @@ const App: React.FC = () => {
       },
     );
 
-    // Also fetch models in case ready event was missed
+    const unsubscribeSessionResumed = window.electronAPI.copilot.onSessionResumed(
+      (data) => {
+        const s = data.session;
+        setTabs((prev) => {
+          if (prev.some((tab) => tab.id === s.sessionId)) return prev;
+          const storedLisaConfig = sessionStorage.getItem(`lisaConfig-${s.sessionId}`);
+          const lisaConfig = storedLisaConfig ? JSON.parse(storedLisaConfig) : undefined;
+          return [
+            ...prev,
+            {
+              id: s.sessionId,
+              name: s.name || `Session ${prev.length + 1}`,
+              messages: [],
+              model: s.model,
+              cwd: s.cwd,
+              isProcessing: false,
+              activeTools: [],
+              hasUnreadCompletion: false,
+              pendingConfirmations: [],
+              needsTitle: !s.name,
+              alwaysAllowed: s.alwaysAllowed || [],
+              editedFiles: s.editedFiles || [],
+              currentIntent: null,
+              currentIntentTimestamp: null,
+              gitBranchRefresh: 0,
+              lisaConfig,
+            },
+          ];
+        });
+
+        if (!activeTabId) {
+          setActiveTabId(s.sessionId);
+        }
+
+        Promise.all([
+          window.electronAPI.copilot.getMessages(s.sessionId),
+          window.electronAPI.copilot.loadMessageAttachments(s.sessionId),
+        ])
+          .then(([messages, attachmentsResult]) => {
+            if (messages.length > 0) {
+              const attachmentMap = new Map(
+                attachmentsResult.attachments.map((a) => [a.messageIndex, a]),
+              );
+              setTabs((prev) =>
+                prev.map((tab) =>
+                  tab.id === s.sessionId
+                    ? {
+                        ...tab,
+                        messages: messages.map((m, i) => {
+                          const att = attachmentMap.get(i);
+                          return {
+                            id: `hist-${i}`,
+                            ...m,
+                            isStreaming: false,
+                            imageAttachments: att?.imageAttachments,
+                            fileAttachments: att?.fileAttachments,
+                          };
+                        }),
+                        needsTitle: false,
+                      }
+                    : tab,
+                ),
+              );
+            }
+          })
+          .catch((err) =>
+            console.error(`Failed to load history for ${s.sessionId}:`, err),
+          );
+      },
+    );
+
+    // Also fetch models in case ready event was missed (baseline list only)
     window.electronAPI.copilot
       .getModels()
       .then((data) => {
@@ -1897,12 +1977,14 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeToolEnd();
       unsubscribePermission();
       unsubscribeError();
+      unsubscribeSessionResumed();
       unsubscribeModelsVerified();
       unsubscribeUsageInfo();
       unsubscribeCompactionStart();
       unsubscribeCompactionComplete();
     };
   }, []);
+
 
   const handleSendMessage = useCallback(async () => {
     if (!inputValue.trim() && !terminalAttachment && imageAttachments.length === 0 && fileAttachments.length === 0) return;
@@ -3266,6 +3348,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       const result = await window.electronAPI.copilot.createSession({
         cwd: folderResult.path,
       });
+      trackEvent(TelemetryEvents.SESSION_CREATED);
       const newTab: TabState = {
         id: result.sessionId,
         name: generateTabName(),
@@ -3326,6 +3409,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       const result = await window.electronAPI.copilot.createSession({
         cwd: worktreePath,
       });
+      trackEvent(TelemetryEvents.SESSION_CREATED);
+      trackEvent(TelemetryEvents.FEATURE_WORKTREE_CREATED);
 
       // Pre-approve file writes, mkdir (for evidence folders), and GitHub web fetches for all worktree sessions
       // This enables smooth operation in both Ralph Wiggum and Lisa Simpson modes
@@ -3573,6 +3658,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         }
         
         const result = await window.electronAPI.copilot.createSession();
+        trackEvent(TelemetryEvents.SESSION_CREATED);
         const newTab: TabState = {
           id: result.sessionId,
           name: generateTabName(),
@@ -3746,11 +3832,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       // If current tab has messages, create a new tab with the new model instead of replacing
       if (activeTab.messages.length > 0) {
         const result = await window.electronAPI.copilot.createSession();
+        trackEvent(TelemetryEvents.SESSION_CREATED);
         // Now change the model on the new session
         const modelResult = await window.electronAPI.copilot.setModel(
           result.sessionId,
           model,
         );
+        trackEvent(TelemetryEvents.FEATURE_MODEL_CHANGED);
 
         const newTab: TabState = {
           id: modelResult.sessionId,
@@ -3780,6 +3868,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         activeTab.id,
         model,
       );
+      trackEvent(TelemetryEvents.FEATURE_MODEL_CHANGED);
       // Update the tab with new session ID and model, clear messages
       setTabs((prev) => {
         const updated = prev.filter((t) => t.id !== activeTab.id);
@@ -3889,7 +3978,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     ),
                 })),
               ]}
-              onSelect={(id) => setTheme(id)}
+              onSelect={(id) => {
+                setTheme(id);
+                trackEvent(TelemetryEvents.FEATURE_THEME_CHANGED);
+              }}
               trigger={
                 <>
                   {activeTheme.type === "dark" ? (
@@ -4149,6 +4241,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   setTerminalOpenForSession(activeTab.id);
                   // Track that this session has had a terminal initialized
                   setTerminalInitializedSessions(prev => new Set(prev).add(activeTab.id));
+                  trackEvent(TelemetryEvents.FEATURE_TERMINAL_OPENED);
                 }
               }}
               className={`shrink-0 flex items-center gap-2 px-4 py-2 text-xs border-b border-copilot-border ${
@@ -4678,8 +4771,12 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   {/* Ralph Option */}
                   <button
                     onClick={() => {
-                      setRalphEnabled(!ralphEnabled);
-                      if (!ralphEnabled) setLisaEnabled(false);
+                      const enabling = !ralphEnabled;
+                      setRalphEnabled(enabling);
+                      if (enabling) {
+                        setLisaEnabled(false);
+                        trackEvent(TelemetryEvents.FEATURE_RALPH_ENABLED);
+                      }
                     }}
                     className={`flex-1 p-2 rounded-lg border transition-all ${
                       ralphEnabled 
@@ -4699,8 +4796,12 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   {/* Lisa Option */}
                   <button
                     onClick={() => {
-                      setLisaEnabled(!lisaEnabled);
-                      if (!lisaEnabled) setRalphEnabled(false);
+                      const enabling = !lisaEnabled;
+                      setLisaEnabled(enabling);
+                      if (enabling) {
+                        setRalphEnabled(false);
+                        trackEvent(TelemetryEvents.FEATURE_LISA_ENABLED);
+                      }
                     }}
                     className={`flex-1 p-2 rounded-lg border transition-all ${
                       lisaEnabled 

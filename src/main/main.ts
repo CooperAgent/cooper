@@ -605,6 +605,8 @@ const pendingPermissions = new Map<string, {
 // Track in-flight permission requests by session+executable to deduplicate parallel requests
 const inFlightPermissions = new Map<string, Promise<PermissionRequestResult>>()
 
+let defaultClient: CopilotClient | null = null
+
 // Model info with multipliers
 interface ModelInfo {
   id: string
@@ -648,35 +650,14 @@ function getVerifiedModels(): ModelInfo[] {
   return AVAILABLE_MODELS
 }
 
-// Verify which models are available for the current user by testing each one
+// Verify which models are available for the current user by fetching from the server
 async function verifyAvailableModels(client: CopilotClient): Promise<ModelInfo[]> {
   console.log('Starting model verification...')
-  const verified: ModelInfo[] = []
-  
-  for (const model of AVAILABLE_MODELS) {
-    try {
-      // Try to create a session with this model
-      const session = await client.createSession({ model: model.id })
-      // If successful, model is available - clean up immediately
-      await session.destroy()
-      // Try to delete session file, but don't fail if it doesn't exist
-      try {
-        await client.deleteSession(session.sessionId)
-      } catch {
-        // Session may already be deleted by destroy(), ignore
-      }
-      verified.push(model)
-      console.log(`✓ Model verified: ${model.id}`)
-    } catch (error) {
-      // Model not available for this user
-      console.log(`✗ Model unavailable: ${model.id}`, error instanceof Error ? error.message : error)
-    }
-  }
-  
-  // Cache the results
+  const available = await client.listModels()
+  const availableIds = new Set(available.map(m => m.id))
+  const verified = AVAILABLE_MODELS.filter(model => availableIds.has(model.id))
   verifiedModelsCache = { models: verified, timestamp: Date.now() }
   console.log(`Model verification complete: ${verified.length}/${AVAILABLE_MODELS.length} models available`)
-  
   return verified
 }
 
@@ -1210,7 +1191,7 @@ async function initCopilot(): Promise<void> {
   try {
     // Create a default client - use home dir for packaged app since process.cwd() can be '/'
     const defaultCwd = app.isPackaged ? app.getPath('home') : process.cwd()
-    const defaultClient = await getClientForCwd(defaultCwd)
+    defaultClient = await getClientForCwd(defaultCwd)
     
     // Check if we should use mock sessions for testing
     const useMockSessions = process.env.USE_MOCK_SESSIONS === 'true'
@@ -1293,110 +1274,128 @@ async function initCopilot(): Promise<void> {
     // Load MCP servers config once for resumption
     const mcpConfig = await readMcpConfig()
     
-    // Resume only our open sessions with their stored models and cwd (in parallel)
-    const resumeResults = await Promise.allSettled(sessionsToResume.map(async (sessionId) => {
-      const meta = sessionMetaMap.get(sessionId)!
+    // Resume only our open sessions with their stored models and cwd (in parallel, non-blocking)
+    const resumeSession = async (sessionId: string): Promise<void> => {
+      const meta = sessionMetaMap.get(sessionId)
       const storedSession = openSessionMap.get(sessionId)
       const sessionModel = storedSession?.model || store.get('model') as string || 'gpt-5.2'
       const sessionCwd = storedSession?.cwd || defaultCwd
       const storedAlwaysAllowed = storedSession?.alwaysAllowed || []
       
-      // Get or create client for this session's cwd
-      const client = await getClientForCwd(sessionCwd)
-      
-      const session = await client.resumeSession(sessionId, {
-        mcpServers: mcpConfig.mcpServers,
-        tools: createBrowserTools(sessionId),
-        onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
-      })
-      
-      // Set up event handler for resumed session
-      session.on((event) => {
-        if (!mainWindow || mainWindow.isDestroyed()) return
+      try {
+        // Get or create client for this session's cwd
+        const client = await getClientForCwd(sessionCwd)
         
-        console.log(`[${sessionId}] Event:`, event.type)
+        const session = await client.resumeSession(sessionId, {
+          mcpServers: mcpConfig.mcpServers,
+          tools: createBrowserTools(sessionId),
+          onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
+        })
         
-        if (event.type === 'assistant.message_delta') {
-          mainWindow.webContents.send('copilot:delta', { sessionId, content: event.data.deltaContent })
-        } else if (event.type === 'assistant.message') {
-          mainWindow.webContents.send('copilot:message', { sessionId, content: event.data.content })
-        } else if (event.type === 'session.idle') {
-          const currentSessionState = sessions.get(sessionId)
-          if (currentSessionState) currentSessionState.isProcessing = false
-          mainWindow.webContents.send('copilot:idle', { sessionId })
-          bounceDock()
-        } else if (event.type === 'tool.execution_start') {
-          console.log(`[${sessionId}] Tool start FULL:`, JSON.stringify(event.data, null, 2))
-          mainWindow.webContents.send('copilot:tool-start', { 
-            sessionId, 
-            toolCallId: event.data.toolCallId, 
-            toolName: event.data.toolName,
-            input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>)
-          })
-        } else if (event.type === 'tool.execution_complete') {
-          console.log(`[${sessionId}] Tool end FULL:`, JSON.stringify(event.data, null, 2))
-          mainWindow.webContents.send('copilot:tool-end', { 
-            sessionId, 
-            toolCallId: event.data.toolCallId, 
-            toolName: event.data.toolName,
-            input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
-            output: event.data.output
-          })
+        // Set up event handler for resumed session
+        session.on((event) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return
+          
+          console.log(`[${sessionId}] Event:`, event.type)
+          
+          if (event.type === 'assistant.message_delta') {
+            mainWindow.webContents.send('copilot:delta', { sessionId, content: event.data.deltaContent })
+          } else if (event.type === 'assistant.message') {
+            mainWindow.webContents.send('copilot:message', { sessionId, content: event.data.content })
+          } else if (event.type === 'session.idle') {
+            const currentSessionState = sessions.get(sessionId)
+            if (currentSessionState) currentSessionState.isProcessing = false
+            mainWindow.webContents.send('copilot:idle', { sessionId })
+            bounceDock()
+          } else if (event.type === 'tool.execution_start') {
+            console.log(`[${sessionId}] Tool start FULL:`, JSON.stringify(event.data, null, 2))
+            mainWindow.webContents.send('copilot:tool-start', { 
+              sessionId, 
+              toolCallId: event.data.toolCallId, 
+              toolName: event.data.toolName,
+              input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>)
+            })
+          } else if (event.type === 'tool.execution_complete') {
+            console.log(`[${sessionId}] Tool end FULL:`, JSON.stringify(event.data, null, 2))
+            mainWindow.webContents.send('copilot:tool-end', { 
+              sessionId, 
+              toolCallId: event.data.toolCallId, 
+              toolName: event.data.toolName,
+              input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
+              output: event.data.output
+            })
+          }
+        })
+        
+        // Restore alwaysAllowed set from stored data (normalize legacy ids)
+        const alwaysAllowedSet = new Set(storedAlwaysAllowed.map(normalizeAlwaysAllowed))
+        sessions.set(sessionId, { session, client, model: sessionModel, cwd: sessionCwd, alwaysAllowed: alwaysAllowedSet, allowedPaths: new Set(), isProcessing: false })
+        
+        const resumed = {
+          sessionId,
+          model: sessionModel,
+          cwd: sessionCwd,
+          name: storedSession?.name || meta?.summary || undefined,
+          editedFiles: storedSession?.editedFiles || [],
+          alwaysAllowed: storedAlwaysAllowed
         }
-      })
-      
-      // Restore alwaysAllowed set from stored data (normalize legacy ids)
-      const alwaysAllowedSet = new Set(storedAlwaysAllowed.map(normalizeAlwaysAllowed))
-      sessions.set(sessionId, { session, client, model: sessionModel, cwd: sessionCwd, alwaysAllowed: alwaysAllowedSet, allowedPaths: new Set(), isProcessing: false })
-      
+        resumedSessions.push(resumed)
+        console.log(`Resumed session ${resumed.sessionId} with model ${resumed.model} in ${resumed.cwd}${meta?.summary ? ` (${meta.summary})` : ''}`)
+        
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('copilot:sessionResumed', { session: resumed })
+        }
+      } catch (error) {
+        console.error(`Failed to resume session ${sessionId}:`, error)
+      }
+    }
+    
+    for (const sessionId of sessionsToResume) {
+      void resumeSession(sessionId)
+    }
+    
+    // If no sessions were resumed, don't create one automatically
+    // The frontend will trigger creation which includes trust check
+    if (sessionsToResume.length === 0) {
+      // Signal to frontend that it needs to create an initial session
+      activeSessionId = null
+    } else {
+      activeSessionId = sessionsToResume[0] || null
+    }
+
+    const pendingSessions = sessionsToResume.map((sessionId) => {
+      const meta = sessionMetaMap.get(sessionId)
+      const storedSession = openSessionMap.get(sessionId)
+      const sessionModel = storedSession?.model || store.get('model') as string || 'gpt-5.2'
+      const sessionCwd = storedSession?.cwd || defaultCwd
       return {
         sessionId,
         model: sessionModel,
         cwd: sessionCwd,
-        name: storedSession?.name || meta.summary || undefined,
+        name: storedSession?.name || meta?.summary || undefined,
         editedFiles: storedSession?.editedFiles || [],
-        alwaysAllowed: storedAlwaysAllowed
-      }
-    }))
-    
-    resumeResults.forEach((result, index) => {
-      const sessionId = sessionsToResume[index]
-      const meta = sessionMetaMap.get(sessionId)
-      if (result.status === 'fulfilled') {
-        const resumed = result.value
-        resumedSessions.push(resumed)
-        console.log(`Resumed session ${resumed.sessionId} with model ${resumed.model} in ${resumed.cwd}${meta?.summary ? ` (${meta.summary})` : ''}`)
-      } else {
-        console.error(`Failed to resume session ${sessionId}:`, result.reason)
+        alwaysAllowed: storedSession?.alwaysAllowed || []
       }
     })
-    
-    // If no sessions were resumed, don't create one automatically
-    // The frontend will trigger creation which includes trust check
-    if (resumedSessions.length === 0) {
-      // Signal to frontend that it needs to create an initial session
-      activeSessionId = null
-    } else {
-      activeSessionId = resumedSessions[0].sessionId
-    }
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('copilot:ready', { 
-        sessions: resumedSessions,
+        sessions: pendingSessions,
         previousSessions,
         models: getVerifiedModels()
       })
     }
-    
+
     // Verify available models in background (non-blocking)
-    verifyAvailableModels(defaultClient).then(verifiedModels => {
-      // Notify frontend of updated model list after verification
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('copilot:modelsVerified', { models: verifiedModels })
-      }
-    }).catch(err => {
-      console.error('Model verification failed:', err)
-    })
+    if (defaultClient) {
+      verifyAvailableModels(defaultClient).then(verifiedModels => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('copilot:modelsVerified', { models: verifiedModels })
+        }
+      }).catch(err => {
+        console.error('Model verification failed:', err)
+      })
+    }
     
     // Start keep-alive timer to prevent session timeouts
     startKeepAlive()
