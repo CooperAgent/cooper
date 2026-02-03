@@ -723,9 +723,31 @@ function generateBranchFromTitle(issueNumber: number, title: string): string {
 }
 
 /**
- * Fetch comments for a GitHub issue
+ * Fetch comments for a GitHub issue via gh CLI
  */
-function fetchGitHubIssueComments(owner: string, repo: string, issueNumber: number): Promise<GitHubIssueComment[]> {
+async function fetchGitHubIssueCommentsViaCli(owner: string, repo: string, issueNumber: number): Promise<GitHubIssueComment[]> {
+  try {
+    const { stdout } = await execAsync(
+      `gh issue view ${issueNumber} --repo "${owner}/${repo}" --json comments`,
+      { timeout: 30000 }
+    )
+    
+    const data = JSON.parse(stdout)
+    const comments: GitHubIssueComment[] = (data.comments || []).map((c: { body: string; author?: { login: string }; createdAt?: string }) => ({
+      body: c.body,
+      user: { login: c.author?.login || 'Unknown' },
+      created_at: c.createdAt || ''
+    }))
+    return comments
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Fetch comments for a GitHub issue via public API
+ */
+function fetchGitHubIssueCommentsViaApi(owner: string, repo: string, issueNumber: number): Promise<GitHubIssueComment[]> {
   const apiUrl = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`
   
   return new Promise((resolve) => {
@@ -770,6 +792,7 @@ function fetchGitHubIssueComments(owner: string, repo: string, issueNumber: numb
 
 /**
  * Fetch GitHub issue details and generate a branch name
+ * First tries using gh CLI (for authenticated access to private repos), falls back to public API
  */
 export async function fetchGitHubIssue(issueUrl: string): Promise<{
   success: boolean
@@ -783,8 +806,76 @@ export async function fetchGitHubIssue(issueUrl: string): Promise<{
   }
   
   const { owner, repo, issueNumber } = parsed
+  
+  // First, try using gh CLI which handles authentication
+  try {
+    const { stdout } = await execAsync(
+      `gh issue view ${issueNumber} --repo "${owner}/${repo}" --json number,title,body,state,url`,
+      { timeout: 30000 }
+    )
+    
+    const data = JSON.parse(stdout)
+    
+    const issue: GitHubIssue = {
+      number: data.number,
+      title: data.title || '',
+      body: data.body || null,
+      state: data.state?.toLowerCase() === 'open' ? 'open' : 'closed',
+      html_url: data.url || issueUrl
+    }
+    
+    const suggestedBranch = generateBranchFromTitle(issue.number, issue.title)
+    
+    // Fetch comments via CLI
+    const comments = await fetchGitHubIssueCommentsViaCli(owner, repo, issueNumber)
+    issue.comments = comments
+    
+    return { success: true, issue, suggestedBranch }
+  } catch (cliError) {
+    const errorMessage = String(cliError)
+    
+    // Check if gh CLI is not installed
+    if (errorMessage.includes('not found') || errorMessage.includes('not recognized') || errorMessage.includes('command not found')) {
+      // Fall back to public API
+      return fetchGitHubIssueViaApi(issueUrl, owner, repo, issueNumber)
+    }
+    
+    // Check for auth errors from CLI
+    if (errorMessage.includes('login') || errorMessage.includes('authenticate') || errorMessage.includes('gh auth')) {
+      return { success: false, error: 'GitHub CLI authentication required. Run "gh auth login" to authenticate.' }
+    }
+    
+    // For other CLI errors, try the public API as fallback
+    return fetchGitHubIssueViaApi(issueUrl, owner, repo, issueNumber)
+  }
+}
+
+/**
+ * Fetch GitHub issue via public API (only works for public repositories)
+ */
+async function fetchGitHubIssueViaApi(
+  issueUrl: string,
+  owner: string,
+  repo: string,
+  issueNumber: number
+): Promise<{
+  success: boolean
+  issue?: GitHubIssue
+  suggestedBranch?: string
+  error?: string
+}> {
   const apiUrl = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`
   
+  const authInstructions = `To access private GitHub repositories:
+
+1. Install the GitHub CLI: https://cli.github.com
+
+2. Run this command to authenticate:
+\`\`\`
+gh auth login
+\`\`\`
+`
+
   return new Promise((resolve) => {
     const request = net.request({
       method: 'GET',
@@ -798,7 +889,12 @@ export async function fetchGitHubIssue(issueUrl: string): Promise<{
     
     request.on('response', (response) => {
       if (response.statusCode === 404) {
-        resolve({ success: false, error: 'Issue not found. Check the URL and ensure the repository is public.' })
+        resolve({ success: false, error: `Issue not found. This may be a private repository.\n\n${authInstructions}` })
+        return
+      }
+      
+      if (response.statusCode === 401 || response.statusCode === 403) {
+        resolve({ success: false, error: `Access denied. This is a private repository.\n\n${authInstructions}` })
         return
       }
       
@@ -816,8 +912,8 @@ export async function fetchGitHubIssue(issueUrl: string): Promise<{
           const issue = JSON.parse(responseBody) as GitHubIssue
           const suggestedBranch = generateBranchFromTitle(issue.number, issue.title)
           
-          // Fetch comments for the issue
-          const comments = await fetchGitHubIssueComments(owner, repo, issueNumber)
+          // Fetch comments for the issue via API
+          const comments = await fetchGitHubIssueCommentsViaApi(owner, repo, issueNumber)
           issue.comments = comments
           
           resolve({ success: true, issue, suggestedBranch })
