@@ -167,6 +167,7 @@ const store = new Store({
     sessionCwds: {} as Record<string, string>,  // Persistent map of sessionId -> cwd (survives session close)
     globalSafeCommands: [] as string[],  // Globally safe commands that are auto-approved for all sessions
     hasSeenWelcomeWizard: false as boolean,  // Whether user has completed the welcome wizard
+    wizardVersion: 0 as number,  // Version of wizard shown (bump to re-show wizard after updates)
     // URL allowlist - domains that are auto-approved for web_fetch (similar to --allow-url in Copilot CLI)
     allowedUrls: [
       'github.com',
@@ -3634,12 +3635,17 @@ ipcMain.handle('updates:restartApp', async () => {
 })
 
 // Welcome wizard handlers
+const CURRENT_WIZARD_VERSION = 1;  // Bump this to re-show wizard to all users
+
 ipcMain.handle('wizard:hasSeenWelcome', async () => {
-  return { hasSeen: store.get('hasSeenWelcomeWizard', false) as boolean }
+  const seenVersion = store.get('wizardVersion', 0) as number;
+  // Show wizard if user hasn't seen current version
+  return { hasSeen: seenVersion >= CURRENT_WIZARD_VERSION }
 })
 
 ipcMain.handle('wizard:markWelcomeAsSeen', async () => {
   store.set('hasSeenWelcomeWizard', true)
+  store.set('wizardVersion', CURRENT_WIZARD_VERSION)
   return { success: true }
 })
 
