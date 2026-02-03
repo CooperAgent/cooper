@@ -157,6 +157,30 @@ function saveRegistry(registry: SessionRegistry): void {
   writeFileSync(getRegistryPath(), JSON.stringify(registry, null, 2), 'utf-8')
 }
 
+// Sanitize branch name for git compatibility
+export function sanitizeBranchName(branch: string): string {
+  // Replace backslashes with forward slashes (Windows path separator issue)
+  let sanitized = branch.replace(/\\/g, '/')
+  
+  // Remove invalid characters according to git-check-ref-format
+  // Valid: alphanumeric, -, _, /, .
+  // Invalid: spaces, .., @{, ~, ^, :, ?, *, [, \, control characters
+  sanitized = sanitized.replace(/[~^:?*[\]@{}\s]+/g, '-')
+  
+  // Replace consecutive slashes
+  sanitized = sanitized.replace(/\/+/g, '/')
+  
+  // Remove leading/trailing slashes, dots, and dashes
+  sanitized = sanitized.replace(/^[/.\-]+|[/.\-]+$/g, '')
+  
+  // Ensure it doesn't end with .lock
+  if (sanitized.endsWith('.lock')) {
+    sanitized = sanitized.slice(0, -5)
+  }
+  
+  return sanitized || 'branch'
+}
+
 // Generate session ID from repo and branch
 function generateSessionId(repoPath: string, branch: string): string {
   const repoName = basename(repoPath)
@@ -294,6 +318,9 @@ export async function createWorktreeSession(
 }> {
   const config = loadConfig()
   
+  // Sanitize branch name for git compatibility
+  const sanitizedBranch = sanitizeBranchName(branch)
+  
   // Validate git is available and version is sufficient
   const gitCheck = await checkGitVersion()
   if (!gitCheck.supported) {
@@ -309,15 +336,15 @@ export async function createWorktreeSession(
   }
   
   // Check if branch is already in a worktree
-  const existingWorktree = await isBranchInWorktree(repoPath, branch)
+  const existingWorktree = await isBranchInWorktree(repoPath, sanitizedBranch)
   if (existingWorktree) {
     return { 
       success: false, 
-      error: `Branch '${branch}' is already checked out at: ${existingWorktree}` 
+      error: `Branch '${sanitizedBranch}' is already checked out at: ${existingWorktree}` 
     }
   }
   
-  const sessionId = generateSessionId(repoPath, branch)
+  const sessionId = generateSessionId(repoPath, sanitizedBranch)
   const worktreePath = join(getSessionsDir(config), sessionId)
   
   // Check if worktree directory already exists
@@ -336,14 +363,14 @@ export async function createWorktreeSession(
   
   // Create the worktree
   try {
-    const branchExistsLocal = await branchExists(repoPath, branch)
+    const branchExistsLocal = await branchExists(repoPath, sanitizedBranch)
     
     if (branchExistsLocal) {
       // Checkout existing branch
-      await execAsync(`git worktree add "${worktreePath}" "${branch}"`, { cwd: repoPath })
+      await execAsync(`git worktree add "${worktreePath}" "${sanitizedBranch}"`, { cwd: repoPath })
     } else {
       // Create new branch
-      await execAsync(`git worktree add -b "${branch}" "${worktreePath}"`, { cwd: repoPath })
+      await execAsync(`git worktree add -b "${sanitizedBranch}" "${worktreePath}"`, { cwd: repoPath })
     }
   } catch (error) {
     return { success: false, error: `Failed to create worktree: ${error}` }
@@ -353,7 +380,7 @@ export async function createWorktreeSession(
   const session: WorktreeSession = {
     id: sessionId,
     repoPath,
-    branch,
+    branch: sanitizedBranch,
     worktreePath,
     createdAt: new Date().toISOString(),
     lastAccessedAt: new Date().toISOString(),

@@ -52,11 +52,48 @@ vi.mock('fs', async (importOriginal) => {
 })
 
 // Import module under test after mocks are set up
-import { loadConfig, listWorktreeSessions } from './worktree'
+import { loadConfig, listWorktreeSessions, sanitizeBranchName } from './worktree'
 
 describe('worktree module', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  describe('sanitizeBranchName', () => {
+    it('should convert backslashes to forward slashes', () => {
+      expect(sanitizeBranchName('improvement\\remove-node-pty')).toBe('improvement/remove-node-pty')
+    })
+
+    it('should remove invalid characters', () => {
+      expect(sanitizeBranchName('feature:test')).toBe('feature-test')
+      expect(sanitizeBranchName('feature?test')).toBe('feature-test')
+      expect(sanitizeBranchName('feature*test')).toBe('feature-test')
+      expect(sanitizeBranchName('feature~test')).toBe('feature-test')
+      expect(sanitizeBranchName('feature^test')).toBe('feature-test')
+    })
+
+    it('should remove leading/trailing slashes and dots', () => {
+      expect(sanitizeBranchName('/feature/')).toBe('feature')
+      expect(sanitizeBranchName('.feature.')).toBe('feature')
+      expect(sanitizeBranchName('//feature//')).toBe('feature')
+    })
+
+    it('should replace consecutive slashes', () => {
+      expect(sanitizeBranchName('feature//test')).toBe('feature/test')
+    })
+
+    it('should handle .lock suffix', () => {
+      expect(sanitizeBranchName('feature.lock')).toBe('feature')
+    })
+
+    it('should return fallback for empty result', () => {
+      expect(sanitizeBranchName('/')).toBe('branch')
+      expect(sanitizeBranchName('.')).toBe('branch')
+    })
+
+    it('should handle complex Windows paths', () => {
+      expect(sanitizeBranchName('feature\\bug:fix?')).toBe('feature/bug-fix')
+    })
   })
 
   describe('generateSessionId', () => {
