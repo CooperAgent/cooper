@@ -62,6 +62,11 @@ const electronAPI = {
       ipcRenderer.on('copilot:ready', handler)
       return () => ipcRenderer.removeListener('copilot:ready', handler)
     },
+    onSessionResumed: (callback: (data: { session: { sessionId: string; model: string; cwd: string; name?: string; editedFiles?: string[]; alwaysAllowed?: string[] } }) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { session: { sessionId: string; model: string; cwd: string; name?: string; editedFiles?: string[]; alwaysAllowed?: string[] } }): void => callback(data)
+      ipcRenderer.on('copilot:sessionResumed', handler)
+      return () => ipcRenderer.removeListener('copilot:sessionResumed', handler)
+    },
     setModel: (sessionId: string, model: string): Promise<{ sessionId: string; model: string; cwd?: string }> => {
       return ipcRenderer.invoke('copilot:setModel', { sessionId, model })
     },

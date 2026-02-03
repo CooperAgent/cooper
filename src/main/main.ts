@@ -272,6 +272,7 @@ let mainWindow: BrowserWindow | null = null
 
 // Map of cwd -> CopilotClient (one client per unique working directory)
 const copilotClients = new Map<string, CopilotClient>()
+const inFlightCopilotClients = new Map<string, Promise<CopilotClient>>()
 
 // Resolve CLI path for packaged apps
 function getCliPath(): string | undefined {
@@ -300,23 +301,38 @@ function getCliPath(): string | undefined {
 
 // Get or create a CopilotClient for the given cwd
 async function getClientForCwd(cwd: string): Promise<CopilotClient> {
-  if (copilotClients.has(cwd)) {
-    return copilotClients.get(cwd)!
+  const existingClient = copilotClients.get(cwd)
+  if (existingClient) {
+    return existingClient
   }
   
-  console.log(`Creating new CopilotClient for cwd: ${cwd}`)
-  const cliPath = getCliPath()
-  
-  // Use augmented PATH so CLI can find gh for authentication
-  const env = getAugmentedEnv()
-  if (app.isPackaged) {
-    log.info('Using augmented PATH for packaged app')
+  const inFlightClient = inFlightCopilotClients.get(cwd)
+  if (inFlightClient) {
+    return inFlightClient
   }
   
-  const client = new CopilotClient({ cwd, cliPath, env })
-  await client.start()
-  copilotClients.set(cwd, client)
-  return client
+  const clientPromise = (async () => {
+    console.log(`Creating new CopilotClient for cwd: ${cwd}`)
+    const cliPath = getCliPath()
+    
+    // Use augmented PATH so CLI can find gh for authentication
+    const env = getAugmentedEnv()
+    if (app.isPackaged) {
+      log.info('Using augmented PATH for packaged app')
+    }
+    
+    const client = new CopilotClient({ cwd, cliPath, env })
+    await client.start()
+    copilotClients.set(cwd, client)
+    return client
+  })()
+  
+  inFlightCopilotClients.set(cwd, clientPromise)
+  try {
+    return await clientPromise
+  } finally {
+    inFlightCopilotClients.delete(cwd)
+  }
 }
 
 // Repair corrupted session events (duplicate tool_result bug)
@@ -589,6 +605,8 @@ const pendingPermissions = new Map<string, {
 // Track in-flight permission requests by session+executable to deduplicate parallel requests
 const inFlightPermissions = new Map<string, Promise<PermissionRequestResult>>()
 
+let defaultClient: CopilotClient | null = null
+
 // Model info with multipliers
 interface ModelInfo {
   id: string
@@ -632,35 +650,14 @@ function getVerifiedModels(): ModelInfo[] {
   return AVAILABLE_MODELS
 }
 
-// Verify which models are available for the current user by testing each one
+// Verify which models are available for the current user by fetching from the server
 async function verifyAvailableModels(client: CopilotClient): Promise<ModelInfo[]> {
   console.log('Starting model verification...')
-  const verified: ModelInfo[] = []
-  
-  for (const model of AVAILABLE_MODELS) {
-    try {
-      // Try to create a session with this model
-      const session = await client.createSession({ model: model.id })
-      // If successful, model is available - clean up immediately
-      await session.destroy()
-      // Try to delete session file, but don't fail if it doesn't exist
-      try {
-        await client.deleteSession(session.sessionId)
-      } catch {
-        // Session may already be deleted by destroy(), ignore
-      }
-      verified.push(model)
-      console.log(`✓ Model verified: ${model.id}`)
-    } catch (error) {
-      // Model not available for this user
-      console.log(`✗ Model unavailable: ${model.id}`, error instanceof Error ? error.message : error)
-    }
-  }
-  
-  // Cache the results
+  const available = await client.listModels()
+  const availableIds = new Set(available.map(m => m.id))
+  const verified = AVAILABLE_MODELS.filter(model => availableIds.has(model.id))
   verifiedModelsCache = { models: verified, timestamp: Date.now() }
   console.log(`Model verification complete: ${verified.length}/${AVAILABLE_MODELS.length} models available`)
-  
   return verified
 }
 
@@ -1194,7 +1191,7 @@ async function initCopilot(): Promise<void> {
   try {
     // Create a default client - use home dir for packaged app since process.cwd() can be '/'
     const defaultCwd = app.isPackaged ? app.getPath('home') : process.cwd()
-    const defaultClient = await getClientForCwd(defaultCwd)
+    defaultClient = await getClientForCwd(defaultCwd)
     
     // Check if we should use mock sessions for testing
     const useMockSessions = process.env.USE_MOCK_SESSIONS === 'true'
@@ -1274,20 +1271,20 @@ async function initCopilot(): Promise<void> {
     
     let resumedSessions: { sessionId: string; model: string; cwd: string; name?: string; editedFiles?: string[]; alwaysAllowed?: string[] }[] = []
     
-    // Resume only our open sessions with their stored models and cwd
-    for (const sessionId of sessionsToResume) {
-      const meta = sessionMetaMap.get(sessionId)!
+    // Load MCP servers config once for resumption
+    const mcpConfig = await readMcpConfig()
+    
+    // Resume only our open sessions with their stored models and cwd (in parallel, non-blocking)
+    const resumeSession = async (sessionId: string): Promise<void> => {
+      const meta = sessionMetaMap.get(sessionId)
       const storedSession = openSessionMap.get(sessionId)
+      const sessionModel = storedSession?.model || store.get('model') as string || 'gpt-5.2'
+      const sessionCwd = storedSession?.cwd || defaultCwd
+      const storedAlwaysAllowed = storedSession?.alwaysAllowed || []
+      
       try {
-        const sessionModel = storedSession?.model || store.get('model') as string || 'gpt-5.2'
-        const sessionCwd = storedSession?.cwd || defaultCwd
-        const storedAlwaysAllowed = storedSession?.alwaysAllowed || []
-        
         // Get or create client for this session's cwd
         const client = await getClientForCwd(sessionCwd)
-        
-        // Load MCP servers config
-        const mcpConfig = await readMcpConfig()
         
         const session = await client.resumeSession(sessionId, {
           mcpServers: mcpConfig.mcpServers,
@@ -1333,46 +1330,72 @@ async function initCopilot(): Promise<void> {
         // Restore alwaysAllowed set from stored data (normalize legacy ids)
         const alwaysAllowedSet = new Set(storedAlwaysAllowed.map(normalizeAlwaysAllowed))
         sessions.set(sessionId, { session, client, model: sessionModel, cwd: sessionCwd, alwaysAllowed: alwaysAllowedSet, allowedPaths: new Set(), isProcessing: false })
-        resumedSessions.push({ 
-          sessionId, 
+        
+        const resumed = {
+          sessionId,
           model: sessionModel,
           cwd: sessionCwd,
-          name: storedSession?.name || meta.summary || undefined,
+          name: storedSession?.name || meta?.summary || undefined,
           editedFiles: storedSession?.editedFiles || [],
           alwaysAllowed: storedAlwaysAllowed
-        })
-        console.log(`Resumed session ${sessionId} with model ${sessionModel} in ${sessionCwd}${meta.summary ? ` (${meta.summary})` : ''}`)
-      } catch (err) {
-        console.error(`Failed to resume session ${sessionId}:`, err)
+        }
+        resumedSessions.push(resumed)
+        console.log(`Resumed session ${resumed.sessionId} with model ${resumed.model} in ${resumed.cwd}${meta?.summary ? ` (${meta.summary})` : ''}`)
+        
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('copilot:sessionResumed', { session: resumed })
+        }
+      } catch (error) {
+        console.error(`Failed to resume session ${sessionId}:`, error)
       }
+    }
+    
+    for (const sessionId of sessionsToResume) {
+      void resumeSession(sessionId)
     }
     
     // If no sessions were resumed, don't create one automatically
     // The frontend will trigger creation which includes trust check
-    if (resumedSessions.length === 0) {
+    if (sessionsToResume.length === 0) {
       // Signal to frontend that it needs to create an initial session
       activeSessionId = null
     } else {
-      activeSessionId = resumedSessions[0].sessionId
+      activeSessionId = sessionsToResume[0] || null
     }
+
+    const pendingSessions = sessionsToResume.map((sessionId) => {
+      const meta = sessionMetaMap.get(sessionId)
+      const storedSession = openSessionMap.get(sessionId)
+      const sessionModel = storedSession?.model || store.get('model') as string || 'gpt-5.2'
+      const sessionCwd = storedSession?.cwd || defaultCwd
+      return {
+        sessionId,
+        model: sessionModel,
+        cwd: sessionCwd,
+        name: storedSession?.name || meta?.summary || undefined,
+        editedFiles: storedSession?.editedFiles || [],
+        alwaysAllowed: storedSession?.alwaysAllowed || []
+      }
+    })
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('copilot:ready', { 
-        sessions: resumedSessions,
+        sessions: pendingSessions,
         previousSessions,
         models: getVerifiedModels()
       })
     }
-    
+
     // Verify available models in background (non-blocking)
-    verifyAvailableModels(defaultClient).then(verifiedModels => {
-      // Notify frontend of updated model list after verification
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('copilot:modelsVerified', { models: verifiedModels })
-      }
-    }).catch(err => {
-      console.error('Model verification failed:', err)
-    })
+    if (defaultClient) {
+      verifyAvailableModels(defaultClient).then(verifiedModels => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('copilot:modelsVerified', { models: verifiedModels })
+        }
+      }).catch(err => {
+        console.error('Model verification failed:', err)
+      })
+    }
     
     // Start keep-alive timer to prevent session timeouts
     startKeepAlive()
@@ -3166,25 +3189,27 @@ if (!gotTheLock) {
   app.whenReady().then(() => {
     console.log('Baseline models:', AVAILABLE_MODELS.map(m => `${m.name} (${m.multiplier}×)`).join(', '))
     
-    // Clean up old cached images (older than 24 hours)
+    // Clean up old cached images async (non-blocking to improve startup time)
     const imageDir = join(app.getPath('home'), '.copilot', 'images')
-    if (existsSync(imageDir)) {
-      const now = Date.now()
-      const maxAge = 24 * 60 * 60 * 1000 // 24 hours
-      try {
-        const files = readdirSync(imageDir)
-        for (const file of files) {
-          const filePath = join(imageDir, file)
-          const stats = statSync(filePath)
-          if (now - stats.mtimeMs > maxAge) {
-            unlinkSync(filePath)
-            log.info(`Cleaned up old image: ${file}`)
+    setImmediate(() => {
+      if (existsSync(imageDir)) {
+        const now = Date.now()
+        const maxAge = 24 * 60 * 60 * 1000 // 24 hours
+        try {
+          const files = readdirSync(imageDir)
+          for (const file of files) {
+            const filePath = join(imageDir, file)
+            const stats = statSync(filePath)
+            if (now - stats.mtimeMs > maxAge) {
+              unlinkSync(filePath)
+              log.info(`Cleaned up old image: ${file}`)
+            }
           }
+        } catch (err) {
+          log.error('Failed to clean up old images:', err)
         }
-      } catch (err) {
-        log.error('Failed to clean up old images:', err)
       }
-    }
+    })
     
     createWindow()
 
@@ -3631,4 +3656,3 @@ function compareVersions(a: string, b: string): number {
   }
   return 0
 }
-
