@@ -457,8 +457,8 @@ const electronAPI = {
     }> => {
       return ipcRenderer.invoke('file:readContent', filePath)
     },
-    revealInFolder: (filePath: string): Promise<{ success: boolean; error?: string }> => {
-      return ipcRenderer.invoke('file:revealInFolder', filePath)
+    revealInFolder: (filePath: string, cwd?: string): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('file:revealInFolder', { filePath, cwd })
     },
     openFile: (filePath: string): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('file:openFile', filePath)

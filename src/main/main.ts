@@ -3528,12 +3528,16 @@ ipcMain.handle('file:readContent', async (_event, filePath: string) => {
 })
 
 // File operations - reveal file in system file explorer
-ipcMain.handle('file:revealInFolder', async (_event, filePath: string) => {
+ipcMain.handle('file:revealInFolder', async (_event, { filePath, cwd }: { filePath: string; cwd?: string }) => {
   try {
-    if (!existsSync(filePath)) {
+    // Resolve to absolute path if cwd is provided and filePath is relative
+    const absolutePath = cwd && !path.isAbsolute(filePath)
+      ? path.join(cwd, filePath)
+      : filePath
+    if (!existsSync(absolutePath)) {
       return { success: false, error: 'File not found' }
     }
-    shell.showItemInFolder(filePath)
+    shell.showItemInFolder(absolutePath)
     return { success: true }
   } catch (error) {
     console.error('Failed to reveal file:', error)
