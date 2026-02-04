@@ -1270,13 +1270,15 @@ async function initCopilot(): Promise<void> {
     // Get stored session cwds for previous sessions (use mock cwds if in test mode)
     const sessionCwds = useMockSessions ? mockSessionCwds : (store.get('sessionCwds') as Record<string, string> || {})
     const sessionMarks = store.get('sessionMarks') as Record<string, { markedForReview?: boolean; reviewNote?: string }> || {}
+    const sessionNames = store.get('sessionNames') as Record<string, string> || {}
     
     // Build list of previous sessions (all sessions not in our open list)
+    // Use stored session name first (preserves user renames), then SDK summary as fallback
     const previousSessions = allSessions
       .filter(s => !openSessionIds.includes(s.sessionId))
       .map(s => ({ 
         sessionId: s.sessionId, 
-        name: s.summary || undefined, 
+        name: sessionNames[s.sessionId] || s.summary || undefined, 
         modifiedTime: s.modifiedTime.toISOString(), 
         cwd: sessionCwds[s.sessionId],
         markedForReview: sessionMarks[s.sessionId]?.markedForReview,
@@ -2084,6 +2086,19 @@ ipcMain.handle('copilot:deleteSessionFromHistory', async (_event, sessionId: str
       console.log(`Deleted session-state folder for ${sessionId}`)
     }
     
+    // Clean up stored session metadata
+    const sessionNames = store.get('sessionNames') as Record<string, string> || {}
+    delete sessionNames[sessionId]
+    store.set('sessionNames', sessionNames)
+    
+    const sessionMarks = store.get('sessionMarks') as Record<string, { markedForReview?: boolean; reviewNote?: string }> || {}
+    delete sessionMarks[sessionId]
+    store.set('sessionMarks', sessionMarks)
+    
+    const sessionCwds = store.get('sessionCwds') as Record<string, string> || {}
+    delete sessionCwds[sessionId]
+    store.set('sessionCwds', sessionCwds)
+    
     console.log(`Deleted session ${sessionId} from history`)
     return { success: true }
   } catch (error) {
@@ -2240,6 +2255,15 @@ ipcMain.handle('copilot:saveOpenSessions', async (_event, openSessions: StoredSe
   }
   store.set('sessionMarks', sessionMarks)
   
+  // Persist session names so they survive when sessions move to history
+  const sessionNames = store.get('sessionNames') as Record<string, string> || {}
+  for (const session of openSessions) {
+    if (session.name) {
+      sessionNames[session.sessionId] = session.name
+    }
+  }
+  store.set('sessionNames', sessionNames)
+  
   console.log(`Saved ${openSessions.length} open sessions with models`)
   return { success: true }
 })
@@ -2250,6 +2274,12 @@ ipcMain.handle('copilot:renameSession', async (_event, data: { sessionId: string
     s.sessionId === data.sessionId ? { ...s, name: data.name } : s
   )
   store.set('openSessions', updated)
+  
+  // Also persist to sessionNames for when session moves to history
+  const sessionNames = store.get('sessionNames') as Record<string, string> || {}
+  sessionNames[data.sessionId] = data.name
+  store.set('sessionNames', sessionNames)
+  
   console.log(`Renamed session ${data.sessionId} to ${data.name}`)
   return { success: true }
 })
