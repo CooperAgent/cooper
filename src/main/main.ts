@@ -613,6 +613,166 @@ const inFlightPermissions = new Map<string, Promise<PermissionRequestResult>>()
 
 let defaultClient: CopilotClient | null = null
 
+// Early client initialization promise - starts before window load completes
+// This saves ~500ms by running client.start() in parallel with window rendering
+let earlyClientPromise: Promise<CopilotClient> | null = null
+
+// Early session resumption - starts resuming stored sessions in parallel with window loading
+// This can save several seconds since session resumption involves network calls
+interface EarlyResumedSession {
+  sessionId: string
+  model: string
+  cwd: string
+  name?: string
+  editedFiles?: string[]
+  alwaysAllowed?: string[]
+  untrackedFiles?: string[]
+  fileViewMode?: 'flat' | 'tree'
+  messages?: { role: 'user' | 'assistant'; content: string }[]  // Pre-loaded messages
+}
+let earlyResumedSessions: EarlyResumedSession[] = []
+let earlyResumptionComplete = false
+let earlyResumptionPromise: Promise<void> | null = null
+
+function startEarlyClientInit(): void {
+  const defaultCwd = app.isPackaged ? app.getPath('home') : process.cwd()
+  earlyClientPromise = getClientForCwd(defaultCwd)
+  earlyClientPromise.catch(err => {
+    console.error('Early client init failed:', err)
+  })
+}
+
+// Start resuming stored sessions early - runs in parallel with window loading
+async function startEarlySessionResumption(): Promise<void> {
+  const openSessions = store.get('openSessions') as StoredSession[] || []
+  if (openSessions.length === 0) {
+    earlyResumptionComplete = true
+    return
+  }
+  
+  try {
+    // Wait for client to be ready
+    if (!earlyClientPromise) {
+      return
+    }
+    const client = await earlyClientPromise
+    
+    // Load MCP config
+    const mcpConfig = await readMcpConfig()
+    
+    // Resume sessions in parallel
+    const resumePromises = openSessions.map(async (storedSession) => {
+      const { sessionId, model, cwd, name, editedFiles, alwaysAllowed, untrackedFiles, fileViewMode } = storedSession
+      const sessionCwd = cwd || (app.isPackaged ? app.getPath('home') : process.cwd())
+      const sessionModel = model || store.get('model') as string || 'gpt-5.2'
+      const storedAlwaysAllowed = alwaysAllowed || []
+      
+      try {
+        // Get or create client for this session's cwd
+        const sessionClient = await getClientForCwd(sessionCwd)
+        
+        const session = await sessionClient.resumeSession(sessionId, {
+          mcpServers: mcpConfig.mcpServers,
+          tools: createBrowserTools(sessionId),
+          onPermissionRequest: (request, invocation) => handlePermissionRequest(request, invocation, sessionId)
+        })
+        
+        // Set up event handler
+        session.on((event) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return
+          
+          console.log(`[${sessionId}] Event:`, event.type)
+          
+          if (event.type === 'assistant.message_delta') {
+            mainWindow.webContents.send('copilot:delta', { sessionId, content: event.data.deltaContent })
+          } else if (event.type === 'assistant.message') {
+            mainWindow.webContents.send('copilot:message', { sessionId, content: event.data.content })
+          } else if (event.type === 'session.idle') {
+            const currentSessionState = sessions.get(sessionId)
+            if (currentSessionState) currentSessionState.isProcessing = false
+            mainWindow.webContents.send('copilot:idle', { sessionId })
+            bounceDock()
+          } else if (event.type === 'tool.execution_start') {
+            console.log(`[${sessionId}] Tool start FULL:`, JSON.stringify(event.data, null, 2))
+            mainWindow.webContents.send('copilot:tool-start', { 
+              sessionId, 
+              toolCallId: event.data.toolCallId, 
+              toolName: event.data.toolName,
+              input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>)
+            })
+          } else if (event.type === 'tool.execution_complete') {
+            console.log(`[${sessionId}] Tool end FULL:`, JSON.stringify(event.data, null, 2))
+            mainWindow.webContents.send('copilot:tool-end', { 
+              sessionId, 
+              toolCallId: event.data.toolCallId, 
+              toolName: event.data.toolName,
+              input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
+              output: event.data.output
+            })
+          }
+        })
+        
+        // Store in sessions map
+        const alwaysAllowedSet = new Set(storedAlwaysAllowed.map(normalizeAlwaysAllowed))
+        sessions.set(sessionId, { session, client: sessionClient, model: sessionModel, cwd: sessionCwd, alwaysAllowed: alwaysAllowedSet, allowedPaths: new Set(), isProcessing: false })
+        
+        console.log(`Early resumed session ${sessionId}`)
+        
+        // Pre-load messages while we're at it (saves another network round-trip later)
+        let messages: { role: 'user' | 'assistant'; content: string }[] = []
+        try {
+          const events = await session.getMessages()
+          for (const event of events) {
+            if (event.type === 'user.message') {
+              messages.push({ role: 'user', content: event.data.content })
+            } else if (event.type === 'assistant.message') {
+              messages.push({ role: 'assistant', content: event.data.content })
+            }
+          }
+          console.log(`Pre-loaded ${messages.length} messages for session ${sessionId}`)
+        } catch (msgError) {
+          console.error(`Failed to pre-load messages for ${sessionId}:`, msgError)
+        }
+        
+        const resumed: EarlyResumedSession = {
+          sessionId,
+          model: sessionModel,
+          cwd: sessionCwd,
+          name,
+          editedFiles: editedFiles || [],
+          alwaysAllowed: storedAlwaysAllowed,
+          untrackedFiles: untrackedFiles || [],
+          fileViewMode: fileViewMode || 'flat',
+          messages
+        }
+        earlyResumedSessions.push(resumed)
+        
+        // If window is ready, notify it immediately
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('copilot:sessionResumed', { session: resumed })
+        }
+        
+        return resumed
+      } catch (error) {
+        // Session doesn't exist anymore - remove it from stored openSessions
+        const currentOpenSessions = store.get('openSessions') as StoredSession[] || []
+        const filteredSessions = currentOpenSessions.filter(s => s.sessionId !== sessionId)
+        if (filteredSessions.length !== currentOpenSessions.length) {
+          store.set('openSessions', filteredSessions)
+          console.log(`Removed stale session ${sessionId} from openSessions`)
+        }
+        return null
+      }
+    })
+    
+    await Promise.all(resumePromises)
+  } catch (error) {
+    console.error('Early session resumption failed:', error)
+  } finally {
+    earlyResumptionComplete = true
+  }
+}
+
 // Model info with multipliers
 interface ModelInfo {
   id: string
@@ -1195,9 +1355,14 @@ Browser tools available: browser_navigate, browser_click, browser_fill, browser_
 
 async function initCopilot(): Promise<void> {
   try {
-    // Create a default client - use home dir for packaged app since process.cwd() can be '/'
-    const defaultCwd = app.isPackaged ? app.getPath('home') : process.cwd()
-    defaultClient = await getClientForCwd(defaultCwd)
+    // Use early-initialized client if available (saves ~500ms by running parallel with window load)
+    if (earlyClientPromise) {
+      defaultClient = await earlyClientPromise
+    } else {
+      // Fallback to creating client now
+      const defaultCwd = app.isPackaged ? app.getPath('home') : process.cwd()
+      defaultClient = await getClientForCwd(defaultCwd)
+    }
     
     // Check if we should use mock sessions for testing
     const useMockSessions = process.env.USE_MOCK_SESSIONS === 'true'
@@ -1287,10 +1452,16 @@ async function initCopilot(): Promise<void> {
     
     let resumedSessions: { sessionId: string; model: string; cwd: string; name?: string; editedFiles?: string[]; alwaysAllowed?: string[]; untrackedFiles?: string[] }[] = []
     
-    // Load MCP servers config once for resumption
-    const mcpConfig = await readMcpConfig()
+    // Check which sessions were already resumed early
+    const alreadyResumedIds = new Set(earlyResumedSessions.map(s => s.sessionId))
+    const sessionsNeedingResumption = sessionsToResume.filter(id => !alreadyResumedIds.has(id))
+    console.log('Already resumed early:', [...alreadyResumedIds])
+    console.log('Sessions still needing resumption:', sessionsNeedingResumption)
     
-    // Resume only our open sessions with their stored models and cwd (in parallel, non-blocking)
+    // Load MCP servers config once for resumption (only if we need to resume more sessions)
+    const mcpConfig = sessionsNeedingResumption.length > 0 ? await readMcpConfig() : { mcpServers: {} }
+    
+    // Resume only sessions that weren't resumed early
     const resumeSession = async (sessionId: string): Promise<void> => {
       const meta = sessionMetaMap.get(sessionId)
       const storedSession = openSessionMap.get(sessionId)
@@ -1368,7 +1539,8 @@ async function initCopilot(): Promise<void> {
       }
     }
     
-    for (const sessionId of sessionsToResume) {
+    // Only resume sessions that weren't already resumed early
+    for (const sessionId of sessionsNeedingResumption) {
       void resumeSession(sessionId)
     }
     
@@ -1404,6 +1576,11 @@ async function initCopilot(): Promise<void> {
         previousSessions,
         models: getVerifiedModels()
       })
+      
+      // Notify about sessions that were already resumed early (window wasn't ready when they completed)
+      for (const session of earlyResumedSessions) {
+        mainWindow.webContents.send('copilot:sessionResumed', { session })
+      }
     }
 
     // Verify available models in background (non-blocking)
@@ -3358,6 +3535,14 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(() => {
+    // Start CopilotClient initialization early - runs in parallel with window load
+    // This saves ~500ms by not waiting for the renderer to finish loading first
+    startEarlyClientInit()
+    
+    // Start session resumption early - runs in parallel with window load
+    // This saves several seconds since session resumption involves network calls
+    earlyResumptionPromise = startEarlySessionResumption()
+    
     console.log('Baseline models:', AVAILABLE_MODELS.map(m => `${m.name} (${m.multiplier}×)`).join(', '))
     
     // Set up custom application menu
@@ -3540,8 +3725,8 @@ ipcMain.handle('worktree:removeSession', async (_event, data: {
 })
 
 // List all worktree sessions
-ipcMain.handle('worktree:listSessions', async () => {
-  return worktree.listWorktreeSessions()
+ipcMain.handle('worktree:listSessions', async (_event, options?: { includeDiskUsage?: boolean }) => {
+  return worktree.listWorktreeSessions(options)
 })
 
 // Get a specific session

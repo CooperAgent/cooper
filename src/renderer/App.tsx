@@ -1097,17 +1097,22 @@ const App: React.FC = () => {
         setStatus("connected");
         setAvailableModels(data.models);
         
-        // Enrich previous sessions with worktree metadata
-        const enrichedSessions = await enrichSessionsWithWorktreeData(data.previousSessions);
-        setPreviousSessions(enrichedSessions);
+        // Set previous sessions immediately (without worktree enrichment for fast startup)
+        setPreviousSessions(data.previousSessions);
+        
+        // Enrich previous sessions with worktree metadata in background (non-blocking)
+        enrichSessionsWithWorktreeData(data.previousSessions).then(enrichedSessions => {
+          setPreviousSessions(enrichedSessions);
+        }).catch(err => {
+          console.error("Failed to enrich sessions with worktree data:", err);
+        });
 
-        // Load global safe commands
-        try {
-          const globalCommands = await window.electronAPI.copilot.getGlobalSafeCommands();
+        // Load global safe commands in background (non-blocking)
+        window.electronAPI.copilot.getGlobalSafeCommands().then(globalCommands => {
           setGlobalSafeCommands(globalCommands);
-        } catch (error) {
+        }).catch(error => {
           console.error("Failed to load global safe commands:", error);
-        }
+        });
 
         // If no sessions exist, we need to create one (with trust check)
         if (data.sessions.length === 0) {
@@ -1154,43 +1159,128 @@ const App: React.FC = () => {
         }
 
         // Create tabs for all resumed/created sessions
-        const initialTabs: TabState[] = data.sessions.map((s, idx) => {
-          // Restore lisaConfig from sessionStorage if available
-          const storedLisaConfig = sessionStorage.getItem(`lisaConfig-${s.sessionId}`);
-          const lisaConfig = storedLisaConfig ? JSON.parse(storedLisaConfig) : undefined;
+        // Note: These are "pending" sessions - they will be fully resumed asynchronously
+        // Message loading happens in the copilot:sessionResumed handler below
+        // IMPORTANT: We must preserve any existing tabs that may have already been created
+        // by early sessionResumed events (with pre-loaded messages)
+        setTabs((existingTabs) => {
+          const existingTabIds = new Set(existingTabs.map(t => t.id));
           
-          return {
-            id: s.sessionId,
-            name: s.name || `Session ${idx + 1}`,
-            messages: [], // Will be loaded below
-            model: s.model,
-            cwd: s.cwd,
-            isProcessing: false,
-            activeTools: [],
-            hasUnreadCompletion: false,
-            pendingConfirmations: [],
-            needsTitle: !s.name, // Only need title if no name provided
-            alwaysAllowed: s.alwaysAllowed || [],
-            editedFiles: s.editedFiles || [],
-            untrackedFiles: s.untrackedFiles || [],
-            fileViewMode: s.fileViewMode || 'flat',
-            currentIntent: null,
-            currentIntentTimestamp: null,
-            gitBranchRefresh: 0,
-            lisaConfig,
-            markedForReview: s.markedForReview,
-            reviewNote: s.reviewNote,
-          };
+          // Create new tabs only for sessions that don't already have a tab
+          const newTabs: TabState[] = data.sessions
+            .filter(s => !existingTabIds.has(s.sessionId))
+            .map((s, idx) => {
+              // Restore lisaConfig from sessionStorage if available
+              const storedLisaConfig = sessionStorage.getItem(`lisaConfig-${s.sessionId}`);
+              const lisaConfig = storedLisaConfig ? JSON.parse(storedLisaConfig) : undefined;
+              
+              return {
+                id: s.sessionId,
+                name: s.name || `Session ${existingTabs.length + idx + 1}`,
+                messages: [], // Will be loaded when session is actually resumed (copilot:sessionResumed)
+                model: s.model,
+                cwd: s.cwd,
+                isProcessing: false,
+                activeTools: [],
+                hasUnreadCompletion: false,
+                pendingConfirmations: [],
+                needsTitle: !s.name, // Only need title if no name provided
+                alwaysAllowed: s.alwaysAllowed || [],
+                editedFiles: s.editedFiles || [],
+                untrackedFiles: s.untrackedFiles || [],
+                fileViewMode: s.fileViewMode || 'flat',
+                currentIntent: null,
+                currentIntentTimestamp: null,
+                gitBranchRefresh: 0,
+                lisaConfig,
+                markedForReview: s.markedForReview,
+                reviewNote: s.reviewNote,
+              };
+            });
+          
+          // Merge: keep existing tabs (with their messages), add new ones
+          return [...existingTabs, ...newTabs];
         });
 
         // Update tab counter to avoid duplicate names
         setTabCounter(data.sessions.length);
 
-        setTabs(initialTabs);
-        setActiveTabId(data.sessions[0]?.sessionId || null);
+        // Set active tab if not already set
+        setActiveTabId((currentActive) => currentActive || data.sessions[0]?.sessionId || null);
 
-        // Load message history and attachments for each session
-        for (const s of data.sessions) {
+        // Don't load messages here - sessions are still pending resumption
+        // The copilot:sessionResumed handler below will load messages when each session is actually ready
+        
+        // Mark data as loaded for wizard
+        setDataLoaded(true);
+      },
+    );
+
+    const unsubscribeSessionResumed = window.electronAPI.copilot.onSessionResumed(
+      (data) => {
+        const s = data.session;
+        
+        // Check if messages were pre-loaded (early resumption includes them)
+        const preloadedMessages = s.messages || [];
+        
+        // Add tab if it doesn't exist yet (this can happen if session was resumed before copilot:ready)
+        setTabs((prev) => {
+          if (prev.some((tab) => tab.id === s.sessionId)) {
+            // Tab exists, update with pre-loaded messages if available
+            if (preloadedMessages.length > 0) {
+              return prev.map((tab) =>
+                tab.id === s.sessionId
+                  ? {
+                      ...tab,
+                      messages: preloadedMessages.map((m, i) => ({
+                        id: `hist-${i}`,
+                        ...m,
+                        isStreaming: false,
+                      })),
+                      needsTitle: false,
+                    }
+                  : tab,
+              );
+            }
+            return prev;
+          }
+          const storedLisaConfig = sessionStorage.getItem(`lisaConfig-${s.sessionId}`);
+          const lisaConfig = storedLisaConfig ? JSON.parse(storedLisaConfig) : undefined;
+          return [
+            ...prev,
+            {
+              id: s.sessionId,
+              name: s.name || `Session ${prev.length + 1}`,
+              messages: preloadedMessages.map((m, i) => ({
+                id: `hist-${i}`,
+                ...m,
+                isStreaming: false,
+              })),
+              model: s.model,
+              cwd: s.cwd,
+              isProcessing: false,
+              activeTools: [],
+              hasUnreadCompletion: false,
+              pendingConfirmations: [],
+              needsTitle: !s.name && preloadedMessages.length === 0,
+              alwaysAllowed: s.alwaysAllowed || [],
+              editedFiles: s.editedFiles || [],
+              untrackedFiles: s.untrackedFiles || [],
+              fileViewMode: s.fileViewMode || 'flat',
+              currentIntent: null,
+              currentIntentTimestamp: null,
+              gitBranchRefresh: 0,
+              lisaConfig,
+            },
+          ];
+        });
+
+        // Only set active tab if none is set yet (don't switch tabs when loading in background)
+        setActiveTabId((currentActive) => currentActive || s.sessionId);
+
+        // Only fetch messages if they weren't pre-loaded
+        if (preloadedMessages.length === 0) {
+          // Load messages now that the session is actually resumed and ready
           Promise.all([
             window.electronAPI.copilot.getMessages(s.sessionId),
             window.electronAPI.copilot.loadMessageAttachments(s.sessionId),
@@ -1198,9 +1288,8 @@ const App: React.FC = () => {
             .then(([messages, attachmentsResult]) => {
               if (messages.length > 0) {
                 const attachmentMap = new Map(
-                  attachmentsResult.attachments.map(a => [a.messageIndex, a])
+                  attachmentsResult.attachments.map((a) => [a.messageIndex, a]),
                 );
-                
                 setTabs((prev) =>
                   prev.map((tab) =>
                     tab.id === s.sessionId
@@ -1226,83 +1315,33 @@ const App: React.FC = () => {
             .catch((err) =>
               console.error(`Failed to load history for ${s.sessionId}:`, err),
             );
+        } else {
+          // Still load attachments for pre-loaded messages
+          window.electronAPI.copilot.loadMessageAttachments(s.sessionId)
+            .then((attachmentsResult) => {
+              if (attachmentsResult.attachments.length > 0) {
+                const attachmentMap = new Map(
+                  attachmentsResult.attachments.map((a) => [a.messageIndex, a]),
+                );
+                setTabs((prev) =>
+                  prev.map((tab) =>
+                    tab.id === s.sessionId
+                      ? {
+                          ...tab,
+                          messages: tab.messages.map((m, i) => {
+                            const att = attachmentMap.get(i);
+                            return att ? { ...m, imageAttachments: att.imageAttachments, fileAttachments: att.fileAttachments } : m;
+                          }),
+                        }
+                      : tab,
+                  ),
+                );
+              }
+            })
+            .catch((err) =>
+              console.error(`Failed to load attachments for ${s.sessionId}:`, err),
+            );
         }
-        
-        // Mark data as loaded for wizard
-        setDataLoaded(true);
-      },
-    );
-
-    const unsubscribeSessionResumed = window.electronAPI.copilot.onSessionResumed(
-      (data) => {
-        const s = data.session;
-        setTabs((prev) => {
-          if (prev.some((tab) => tab.id === s.sessionId)) return prev;
-          const storedLisaConfig = sessionStorage.getItem(`lisaConfig-${s.sessionId}`);
-          const lisaConfig = storedLisaConfig ? JSON.parse(storedLisaConfig) : undefined;
-          return [
-            ...prev,
-            {
-              id: s.sessionId,
-              name: s.name || `Session ${prev.length + 1}`,
-              messages: [],
-              model: s.model,
-              cwd: s.cwd,
-              isProcessing: false,
-              activeTools: [],
-              hasUnreadCompletion: false,
-              pendingConfirmations: [],
-              needsTitle: !s.name,
-              alwaysAllowed: s.alwaysAllowed || [],
-              editedFiles: s.editedFiles || [],
-              untrackedFiles: s.untrackedFiles || [],
-              fileViewMode: s.fileViewMode || 'flat',
-              currentIntent: null,
-              currentIntentTimestamp: null,
-              gitBranchRefresh: 0,
-              lisaConfig,
-            },
-          ];
-        });
-
-        if (!activeTabId) {
-          setActiveTabId(s.sessionId);
-        }
-
-        Promise.all([
-          window.electronAPI.copilot.getMessages(s.sessionId),
-          window.electronAPI.copilot.loadMessageAttachments(s.sessionId),
-        ])
-          .then(([messages, attachmentsResult]) => {
-            if (messages.length > 0) {
-              const attachmentMap = new Map(
-                attachmentsResult.attachments.map((a) => [a.messageIndex, a]),
-              );
-              setTabs((prev) =>
-                prev.map((tab) =>
-                  tab.id === s.sessionId
-                    ? {
-                        ...tab,
-                        messages: messages.map((m, i) => {
-                          const att = attachmentMap.get(i);
-                          return {
-                            id: `hist-${i}`,
-                            ...m,
-                            isStreaming: false,
-                            imageAttachments: att?.imageAttachments,
-                            fileAttachments: att?.fileAttachments,
-                          };
-                        }),
-                        needsTitle: false,
-                      }
-                    : tab,
-                ),
-              );
-            }
-          })
-          .catch((err) =>
-            console.error(`Failed to load history for ${s.sessionId}:`, err),
-          );
       },
     );
 

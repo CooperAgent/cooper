@@ -469,7 +469,7 @@ export async function removeWorktreeSession(
 /**
  * List all worktree sessions
  */
-export function listWorktreeSessions(): {
+export function listWorktreeSessions(options: { includeDiskUsage?: boolean } = {}): {
   sessions: Array<WorktreeSession & { diskUsage: string }>
   totalDiskUsage: string
 } {
@@ -479,19 +479,20 @@ export function listWorktreeSessions(): {
   const sessions = registry.sessions.map(session => {
     // Check if worktree still exists
     const exists = existsSync(session.worktreePath)
-    const diskBytes = exists ? getDiskUsage(session.worktreePath) : 0
+    // Skip disk usage calculation by default (it's slow and blocks the main thread)
+    const diskBytes = (options.includeDiskUsage && exists) ? getDiskUsage(session.worktreePath) : 0
     totalBytes += diskBytes
     
     return {
       ...session,
       status: exists ? session.status : 'orphaned' as const,
-      diskUsage: formatBytes(diskBytes)
+      diskUsage: options.includeDiskUsage ? formatBytes(diskBytes) : 'Calculating...'
     }
   })
   
   return {
     sessions,
-    totalDiskUsage: formatBytes(totalBytes)
+    totalDiskUsage: options.includeDiskUsage ? formatBytes(totalBytes) : 'Calculating...'
   }
 }
 

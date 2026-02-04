@@ -144,6 +144,15 @@ describe('worktree module', () => {
       const result = listWorktreeSessions()
       
       expect(result.sessions).toEqual([])
+      expect(result.totalDiskUsage).toBe('Calculating...')
+    })
+
+    it('should return disk usage when includeDiskUsage is true and no sessions exist', () => {
+      mocks.existsSync.mockReturnValue(false)
+
+      const result = listWorktreeSessions({ includeDiskUsage: true })
+      
+      expect(result.sessions).toEqual([])
       expect(result.totalDiskUsage).toBe('0 B')
     })
 
