@@ -77,10 +77,21 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
           })
           setFileContent(null)
         } else {
-          setFileDiff({
-            success: false,
-            error: result.error || 'Failed to load diff',
-          })
+          // No diff available (e.g., untracked new file) - fall back to file content
+          const absolutePath = !filePath.startsWith('/') && !filePath.match(/^[a-zA-Z]:/)
+            ? `${cwd}/${filePath}`
+            : filePath
+          const contentResult = await window.electronAPI.file.readContent(absolutePath)
+          if (contentResult.success) {
+            setFileContent(contentResult)
+            setFileDiff({ success: true, isNew: true, linesAdded: contentResult.content?.split('\n').length || 0, linesRemoved: 0 })
+          } else {
+            setFileDiff({
+              success: false,
+              error: result.error || contentResult.error || 'Failed to load file',
+            })
+            setFileContent(null)
+          }
         }
       } else {
         // Not in a git repo, load file content directly
