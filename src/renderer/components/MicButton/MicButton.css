@@ -56,6 +56,23 @@
   border: 1px solid var(--color-danger, #f85149);
 }
 
+/* Always listening standby state - purple */
+.mic-button.always-on {
+  background: #8b5cf6;
+  color: white;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+  animation: purple-pulse 2s ease-in-out infinite;
+}
+
+@keyframes purple-pulse {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(139, 92, 246, 0.7);
+  }
+}
+
 .mic-recording-indicator {
   position: relative;
   display: flex;

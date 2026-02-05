@@ -16,6 +16,9 @@ interface VoiceKeywordsPanelProps {
   onToggleMute: () => void;
   pushToTalk: boolean;
   onTogglePushToTalk: (enabled: boolean) => void;
+  alwaysListening: boolean;
+  onToggleAlwaysListening: (enabled: boolean) => void;
+  alwaysListeningError?: string | null;
 }
 
 interface KeywordGroupProps {
@@ -51,6 +54,9 @@ export const VoiceKeywordsPanel: React.FC<VoiceKeywordsPanelProps> = ({
   onToggleMute,
   pushToTalk,
   onTogglePushToTalk,
+  alwaysListening,
+  onToggleAlwaysListening,
+  alwaysListeningError,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -88,19 +94,40 @@ export const VoiceKeywordsPanel: React.FC<VoiceKeywordsPanelProps> = ({
         <div className="px-3 pb-3">
           {/* Settings */}
           <div className="mb-3 space-y-2">
+            {/* Always Listening toggle */}
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-copilot-text-muted">Always Listening</span>
+              <button
+                onClick={() => onToggleAlwaysListening(!alwaysListening)}
+                className={`relative w-8 h-4 rounded-full transition-colors ${
+                  alwaysListening ? 'bg-copilot-success' : 'bg-copilot-surface'
+                }`}
+                title={alwaysListening ? 'Listening for wake words' : 'Manual activation only'}
+              >
+                <span
+                  className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                    alwaysListening ? 'left-4' : 'left-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+
             {/* Push to Talk toggle */}
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-copilot-text-muted">Push to Talk</span>
               <button
                 onClick={() => onTogglePushToTalk(!pushToTalk)}
+                disabled={alwaysListening}
                 className={`relative w-8 h-4 rounded-full transition-colors ${
-                  pushToTalk ? 'bg-copilot-accent' : 'bg-copilot-surface'
+                  alwaysListening 
+                    ? 'bg-copilot-surface/50 cursor-not-allowed' 
+                    : pushToTalk ? 'bg-copilot-accent' : 'bg-copilot-surface'
                 }`}
-                title={pushToTalk ? 'Hold to record' : 'Click to start/stop'}
+                title={alwaysListening ? 'Disabled when Always Listening' : pushToTalk ? 'Hold to record' : 'Click to start/stop'}
               >
                 <span
                   className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
-                    pushToTalk ? 'left-4' : 'left-0.5'
+                    pushToTalk && !alwaysListening ? 'left-4' : 'left-0.5'
                   }`}
                 />
               </button>
@@ -132,9 +159,11 @@ export const VoiceKeywordsPanel: React.FC<VoiceKeywordsPanelProps> = ({
                   ? 'bg-copilot-error animate-pulse' 
                   : isSpeaking 
                     ? 'bg-copilot-warning animate-pulse'
-                    : modelLoaded
-                      ? 'bg-copilot-success'
-                      : 'bg-copilot-text-muted'
+                    : alwaysListening && modelLoaded
+                      ? 'bg-copilot-success animate-pulse'
+                      : modelLoaded
+                        ? 'bg-copilot-success'
+                        : 'bg-copilot-text-muted'
             }`} />
             <span className="text-copilot-text-muted">
               {isModelLoading 
@@ -143,9 +172,11 @@ export const VoiceKeywordsPanel: React.FC<VoiceKeywordsPanelProps> = ({
                   ? 'Recording...' 
                   : isSpeaking 
                     ? 'Speaking...' 
-                    : modelLoaded 
-                      ? 'Ready (Offline)' 
-                      : 'Initializing...'}
+                    : alwaysListening && modelLoaded
+                      ? 'Listening for wake words...'
+                      : modelLoaded 
+                        ? 'Ready (Offline)' 
+                        : 'Initializing...'}
             </span>
           </div>
 
@@ -153,6 +184,13 @@ export const VoiceKeywordsPanel: React.FC<VoiceKeywordsPanelProps> = ({
           {error && (
             <div className="text-[10px] text-copilot-error mb-2 p-1.5 bg-copilot-error/10 rounded">
               {error}
+            </div>
+          )}
+          
+          {/* Always listening error */}
+          {alwaysListening && alwaysListeningError && (
+            <div className="text-[10px] text-copilot-warning mb-2 p-1.5 bg-copilot-warning/10 rounded">
+              ⚠️ {alwaysListeningError}
             </div>
           )}
 
@@ -182,9 +220,11 @@ export const VoiceKeywordsPanel: React.FC<VoiceKeywordsPanelProps> = ({
 
           {/* Usage hint */}
           <div className="mt-2 pt-2 border-t border-copilot-surface text-[9px] text-copilot-text-muted">
-            {pushToTalk 
-              ? 'Hold mic button to record. Release to transcribe.'
-              : 'Click mic to start recording. Click again to stop and transcribe.'}
+            {alwaysListening 
+              ? 'Say a wake word to start recording. Say "stop" or "done" to transcribe.'
+              : pushToTalk 
+                ? 'Hold mic button to record. Release to transcribe.'
+                : 'Click mic to start recording. Click again to stop and transcribe.'}
           </div>
         </div>
       )}

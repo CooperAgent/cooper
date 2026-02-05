@@ -664,10 +664,78 @@ const App: React.FC = () => {
     return saved === 'true';
   });
 
+  const [alwaysListening, setAlwaysListening] = useState(() => {
+    // Load from localStorage, default to false
+    const saved = localStorage.getItem('voice-always-listening');
+    return saved === 'true';
+  });
+
+  const [alwaysListeningError, setAlwaysListeningError] = useState<string | null>(null);
+
   const handleTogglePushToTalk = (enabled: boolean) => {
     setPushToTalk(enabled);
     localStorage.setItem('voice-push-to-talk', String(enabled));
   };
+
+  const handleToggleAlwaysListening = (enabled: boolean) => {
+    setAlwaysListening(enabled);
+    localStorage.setItem('voice-always-listening', String(enabled));
+    if (!enabled) {
+      setAlwaysListeningError(null); // Clear error when disabled
+    }
+  };
+
+  // Voice auto-send countdown state
+  const [voiceAutoSendCountdown, setVoiceAutoSendCountdown] = useState<number | null>(null);
+  const voiceAutoSendTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const handleSendMessageRef = useRef<() => void>(() => {});
+
+  const startVoiceAutoSend = useCallback(() => {
+    // Only start if always listening is enabled
+    if (!alwaysListening) return;
+
+    // Clear any existing timer
+    if (voiceAutoSendTimerRef.current) {
+      clearInterval(voiceAutoSendTimerRef.current);
+    }
+
+    setVoiceAutoSendCountdown(5);
+
+    voiceAutoSendTimerRef.current = setInterval(() => {
+      setVoiceAutoSendCountdown((prev) => {
+        if (prev === null || prev <= 1) {
+          // Time's up - send the message
+          if (voiceAutoSendTimerRef.current) {
+            clearInterval(voiceAutoSendTimerRef.current);
+            voiceAutoSendTimerRef.current = null;
+          }
+          // Trigger send on next tick to avoid state issues
+          setTimeout(() => {
+            handleSendMessageRef.current();
+          }, 0);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, [alwaysListening]);
+
+  const cancelVoiceAutoSend = useCallback(() => {
+    if (voiceAutoSendTimerRef.current) {
+      clearInterval(voiceAutoSendTimerRef.current);
+      voiceAutoSendTimerRef.current = null;
+    }
+    setVoiceAutoSendCountdown(null);
+  }, []);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (voiceAutoSendTimerRef.current) {
+        clearInterval(voiceAutoSendTimerRef.current);
+      }
+    };
+  }, []);
 
   // Ralph Wiggum loop state
   const [showRalphSettings, setShowRalphSettings] = useState(false);
@@ -2641,6 +2709,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     imageAttachments,
     fileAttachments,
   ]);
+
+  // Keep ref in sync for voice auto-send
+  useEffect(() => {
+    handleSendMessageRef.current = handleSendMessage;
+  }, [handleSendMessage]);
 
   // Handle sending terminal output to the agent
   const handleSendTerminalOutput = useCallback(
@@ -6269,7 +6342,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 <textarea
                   ref={inputRef}
                   value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
+                  onChange={(e) => {
+                    setInputValue(e.target.value);
+                    // Cancel auto-send if user starts typing
+                    if (voiceAutoSendCountdown !== null) {
+                      cancelVoiceAutoSend();
+                    }
+                  }}
                   onKeyDown={handleKeyPress}
                   onPaste={handlePaste}
                   placeholder={
@@ -6309,10 +6388,17 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     onTranscript={(text) => {
                       if (text.trim()) {
                         setInputValue((prev) => (prev ? prev + ' ' + text : text));
+                        // Start auto-send countdown if always listening is enabled
+                        if (alwaysListening) {
+                          startVoiceAutoSend();
+                        }
                       }
                     }}
                     className="shrink-0"
                     pushToTalk={pushToTalk}
+                    alwaysListening={alwaysListening}
+                    onAlwaysListeningError={setAlwaysListeningError}
+                    onAbortDetected={cancelVoiceAutoSend}
                   />
                 )}
                 {/* File Attach Button */}
@@ -6378,19 +6464,41 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     </button>
                   </>
                 ) : (
-                  <button
-                    onClick={handleSendMessage}
-                    disabled={
-                      (!inputValue.trim() &&
-                        !terminalAttachment &&
-                        imageAttachments.length === 0 &&
-                        fileAttachments.length === 0) ||
-                      status !== 'connected'
-                    }
-                    className="shrink-0 px-4 py-2.5 text-copilot-accent hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
-                  >
-                    {lisaEnabled ? 'Start Lisa Loop' : ralphEnabled ? 'Start Loop' : 'Send'}
-                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => {
+                        cancelVoiceAutoSend();
+                        handleSendMessage();
+                      }}
+                      disabled={
+                        (!inputValue.trim() &&
+                          !terminalAttachment &&
+                          imageAttachments.length === 0 &&
+                          fileAttachments.length === 0) ||
+                        status !== 'connected'
+                      }
+                      className={`shrink-0 px-4 py-2.5 hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors ${
+                        voiceAutoSendCountdown !== null
+                          ? 'text-copilot-success'
+                          : 'text-copilot-accent'
+                      }`}
+                    >
+                      {lisaEnabled ? 'Start Lisa Loop' : ralphEnabled ? 'Start Loop' : 'Send'}
+                    </button>
+                    {/* Auto-send countdown tooltip */}
+                    {voiceAutoSendCountdown !== null && (
+                      <div
+                        className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-copilot-success text-white rounded-lg shadow-lg cursor-pointer animate-pulse text-center"
+                        onClick={cancelVoiceAutoSend}
+                        title="Click to cancel auto-send"
+                      >
+                        <div className="text-xs font-bold whitespace-nowrap">
+                          Sending in {voiceAutoSendCountdown}s
+                        </div>
+                        <div className="text-[10px] opacity-80 mt-0.5">Say "abort" to cancel</div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -6999,6 +7107,9 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                       onToggleMute={voiceSpeech.toggleMute}
                       pushToTalk={pushToTalk}
                       onTogglePushToTalk={handleTogglePushToTalk}
+                      alwaysListening={alwaysListening}
+                      onToggleAlwaysListening={handleToggleAlwaysListening}
+                      alwaysListeningError={alwaysListeningError}
                     />
                   </div>
                   {/* End MCP/Skills wrapper */}

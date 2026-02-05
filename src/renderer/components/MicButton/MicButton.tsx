@@ -6,10 +6,12 @@
  * - Server setup status indication
  * - Green icon when actively listening
  * - Click-to-toggle (default) or Push-to-Talk mode
+ * - Always Listening mode with wake word detection
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { MicrophoneIcon } from '../Icons/Icons'
 import { useVoiceServer } from '../../hooks/useVoiceServer'
+import { useAlwaysListening } from '../../hooks/useAlwaysListening'
 import './MicButton.css'
 
 interface MicButtonProps {
@@ -17,6 +19,9 @@ interface MicButtonProps {
   disabled?: boolean
   className?: string
   pushToTalk?: boolean // If true, hold to record. If false (default), click to toggle.
+  alwaysListening?: boolean // If true, listen for wake words to auto-start recording.
+  onAlwaysListeningError?: (error: string | null) => void
+  onAbortDetected?: () => void // Called when "abort" is detected during always-listening
 }
 
 interface DownloadProgress {
@@ -31,7 +36,10 @@ export const MicButton: React.FC<MicButtonProps> = ({
   onTranscript, 
   disabled = false,
   className = '',
-  pushToTalk = false
+  pushToTalk = false,
+  alwaysListening = false,
+  onAlwaysListeningError,
+  onAbortDetected
 }) => {
   const [showTooltip, setShowTooltip] = useState(false)
   const [isSettingUp, setIsSettingUp] = useState(false)
@@ -55,6 +63,68 @@ export const MicButton: React.FC<MicButtonProps> = ({
       setIsSettingUp(false)
     },
   })
+
+  // Always Listening - wake word detection
+  const handleWakeWord = useCallback(async () => {
+    console.log('[MicButton] Wake word detected, starting recording')
+    if (isRecording || isProcessing || isSettingUp) return
+    
+    // Auto-start recording when wake word detected
+    isHoldingRef.current = true
+    if (isReady) {
+      await startRecording()
+    } else {
+      // Need to load model first - this handles the full setup
+      setIsSettingUp(true)
+      setShowTooltip(true)
+      const result = await loadModel()
+      if (result.success) {
+        setIsSettingUp(false)
+        setDownloadProgress(null)
+        await startRecording()
+      } else {
+        setSetupError(result.error || 'Failed to setup voice')
+        setIsSettingUp(false)
+      }
+    }
+    isHoldingRef.current = false
+  }, [isRecording, isProcessing, isSettingUp, isReady, startRecording, loadModel])
+
+  const handleStopWord = useCallback(() => {
+    console.log('[MicButton] Stop word detected, stopping recording')
+    if (isRecording) {
+      stopRecording()
+    }
+  }, [isRecording, stopRecording])
+
+  const handleAbortWord = useCallback(() => {
+    console.log('[MicButton] Abort word detected, canceling')
+    // Cancel any pending auto-send
+    onAbortDetected?.()
+    // For abort, we stop without transcribing (if possible)
+    if (isRecording) {
+      stopRecording()
+    }
+  }, [isRecording, stopRecording, onAbortDetected])
+
+  // Initialize always listening mode
+  const { 
+    isListening: isAlwaysListeningActive, 
+    error: alwaysListeningError,
+    isLoading: isAlwaysListeningLoading,
+    isModelLoaded: isTinyModelLoaded,
+  } = useAlwaysListening({
+    enabled: alwaysListening && !disabled,
+    isRecording,
+    onWakeWordDetected: handleWakeWord,
+    onStopWordDetected: handleStopWord,
+    onAbortWordDetected: handleAbortWord,
+  })
+
+  // Notify parent of always listening errors
+  useEffect(() => {
+    onAlwaysListeningError?.(alwaysListeningError)
+  }, [alwaysListeningError, onAlwaysListeningError])
 
   // Listen for download progress updates
   useEffect(() => {
@@ -163,6 +233,9 @@ export const MicButton: React.FC<MicButtonProps> = ({
   const getStatusText = (): string => {
     if (isProcessing) return 'Transcribing...'
     if (isRecording) {
+      if (alwaysListening) {
+        return '🟢 Recording... Say "stop" or "done"'
+      }
       return pushToTalk 
         ? '🟢 Listening... Release to stop' 
         : '🟢 Listening... Click to stop'
@@ -174,6 +247,19 @@ export const MicButton: React.FC<MicButtonProps> = ({
         return downloadProgress.status
       }
       return 'Setting up voice...'
+    }
+    
+    if (alwaysListening) {
+      if (isAlwaysListeningLoading) {
+        return '⏳ Downloading wake word model (~39MB)...'
+      }
+      if (isAlwaysListeningActive) {
+        return '🟣 Listening for "Hey Copilot"...'
+      }
+      if (isTinyModelLoaded) {
+        return '🟣 Say "Hey Copilot" to start'
+      }
+      return 'Click to setup wake words'
     }
     
     const actionText = pushToTalk ? 'Hold' : 'Click'
@@ -188,6 +274,8 @@ export const MicButton: React.FC<MicButtonProps> = ({
     if (isSettingUp) classes.push('setting-up')
     if (setupError) classes.push('error')
     if (disabled) classes.push('disabled')
+    // Show purple standby when always listening is enabled but not actively recording
+    if (alwaysListening && !isRecording && !isProcessing && !isSettingUp) classes.push('always-on')
     return classes.filter(Boolean).join(' ')
   }
 

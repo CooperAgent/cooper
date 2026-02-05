@@ -35,6 +35,7 @@ export function useVoiceServer(options: UseVoiceServerOptions = {}) {
   const streamRef = useRef<MediaStream | null>(null)
   const mimeTypeRef = useRef<string>('')
   const isModelLoadedRef = useRef(false)
+  const recordingStartTimeRef = useRef<number>(0)
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -171,17 +172,40 @@ export function useVoiceServer(options: UseVoiceServerOptions = {}) {
       }
 
       mediaRecorder.onstop = async () => {
-        console.log('[useVoiceServer] MediaRecorder stopped, chunks:', audioChunksRef.current.length)
+        const recordingDuration = (Date.now() - recordingStartTimeRef.current) / 1000
+        console.log('[useVoiceServer] MediaRecorder stopped, chunks:', audioChunksRef.current.length, 'duration:', recordingDuration.toFixed(2), 's')
         setState(prev => ({ ...prev, isRecording: false, isProcessing: true }))
         
         try {
-          // Convert to PCM and send to main process for transcription
+          // Safeguard 1: Check if recording is empty
+          if (audioChunksRef.current.length === 0) {
+            console.warn('[useVoiceServer] No audio chunks recorded')
+            // Reset main process state
+            await window.electronAPI.voice.stopRecording()
+            onError?.('Recording was empty - no audio captured')
+            setState(prev => ({ ...prev, isProcessing: false }))
+            return
+          }
+
+          // Safeguard 2: Ignore recordings less than 1 second
+          if (recordingDuration < 1.0) {
+            console.log('[useVoiceServer] Recording too short, ignoring')
+            // Reset main process state
+            await window.electronAPI.voice.stopRecording()
+            setState(prev => ({ ...prev, isProcessing: false }))
+            return
+          }
+
           const blobType = mimeTypeRef.current || 'audio/webm'
           const audioBlob = new Blob(audioChunksRef.current, { type: blobType })
           console.log('[useVoiceServer] Audio blob created, size:', audioBlob.size, 'type:', blobType)
           
+          // Safeguard: Check blob size
           if (audioBlob.size === 0) {
-            console.warn('[useVoiceServer] Empty audio blob, skipping')
+            console.warn('[useVoiceServer] Empty audio blob')
+            // Reset main process state
+            await window.electronAPI.voice.stopRecording()
+            onError?.('Recording was empty')
             setState(prev => ({ ...prev, isProcessing: false }))
             return
           }
@@ -212,6 +236,7 @@ export function useVoiceServer(options: UseVoiceServerOptions = {}) {
 
       mediaRecorderRef.current = mediaRecorder
       mediaRecorder.start(100) // Collect data every 100ms
+      recordingStartTimeRef.current = Date.now()
       
       console.log('[useVoiceServer] Recording started, setting isRecording: true')
       setState(prev => ({ ...prev, isRecording: true, transcript: '' }))

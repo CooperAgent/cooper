@@ -13,10 +13,15 @@ import { pipeline } from 'stream/promises'
 import { createGunzip } from 'zlib'
 import { Extract } from 'unzipper'
 
-// Whisper model configuration
+// Whisper model configuration - small model for full transcription
 const MODEL_NAME = 'ggml-small.en.bin'
 const MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin'
 const MODEL_SIZE_BYTES = 244_000_000 // ~244MB
+
+// Tiny model for lightweight wake word detection
+const TINY_MODEL_NAME = 'ggml-tiny.en.bin'
+const TINY_MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin'
+const TINY_MODEL_SIZE_BYTES = 39_000_000 // ~39MB
 
 // Whisper binary configuration - using latest stable release
 // Windows x64 binary from whisper.cpp releases (repo moved to ggml-org)
@@ -29,9 +34,10 @@ interface ModelManagerState {
   downloadProgress: number
   downloadedBytes: number
   totalBytes: number
-  currentStep: 'idle' | 'binary' | 'model' | 'extracting' | 'complete'
+  currentStep: 'idle' | 'binary' | 'model' | 'tiny-model' | 'extracting' | 'complete'
   error: string | null
   modelPath: string | null
+  tinyModelPath: string | null
   binaryPath: string | null
 }
 
@@ -45,6 +51,7 @@ class WhisperModelManager {
     currentStep: 'idle',
     error: null,
     modelPath: null,
+    tinyModelPath: null,
     binaryPath: null,
   }
 
@@ -400,6 +407,77 @@ class WhisperModelManager {
     }
   }
 
+  /**
+   * Check if tiny model exists
+   */
+  checkTinyModel(): { exists: boolean; path?: string } {
+    const modelDir = this.getModelDir()
+    const tinyModelPath = join(modelDir, TINY_MODEL_NAME)
+    
+    if (existsSync(tinyModelPath)) {
+      this.state.tinyModelPath = tinyModelPath
+      return { exists: true, path: tinyModelPath }
+    }
+    
+    return { exists: false }
+  }
+
+  /**
+   * Download tiny model for wake word detection
+   */
+  async downloadTinyModel(): Promise<{ success: boolean; path?: string; error?: string }> {
+    if (this.state.isDownloading) {
+      return { success: false, error: 'Download already in progress' }
+    }
+
+    // Check if already exists
+    const existing = this.checkTinyModel()
+    if (existing.exists) {
+      return { success: true, path: existing.path }
+    }
+
+    try {
+      this.state.isDownloading = true
+      this.state.currentStep = 'tiny-model'
+      this.state.totalBytes = TINY_MODEL_SIZE_BYTES
+      this.state.downloadedBytes = 0
+      this.state.downloadProgress = 0
+      this.state.error = null
+
+      const modelDir = this.getModelDir()
+      if (!existsSync(modelDir)) {
+        mkdirSync(modelDir, { recursive: true })
+      }
+
+      const tinyModelPath = join(modelDir, TINY_MODEL_NAME)
+      this.sendProgressUpdate('Downloading wake word model (~39MB)...')
+
+      await this.downloadFile(TINY_MODEL_URL, tinyModelPath, (downloaded, total) => {
+        this.state.downloadedBytes = downloaded
+        this.state.totalBytes = total || TINY_MODEL_SIZE_BYTES
+        this.state.downloadProgress = Math.round((downloaded / (total || TINY_MODEL_SIZE_BYTES)) * 100)
+        this.sendProgressUpdate(`Downloading wake word model: ${this.state.downloadProgress}%`)
+      })
+
+      this.state.tinyModelPath = tinyModelPath
+      this.state.isDownloading = false
+      this.state.currentStep = 'complete'
+      this.sendProgressUpdate('Wake word model ready')
+
+      return { success: true, path: tinyModelPath }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.state.isDownloading = false
+      this.state.error = message
+      return { success: false, error: message }
+    }
+  }
+
+  getTinyModelPath(): string | null {
+    const check = this.checkTinyModel()
+    return check.exists ? check.path ?? null : null
+  }
+
   private sendProgressUpdate(status: string) {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send('voiceServer:downloadProgress', {
@@ -419,6 +497,14 @@ class WhisperModelManager {
 
     ipcMain.handle('voiceServer:downloadModel', async () => {
       return this.downloadModel()
+    })
+
+    ipcMain.handle('voiceServer:checkTinyModel', () => {
+      return this.checkTinyModel()
+    })
+
+    ipcMain.handle('voiceServer:downloadTinyModel', async () => {
+      return this.downloadTinyModel()
     })
   }
 

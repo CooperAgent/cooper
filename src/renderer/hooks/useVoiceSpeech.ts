@@ -10,8 +10,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 // Keyword definitions (from mobile app)
 export const VOICE_KEYWORDS = {
-  wake: ['copilot', 'github', 'hey copilot', 'hey github'],
-  stop: ['stop listening', 'stop recording'],
+  wake: ['hey copilot', 'hey github'],  // Only with "hey" prefix for intentional activation
+  stop: ['stop listening', 'stop recording', 'stop', 'done'],
   abort: ['abort', 'cancel', 'nevermind', 'never mind'],
   extend: ['extend', 'continue', 'add more', 'keep going'],
   mute: ['mute copilot', 'mute voice', 'go silent', 'be quiet', 'silence'],

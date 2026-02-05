@@ -601,6 +601,9 @@ const electronAPI = {
     loadModel: (): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('voice:loadModel')
     },
+    loadTinyModel: (): Promise<{ success: boolean; path?: string; error?: string }> => {
+      return ipcRenderer.invoke('voice:loadTinyModel')
+    },
     getState: (): Promise<{ isModelLoaded: boolean; isRecording: boolean; error: string | null }> => {
       return ipcRenderer.invoke('voice:getState')
     },
@@ -612,6 +615,9 @@ const electronAPI = {
     },
     processAndTranscribe: (audioData: Uint8Array, mimeType: string): Promise<{ success: boolean; text?: string; error?: string }> => {
       return ipcRenderer.invoke('voice:processAndTranscribe', audioData, mimeType)
+    },
+    detectWakeWord: (audioData: Uint8Array, mimeType: string): Promise<{ success: boolean; text?: string; wakeWordDetected?: boolean; stopWordDetected?: boolean; abortWordDetected?: boolean; error?: string }> => {
+      return ipcRenderer.invoke('voice:detectWakeWord', audioData, mimeType)
     },
     stopRecording: (): Promise<{ success: boolean; text?: string; error?: string }> => {
       return ipcRenderer.invoke('voice:stopRecording')
@@ -644,6 +650,13 @@ const electronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, data: { progress: number; downloaded: number; total: number; status: string }) => callback(data)
       ipcRenderer.on('voiceServer:downloadProgress', handler)
       return () => ipcRenderer.removeListener('voiceServer:downloadProgress', handler)
+    },
+    // Tiny model for wake word detection
+    checkTinyModel: (): Promise<{ exists: boolean; path?: string }> => {
+      return ipcRenderer.invoke('voiceServer:checkTinyModel')
+    },
+    downloadTinyModel: (): Promise<{ success: boolean; path?: string; error?: string }> => {
+      return ipcRenderer.invoke('voiceServer:downloadTinyModel')
     },
   },
   

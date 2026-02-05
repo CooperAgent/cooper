@@ -24,6 +24,7 @@ interface VoiceServiceState {
 
 class VoiceService {
   private modelPath: string | null = null;
+  private tinyModelPath: string | null = null;
   private whisperBinaryPath: string | null = null;
   private mainWindow: BrowserWindow | null = null;
   private audioChunks: Buffer[] = [];
@@ -33,6 +34,11 @@ class VoiceService {
     isRecording: false,
     error: null,
   };
+  
+  // Continuous listening state
+  private continuousListeningEnabled = false;
+  private continuousListeningInterval: NodeJS.Timeout | null = null;
+  private mediaRecorder: unknown = null; // Managed by renderer
 
   constructor() {
     this.setupIpcHandlers();
@@ -340,8 +346,11 @@ class VoiceService {
         return { success: false, error: 'Model not loaded' };
       }
 
+      // If already recording, force reset (handles stuck state)
       if (this.state.isRecording) {
-        return { success: false, error: 'Already recording' };
+        console.log('[VoiceService] Force resetting stuck recording state');
+        this.state.isRecording = false;
+        this.resetAudioBuffer();
       }
 
       try {
@@ -495,6 +504,139 @@ class VoiceService {
       this.state.isModelLoaded = false;
       this.state.isRecording = false;
       return { success: true };
+    });
+
+    // Load tiny model for wake word detection
+    ipcMain.handle('voice:loadTinyModel', async () => {
+      try {
+        // Check if tiny model exists, download if needed
+        const tinyCheck = whisperModelManager.checkTinyModel();
+        if (!tinyCheck.exists) {
+          const downloadResult = await whisperModelManager.downloadTinyModel();
+          if (!downloadResult.success) {
+            return { success: false, error: downloadResult.error };
+          }
+          this.tinyModelPath = downloadResult.path!;
+        } else {
+          this.tinyModelPath = tinyCheck.path!;
+        }
+        
+        // Also ensure binary is available
+        if (!this.whisperBinaryPath) {
+          this.whisperBinaryPath = this.getWhisperBinaryPath();
+        }
+        
+        console.log('[VoiceService] Tiny model ready:', this.tinyModelPath);
+        return { success: true, path: this.tinyModelPath };
+      } catch (e: any) {
+        console.error('[VoiceService] Failed to load tiny model:', e);
+        return { success: false, error: e.message };
+      }
+    });
+
+    // Process audio for wake word detection (uses tiny model for speed)
+    ipcMain.handle('voice:detectWakeWord', async (_event, audioData: Uint8Array, mimeType: string) => {
+      if (!this.tinyModelPath || !this.whisperBinaryPath) {
+        return { success: false, error: 'Tiny model not loaded' };
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'whisper-wake-'));
+      const extension = mimeType.includes('webm') ? '.webm' : '.mp4';
+      const inputPath = join(tempDir, `input${extension}`);
+      const wavPath = join(tempDir, 'input.wav');
+      const outputBase = join(tempDir, 'output');
+      const outputTextPath = `${outputBase}.txt`;
+
+      try {
+        writeFileSync(inputPath, Buffer.from(audioData));
+
+        const ffmpegBin = this.findFfmpeg();
+        if (ffmpegBin) {
+          await execFileAsync(ffmpegBin, [
+            '-i', inputPath,
+            '-ar', '16000',
+            '-ac', '1',
+            '-sample_fmt', 's16',
+            '-y',
+            wavPath
+          ], { windowsHide: true, timeout: 10000 });
+        } else {
+          writeFileSync(wavPath, Buffer.from(audioData));
+        }
+
+        // Run whisper-tiny (should be fast ~0.3-0.5s)
+        const args = [
+          '-m', this.tinyModelPath,
+          '-f', wavPath,
+          '-otxt',
+          '-of', outputBase,
+        ];
+
+        await execFileAsync(this.whisperBinaryPath, args, { 
+          windowsHide: true,
+          timeout: 10000 // 10 second timeout for tiny model
+        });
+
+        if (!existsSync(outputTextPath)) {
+          return { success: true, text: '', detected: false };
+        }
+
+        const rawText = readFileSync(outputTextPath, 'utf-8');
+        const text = this.normalizeTranscript(rawText);
+        
+        // Normalize for keyword detection - remove punctuation, extra spaces
+        const normalizedText = text.toLowerCase()
+          .replace(/[.,!?;:'"]/g, '') // Remove punctuation
+          .replace(/\s+/g, ' ')        // Normalize whitespace
+          .trim();
+        
+        // Log what we heard for debugging
+        if (text.trim()) {
+          console.log('[VoiceService] Wake word detection heard:', text, '| normalized:', normalizedText);
+        }
+        
+        // Check for wake words (only with "hey" prefix for intentional activation)
+        // Also check for variations like "hey, copilot" -> "hey copilot"
+        const wakeWordDetected = 
+          normalizedText.includes('hey copilot') ||
+          normalizedText.includes('hey github') ||
+          normalizedText.includes('a]copilot') ||  // Common whisper mishearing
+          (normalizedText.includes('hey') && normalizedText.includes('copilot')) ||
+          (normalizedText.includes('hey') && normalizedText.includes('github'));
+        
+        // Check for stop words
+        const stopWordDetected = 
+          normalizedText.includes('stop listening') ||
+          normalizedText.includes('stop recording') ||
+          normalizedText.includes('stop') ||
+          normalizedText.includes('done');
+
+        // Check for abort words
+        const abortWordDetected = 
+          normalizedText.includes('abort') ||
+          normalizedText.includes('cancel') ||
+          normalizedText.includes('nevermind') ||
+          normalizedText.includes('never mind');
+
+        if (wakeWordDetected || stopWordDetected || abortWordDetected) {
+          console.log('[VoiceService] Keyword detected! wake:', wakeWordDetected, 'stop:', stopWordDetected, 'abort:', abortWordDetected);
+        }
+
+        return { 
+          success: true, 
+          text, 
+          wakeWordDetected,
+          stopWordDetected,
+          abortWordDetected,
+        };
+      } catch (e: any) {
+        // Timeout or other error - just return empty
+        return { success: true, text: '', wakeWordDetected: false, stopWordDetected: false, abortWordDetected: false };
+      } finally {
+        try {
+          rmSync(tempDir, { recursive: true, force: true });
+        } catch { /* ignore */ }
+      }
     });
   }
 
