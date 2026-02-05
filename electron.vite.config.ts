@@ -5,7 +5,9 @@ import { resolve } from 'path';
 export default defineConfig({
   main: {
     plugins: [
-      externalizeDepsPlugin({ exclude: ['@github/copilot-sdk', 'electron-store', 'electron-log'] }),
+      externalizeDepsPlugin({
+        exclude: ['@github/copilot-sdk', 'electron-store', 'electron-log', 'unzipper'],
+      }),
     ],
     build: {
       rollupOptions: {
