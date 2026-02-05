@@ -237,7 +237,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
 
   const handleRevealInFolder = async () => {
     try {
-      await window.electronAPI.file.revealInFolder(selectedFile);
+      await window.electronAPI.file.revealInFolder(selectedFile, cwd);
     } catch (error) {
       console.error('Failed to reveal in folder:', error);
     }
