@@ -10,6 +10,7 @@ export * from './Modal';
 export * from './ReleaseNotesModal';
 export * from './SearchableBranchSelect';
 export * from './SessionHistory';
+export * from './ToolActivity';
 export * from './UpdateAvailableModal';
 export * from './WelcomeWizard';
 export * from './WindowControls';
