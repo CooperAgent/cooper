@@ -925,6 +925,9 @@ const electronAPI = {
     isPackaged: (): Promise<boolean> => {
       return ipcRenderer.invoke('app:isPackaged');
     },
+    getInstallationId: (): Promise<string> => {
+      return ipcRenderer.invoke('app:getInstallationId');
+    },
   },
 };
 

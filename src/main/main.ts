@@ -194,6 +194,7 @@ const store = new Store({
     globalSafeCommands: [] as string[], // Globally safe commands that are auto-approved for all sessions
     hasSeenWelcomeWizard: false as boolean, // Whether user has completed the welcome wizard
     wizardVersion: 0 as number, // Version of wizard shown (bump to re-show wizard after updates)
+    installationId: '' as string, // Unique ID for this installation (for telemetry user identification)
     // URL allowlist - domains that are auto-approved for web_fetch (similar to --allow-url in Copilot CLI)
     allowedUrls: [
       'github.com',
@@ -211,6 +212,17 @@ const store = new Store({
     deniedUrls: [] as string[],
   },
 });
+
+// Get or create a stable installation ID for telemetry
+function getInstallationId(): string {
+  let installationId = store.get('installationId') as string;
+  if (!installationId) {
+    // Generate a random UUID-like ID (no PII, just a random identifier)
+    installationId = `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 15)}`;
+    store.set('installationId', installationId);
+  }
+  return installationId;
+}
 
 // Theme directory for external JSON themes
 const themesDir = join(app.getPath('userData'), 'themes');
@@ -4610,6 +4622,10 @@ ipcMain.handle('wizard:markWelcomeAsSeen', async () => {
 // App info handlers
 ipcMain.handle('app:isPackaged', () => {
   return app.isPackaged;
+});
+
+ipcMain.handle('app:getInstallationId', () => {
+  return getInstallationId();
 });
 
 // Simple semver comparison: returns 1 if a > b, -1 if a < b, 0 if equal
