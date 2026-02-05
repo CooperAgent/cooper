@@ -1,5 +1,15 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, Menu } from 'electron';
-import { join, dirname } from 'path';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  dialog,
+  nativeTheme,
+  Menu,
+  protocol,
+  net,
+} from 'electron';
+import path, { join, dirname } from 'path';
 import {
   existsSync,
   mkdirSync,
@@ -12,6 +22,7 @@ import {
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { readFile, writeFile, mkdir } from 'fs/promises';
+import { createServer, Server } from 'http';
 
 const execAsync = promisify(exec);
 
@@ -65,6 +76,8 @@ import * as worktree from './worktree';
 import * as ptyManager from './pty';
 import * as browserManager from './browser';
 import { createBrowserTools } from './browserTools';
+import { voiceService } from './voiceService';
+import { whisperModelManager } from './whisperModelManager';
 
 // MCP Server Configuration types (matching SDK)
 interface MCPServerConfigBase {
@@ -895,6 +908,7 @@ const AVAILABLE_MODELS: ModelInfo[] = [
   { id: 'gpt-5', name: 'GPT-5', multiplier: 1 },
   { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', multiplier: 1 },
   { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', multiplier: 3 },
+  { id: 'claude-opus-4.6', name: 'Claude Opus 4.6', multiplier: 3 },
 ];
 
 // Cache for verified models (models confirmed available for current user)
@@ -1850,8 +1864,8 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 750,
-    minWidth: 900,
-    minHeight: 500,
+    minWidth: 320,
+    minHeight: 400,
     frame: false,
     backgroundColor: '#0d1117',
     titleBarStyle: 'hidden',
@@ -1890,6 +1904,10 @@ function createWindow(): void {
   mainWindow.webContents.once('did-finish-load', () => {
     initCopilot();
   });
+
+  // Set main window for voice service
+  voiceService.setMainWindow(mainWindow);
+  whisperModelManager.setMainWindow(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
