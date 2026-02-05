@@ -708,7 +708,7 @@ const App: React.FC = () => {
   const lastIdleTimestampRef = useRef<Map<string, number>>(new Map());
 
   // Resizable panel state
-  const [leftPanelWidth, setLeftPanelWidth] = useState(192); // default w-48
+  const [leftPanelWidth, setLeftPanelWidth] = useState(288); // default w-72
   const [rightPanelWidth, setRightPanelWidth] = useState(288); // default w-72
   const resizingPanel = useRef<'left' | 'right' | null>(null);
   const resizeStartX = useRef(0);
@@ -4491,12 +4491,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
             {/* Settings Section - Model & Theme */}
             <div className="border-t border-copilot-border">
-              <div className="px-4 py-2">
-                <span className="text-[10px] text-copilot-text-muted uppercase tracking-wide">
-                  Settings
-                </span>
-              </div>
-
               {/* Model Selector */}
               <AccordionSelect
                 label="Model"
@@ -4587,14 +4581,17 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               </div>
 
               {/* Working Directory */}
-              <AccordionSelect
-                label="Directory"
-                icon={<FolderIcon size={14} />}
-                value={activeTab?.cwd || null}
-                displayValue={activeTab?.cwd?.split('/').pop() || 'Unknown'}
-                options={[]}
-                onSelect={() => {}}
-              />
+              <div className="px-4 py-3 border-b border-copilot-border">
+                <div className="text-xs text-copilot-text-muted uppercase tracking-wide mb-2">
+                  Directory
+                </div>
+                <div className="flex items-center gap-1.5 text-xs min-w-0">
+                  <FolderIcon size={12} className="text-copilot-accent shrink-0" />
+                  <span className="text-copilot-text font-mono truncate" title={activeTab?.cwd}>
+                    {activeTab?.cwd || 'Unknown'}
+                  </span>
+                </div>
+              </div>
 
               {/* Git Branch */}
               <div className="px-4 py-3 border-b border-copilot-border">
@@ -4886,7 +4883,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     onClick={() => handleNewTab()}
                     className="w-full flex items-center gap-2 px-2 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                   >
-                    <PlusIcon size={12} />
                     New Session
                   </button>
                   {/* Dropdown arrow / Worktree option on hover */}
@@ -6372,7 +6368,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               style={{ width: rightPanelWidth }}
             >
               {/* Collapse button in header */}
-              <div className="px-2 py-2 border-b border-copilot-border bg-copilot-surface flex items-center gap-2">
+              <div className="px-2 py-1.5 border-b border-copilot-border bg-copilot-surface flex items-center gap-2">
                 <button
                   onClick={toggleRightPanel}
                   className="shrink-0 p-1 text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover rounded transition-colors"
@@ -6436,13 +6432,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               <div className="flex-1 overflow-y-auto">
                 {/* Processing indicator when no tools visible */}
                 {activeTab?.isProcessing && (activeTab?.activeTools?.length || 0) === 0 && (
-                  <div className="px-3 py-3 flex items-center gap-2 border-b border-copilot-surface">
+                  <div className="px-3 py-3 flex items-center gap-2 border-b border-copilot-border">
                     <Spinner size="sm" />
                     <span className="text-xs text-copilot-text-muted">Thinking...</span>
                   </div>
                 )}
 
-                <div className="border-t border-copilot-border mt-auto">
+                <div className="mt-auto">
                   {/* Working Directory */}
                   <div className="px-3 py-2 border-b border-copilot-surface">
                     <div className="text-[10px] text-copilot-text-muted uppercase tracking-wide mb-1">
