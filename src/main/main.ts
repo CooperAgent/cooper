@@ -4600,6 +4600,11 @@ ipcMain.handle('wizard:markWelcomeAsSeen', async () => {
   return { success: true };
 });
 
+// App info handlers
+ipcMain.handle('app:isPackaged', () => {
+  return app.isPackaged;
+});
+
 // Simple semver comparison: returns 1 if a > b, -1 if a < b, 0 if equal
 function compareVersions(a: string, b: string): number {
   const partsA = a.split('.').map(Number);
