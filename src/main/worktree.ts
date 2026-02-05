@@ -280,9 +280,23 @@ async function isBranchInWorktree(repoPath: string, branch: string): Promise<str
 }
 
 // Get disk usage for a directory
-function getDiskUsage(path: string): number {
+async function getDiskUsage(path: string): Promise<number> {
   if (!existsSync(path)) return 0;
 
+  // Use native `du` command for fast disk usage calculation on Unix
+  if (process.platform !== 'win32') {
+    try {
+      const { stdout } = await execAsync(`du -sk "${path}"`, { timeout: 5000 });
+      const sizeKB = parseInt(stdout.split(/\s+/)[0], 10);
+      if (!isNaN(sizeKB)) {
+        return sizeKB * 1024;
+      }
+    } catch {
+      // Fall through to sync method
+    }
+  }
+
+  // Fallback: synchronous walk (slower, but works everywhere)
   let totalSize = 0;
 
   function walkDir(dir: string): void {
@@ -486,30 +500,48 @@ export async function removeWorktreeSession(
 /**
  * List all worktree sessions
  */
-export function listWorktreeSessions(options: { includeDiskUsage?: boolean } = {}): {
+export async function listWorktreeSessions(options: { includeDiskUsage?: boolean } = {}): Promise<{
   sessions: Array<WorktreeSession & { diskUsage: string }>;
   totalDiskUsage: string;
-} {
+}> {
   const registry = loadRegistry();
-  let totalBytes = 0;
 
-  const sessions = registry.sessions.map((session) => {
-    // Check if worktree still exists
-    const exists = existsSync(session.worktreePath);
-    // Skip disk usage calculation by default (it's slow and blocks the main thread)
-    const diskBytes = options.includeDiskUsage && exists ? getDiskUsage(session.worktreePath) : 0;
-    totalBytes += diskBytes;
+  if (!options.includeDiskUsage) {
+    // Fast path: skip disk usage calculation
+    const sessions = registry.sessions.map((session) => {
+      const exists = existsSync(session.worktreePath);
+      return {
+        ...session,
+        status: exists ? session.status : ('orphaned' as const),
+        diskUsage: 'Calculating...',
+      };
+    });
+    return { sessions, totalDiskUsage: 'Calculating...' };
+  }
 
-    return {
-      ...session,
-      status: exists ? session.status : ('orphaned' as const),
-      diskUsage: options.includeDiskUsage ? formatBytes(diskBytes) : 'Calculating...',
-    };
-  });
+  // Calculate disk usage in parallel for all sessions
+  const sessionsWithDisk = await Promise.all(
+    registry.sessions.map(async (session) => {
+      const exists = existsSync(session.worktreePath);
+      const diskBytes = exists ? await getDiskUsage(session.worktreePath) : 0;
+
+      return {
+        ...session,
+        status: exists ? session.status : ('orphaned' as const),
+        diskUsage: formatBytes(diskBytes),
+        diskBytes,
+      };
+    })
+  );
+
+  const totalBytes = sessionsWithDisk.reduce((sum, s) => sum + s.diskBytes, 0);
+
+  // Remove diskBytes from the returned sessions
+  const sessions = sessionsWithDisk.map(({ diskBytes, ...rest }) => rest);
 
   return {
     sessions,
-    totalDiskUsage: options.includeDiskUsage ? formatBytes(totalBytes) : 'Calculating...',
+    totalDiskUsage: formatBytes(totalBytes),
   };
 }
 
