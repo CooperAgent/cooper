@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, Menu } from 'electron';
-import { join, dirname } from 'path';
+import path, { join, dirname } from 'path';
 import {
   existsSync,
   mkdirSync,
