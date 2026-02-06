@@ -139,6 +139,24 @@ npm install
 npm run dev
 ```
 
+## Upgrading
+
+Cooper is distributed via GitHub Releases. To upgrade via command line, download the latest release asset and install it.
+
+### macOS
+
+```bash
+gh release download --repo idofrizler/copilot-ui --pattern "Cooper-*.dmg" --dir ~/Downloads --clobber
+open ~/Downloads/Cooper-*.dmg
+```
+
+### Windows (PowerShell)
+
+```powershell
+gh release download --repo idofrizler/copilot-ui --pattern "Cooper-*.exe" --dir $env:TEMP --clobber
+Start-Process (Get-ChildItem $env:TEMP\Cooper-*.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+```
+
 ## Build
 
 ```bash
