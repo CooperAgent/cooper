@@ -73,11 +73,11 @@ describe('SettingsModal Voice Section', () => {
   });
 
   it('shows status indicator with correct text for uninitialized state', () => {
-    render(<SettingsModal {...defaultProps} />);
+    render(<SettingsModal {...defaultProps} onInitVoice={vi.fn()} />);
     fireEvent.click(screen.getByText('Voice'));
 
-    expect(screen.getByText('Speech-to-Text Status')).toBeInTheDocument();
-    expect(screen.getByText('Click mic button to initialize')).toBeInTheDocument();
+    expect(screen.getByText('Speech-to-Text')).toBeInTheDocument();
+    expect(screen.getByText(/Click to initialize/)).toBeInTheDocument();
   });
 
   it('shows loading status when model is loading', () => {
@@ -91,7 +91,7 @@ describe('SettingsModal Voice Section', () => {
     render(<SettingsModal {...defaultProps} modelLoaded={true} />);
     fireEvent.click(screen.getByText('Voice'));
 
-    expect(screen.getByText('Ready (Offline)')).toBeInTheDocument();
+    expect(screen.getByText(/Ready.*use mic button/)).toBeInTheDocument();
   });
 
   it('shows recording status when recording', () => {
@@ -116,7 +116,7 @@ describe('SettingsModal Voice Section', () => {
   });
 
   it('calls onToggleAlwaysListening when Always Listening toggle is clicked', () => {
-    render(<SettingsModal {...defaultProps} />);
+    render(<SettingsModal {...defaultProps} modelLoaded={true} />);
     fireEvent.click(screen.getByText('Voice'));
 
     // Find the Voice Input section and get the first toggle button (Always Listening)

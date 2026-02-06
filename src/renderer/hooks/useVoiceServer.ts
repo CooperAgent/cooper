@@ -64,6 +64,19 @@ export function useVoiceServer(options: UseVoiceServerOptions = {}) {
     isModelLoadedRef.current = state.isModelLoaded;
   }, [state.isModelLoaded]);
 
+  // Check if model is already loaded on mount (e.g. loaded by App.tsx early init)
+  useEffect(() => {
+    if (state.isModelLoaded) return;
+    const voice = window.electronAPI?.voice;
+    if (!voice) return;
+    voice.getState().then((voiceState) => {
+      if (voiceState.isModelLoaded) {
+        isModelLoadedRef.current = true;
+        setState((prev) => ({ ...prev, isModelLoaded: true }));
+      }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     isRecordingRef.current = state.isRecording;
   }, [state.isRecording]);
@@ -159,6 +172,18 @@ export function useVoiceServer(options: UseVoiceServerOptions = {}) {
     }
 
     // Use ref to get latest value (avoids stale closure issue)
+    if (!isModelLoadedRef.current) {
+      // Double-check with main process - the mount effect may not have resolved yet
+      try {
+        const voiceState = await window.electronAPI.voice.getState();
+        if (voiceState.isModelLoaded) {
+          isModelLoadedRef.current = true;
+          setState((prev) => ({ ...prev, isModelLoaded: true }));
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     if (!isModelLoadedRef.current) {
       const error = 'Voice model not loaded';
       console.error('[useVoiceServer] startRecording error:', error);

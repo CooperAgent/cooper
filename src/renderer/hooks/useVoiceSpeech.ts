@@ -40,6 +40,9 @@ export interface UseVoiceSpeechReturn extends VoiceSpeechState {
   clearTranscript: () => void;
   loadModel: () => Promise<void>;
   keywords: typeof VOICE_KEYWORDS;
+  availableVoices: SpeechSynthesisVoice[];
+  selectedVoiceURI: string | null;
+  setSelectedVoiceURI: (uri: string | null) => void;
 }
 
 export function useVoiceSpeech(): UseVoiceSpeechReturn {
@@ -54,9 +57,39 @@ export function useVoiceSpeech(): UseVoiceSpeechReturn {
   // TTS state
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceURI, setSelectedVoiceURIState] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('tts-voice-uri');
+    } catch {
+      return null;
+    }
+  });
+
+  const setSelectedVoiceURI = useCallback((uri: string | null) => {
+    setSelectedVoiceURIState(uri);
+    try {
+      if (uri) localStorage.setItem('tts-voice-uri', uri);
+      else localStorage.removeItem('tts-voice-uri');
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // Check browser support for TTS
   const isSupported = typeof window !== 'undefined' && !!window.speechSynthesis;
+
+  // Load available voices
+  useEffect(() => {
+    if (!isSupported) return;
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices().filter((v) => v.lang.startsWith('en-US'));
+      if (voices.length > 0) setAvailableVoices(voices);
+    };
+    loadVoices();
+    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
+  }, [isSupported]);
 
   // Stub functions for STT (now handled by MicButton)
   const startRecording = useCallback(() => {
@@ -109,6 +142,14 @@ export function useVoiceSpeech(): UseVoiceSpeechReturn {
         utterance.pitch = 1.0;
         utterance.volume = 0.9;
 
+        // Apply selected voice
+        if (selectedVoiceURI) {
+          const voice = window.speechSynthesis
+            .getVoices()
+            .find((v) => v.voiceURI === selectedVoiceURI);
+          if (voice) utterance.voice = voice;
+        }
+
         utterance.onstart = () => setIsSpeaking(true);
         utterance.onend = () => {
           setIsSpeaking(false);
@@ -122,7 +163,7 @@ export function useVoiceSpeech(): UseVoiceSpeechReturn {
         window.speechSynthesis.speak(utterance);
       });
     },
-    [isMuted]
+    [isMuted, selectedVoiceURI]
   );
 
   const stopSpeaking = useCallback(() => {
@@ -161,5 +202,8 @@ export function useVoiceSpeech(): UseVoiceSpeechReturn {
     clearTranscript,
     loadModel,
     keywords: VOICE_KEYWORDS,
+    availableVoices,
+    selectedVoiceURI,
+    setSelectedVoiceURI,
   };
 }
