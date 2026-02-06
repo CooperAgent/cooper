@@ -397,7 +397,8 @@ describe('SessionHistory Component', () => {
 
       // Regular session shows name
       expect(screen.getByText('Regular session')).toBeInTheDocument();
-      // Worktree session shows branch name instead of session name
+      // Worktree session shows its session name (and branch as secondary text)
+      expect(screen.getByText('Worktree session')).toBeInTheDocument();
       expect(screen.getByText('feature/my-branch')).toBeInTheDocument();
     });
   });
@@ -814,7 +815,8 @@ describe('SessionHistory Component', () => {
         />
       );
 
-      // Branch name should be displayed instead of session name
+      // Session name should be displayed (branch is shown as secondary text)
+      expect(screen.getByText('Worktree session')).toBeInTheDocument();
       expect(screen.getByText('feature-branch')).toBeInTheDocument();
     });
 

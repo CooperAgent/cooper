@@ -557,11 +557,16 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
                           />
                         )}
 
-                        {/* Session Name/Branch */}
+                        {/* Session Name */}
                         <span className="flex-1 min-w-0 text-sm text-copilot-text truncate flex items-center gap-1.5">
-                          {session.worktree
-                            ? session.worktree.branch
-                            : session.name || `Session ${session.sessionId.slice(0, 8)}...`}
+                          <span className="min-w-0 truncate">
+                            {session.name || `Session ${session.sessionId.slice(0, 8)}...`}
+                          </span>
+                          {session.worktree?.branch && session.worktree.branch !== session.name && (
+                            <span className="min-w-0 truncate text-xs text-copilot-text-muted">
+                              {session.worktree.branch}
+                            </span>
+                          )}
                           {session.worktree && (
                             <GitBranchIcon
                               size={12}
