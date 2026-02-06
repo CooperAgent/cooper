@@ -275,13 +275,16 @@ class VoiceService {
   }
 
   private normalizeTranscript(text: string): string {
-    return text
+    const result = text
       .split('\n')
       .map((line) => line.replace(/^\s*\[[0-9:.]+\s*-->\s*[0-9:.]+\]\s*/g, '').trim())
       .filter(Boolean)
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();
+    // Whisper outputs [BLANK_AUDIO] when no speech is detected
+    if (/^\[.*BLANK.*\]$/i.test(result)) return '';
+    return result;
   }
 
   private async runTranscription(pcmBuffer: Buffer): Promise<string> {

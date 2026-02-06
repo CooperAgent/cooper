@@ -65,6 +65,7 @@ import {
   HelpCircleIcon,
   ToolActivitySection,
   VoiceKeywordsPanel,
+  VolumeMuteIcon,
 } from './components';
 import {
   Status,
@@ -822,6 +823,9 @@ const App: React.FC = () => {
 
   // Settings modal state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsDefaultSection, setSettingsDefaultSection] = useState<
+    'themes' | 'voice' | 'sounds' | undefined
+  >(undefined);
   const [soundEnabled, setSoundEnabled] = useState(() => {
     const saved = localStorage.getItem('copilot-sound-enabled');
     return saved !== null ? saved === 'true' : true; // Default to enabled
@@ -841,6 +845,65 @@ const App: React.FC = () => {
   const { isRecording } = voiceSpeech;
   const voiceSpeakRef = useRef(voiceSpeech.speak);
   voiceSpeakRef.current = voiceSpeech.speak; // Keep ref updated
+
+  // Voice model initialization state
+  const [voiceModelLoading, setVoiceModelLoading] = useState(false);
+  const [voiceModelLoaded, setVoiceModelLoaded] = useState(false);
+  const [voiceInitError, setVoiceInitError] = useState<string | null>(null);
+
+  // Check if voice model is already loaded on mount
+  useEffect(() => {
+    if (!window.electronAPI?.voiceServer) return;
+    window.electronAPI.voiceServer.checkModel().then((check) => {
+      if (check.exists && check.binaryExists) {
+        window.electronAPI.voice.loadModel().then((result) => {
+          if (result.success) setVoiceModelLoaded(true);
+        });
+      }
+    });
+  }, []);
+
+  // Voice initialization handler for settings page
+  const handleInitVoice = useCallback(async () => {
+    if (!window.electronAPI?.voiceServer) return;
+    setVoiceModelLoading(true);
+    setVoiceInitError(null);
+    try {
+      const check = await window.electronAPI.voiceServer.checkModel();
+      if (!check.exists || !check.binaryExists) {
+        const dlResult = await window.electronAPI.voiceServer.downloadModel();
+        if (!dlResult.success) {
+          setVoiceInitError(dlResult.error || 'Download failed');
+          setVoiceModelLoading(false);
+          return;
+        }
+      }
+      const loadResult = await window.electronAPI.voice.loadModel();
+      if (loadResult.success) {
+        setVoiceModelLoaded(true);
+      } else {
+        setVoiceInitError(loadResult.error || 'Failed to load model');
+      }
+    } catch (e: any) {
+      setVoiceInitError(e.message || 'Initialization failed');
+    } finally {
+      setVoiceModelLoading(false);
+    }
+  }, []);
+
+  // Open settings modal on voice tab (optionally auto-init)
+  const openSettingsVoice = useCallback(
+    (autoInit = false) => {
+      setSettingsDefaultSection('voice');
+      setShowSettingsModal(true);
+      if (autoInit && !voiceModelLoaded && !voiceModelLoading) {
+        // Trigger init after a short delay so modal renders first
+        setTimeout(() => handleInitVoice(), 100);
+      }
+    },
+    [voiceModelLoaded, voiceModelLoading, handleInitVoice]
+  );
+
   const prevActiveTabIdRef = useRef<string | null>(null);
   const soundEnabledRef = useRef(soundEnabled);
 
@@ -1213,10 +1276,14 @@ const App: React.FC = () => {
     }
   }, [isMobileOrTablet]);
 
-  // Reset textarea height when input is cleared
+  // Reset textarea height when input is cleared, grow when content is set programmatically
   useEffect(() => {
-    if (!inputValue && inputRef.current) {
+    if (!inputRef.current) return;
+    if (!inputValue) {
       inputRef.current.style.height = 'auto';
+    } else {
+      inputRef.current.style.height = 'auto';
+      inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 200) + 'px';
     }
   }, [inputValue]);
 
@@ -5273,7 +5340,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}
                   >
                     <div
-                      className={`max-w-[85%] rounded-lg px-4 py-2.5 overflow-hidden ${
+                      className={`max-w-[85%] rounded-lg px-4 py-2.5 overflow-hidden relative ${
                         message.role === 'user'
                           ? message.isPendingInjection
                             ? 'bg-copilot-warning text-white border border-dashed border-copilot-warning/50'
@@ -5281,6 +5348,19 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                           : 'bg-copilot-surface text-copilot-text'
                       }`}
                     >
+                      {/* Stop speaking overlay on last assistant message */}
+                      {message.role === 'assistant' &&
+                        index === lastAssistantIndex &&
+                        voiceSpeech.isSpeaking && (
+                          <button
+                            onClick={() => voiceSpeech.stopSpeaking()}
+                            className="absolute top-1.5 right-1.5 flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-copilot-warning text-white rounded-md hover:bg-copilot-warning/80 transition-colors z-10"
+                            title="Stop reading aloud"
+                          >
+                            <VolumeMuteIcon size={12} />
+                            Stop
+                          </button>
+                        )}
                       {/* Pending injection indicator */}
                       {message.isPendingInjection && (
                         <div className="flex items-center gap-1.5 text-[10px] opacity-80 mb-1.5">
@@ -6418,6 +6498,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     alwaysListening={alwaysListening}
                     onAlwaysListeningError={setAlwaysListeningError}
                     onAbortDetected={cancelVoiceAutoSend}
+                    onOpenSettings={() => openSettingsVoice(true)}
                   />
                 )}
                 {/* File Attach Button */}
@@ -7119,8 +7200,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                       isRecording={voiceSpeech.isRecording}
                       isSpeaking={voiceSpeech.isSpeaking}
                       isSupported={voiceSpeech.isSupported}
-                      isModelLoading={voiceSpeech.isModelLoading}
-                      modelLoaded={voiceSpeech.modelLoaded}
+                      isModelLoading={voiceModelLoading}
+                      modelLoaded={voiceModelLoaded}
                       alwaysListening={alwaysListening}
                     />
                   </div>
@@ -7867,9 +7948,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         {/* Settings Modal */}
         <SettingsModal
           isOpen={showSettingsModal}
-          onClose={() => setShowSettingsModal(false)}
+          onClose={() => {
+            setShowSettingsModal(false);
+            setSettingsDefaultSection(undefined);
+          }}
           soundEnabled={soundEnabled}
           onSoundEnabledChange={handleSoundEnabledChange}
+          defaultSection={settingsDefaultSection}
           // Voice settings
           voiceSupported={voiceSpeech.isSupported}
           voiceMuted={voiceSpeech.isMuted}
@@ -7881,10 +7966,14 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
           // Voice status
           isRecording={voiceSpeech.isRecording}
           isSpeaking={voiceSpeech.isSpeaking}
-          isModelLoading={voiceSpeech.isModelLoading}
-          modelLoaded={voiceSpeech.modelLoaded}
-          voiceError={voiceSpeech.error}
+          isModelLoading={voiceModelLoading}
+          modelLoaded={voiceModelLoaded}
+          voiceError={voiceInitError}
           alwaysListeningError={alwaysListeningError}
+          onInitVoice={handleInitVoice}
+          availableVoices={voiceSpeech.availableVoices}
+          selectedVoiceURI={voiceSpeech.selectedVoiceURI}
+          onVoiceChange={voiceSpeech.setSelectedVoiceURI}
         />
 
         {/* Welcome Wizard - Spotlight Tour */}

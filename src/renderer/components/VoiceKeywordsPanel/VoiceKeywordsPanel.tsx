@@ -46,11 +46,11 @@ export const VoiceKeywordsPanel: React.FC<VoiceKeywordsPanelProps> = ({
             isModelLoading
               ? 'bg-copilot-warning animate-pulse'
               : isRecording
-                ? 'bg-copilot-error animate-pulse'
+                ? 'bg-copilot-success animate-pulse'
                 : isSpeaking
                   ? 'bg-copilot-warning animate-pulse'
                   : alwaysListening && modelLoaded
-                    ? 'bg-copilot-success animate-pulse'
+                    ? 'bg-copilot-accent animate-pulse'
                     : modelLoaded
                       ? 'bg-copilot-success'
                       : 'bg-copilot-text-muted'

@@ -22,6 +22,7 @@ interface MicButtonProps {
   alwaysListening?: boolean; // If true, listen for wake words to auto-start recording.
   onAlwaysListeningError?: (error: string | null) => void;
   onAbortDetected?: () => void; // Called when "abort" is detected during always-listening
+  onOpenSettings?: () => void; // Called on first press when voice not initialized
 }
 
 interface DownloadProgress {
@@ -40,6 +41,7 @@ export const MicButton: React.FC<MicButtonProps> = ({
   alwaysListening = false,
   onAlwaysListeningError,
   onAbortDetected,
+  onOpenSettings,
 }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const [isSettingUp, setIsSettingUp] = useState(false);
@@ -192,9 +194,9 @@ export const MicButton: React.FC<MicButtonProps> = ({
       console.log('[MicButton] Toggle mode: stopping recording');
       stopRecording();
     } else {
-      // Not recording - start it
+      // Not recording - start it (handleSetupAndRecord handles init if needed)
       console.log('[MicButton] Toggle mode: starting recording');
-      isHoldingRef.current = true; // Reuse flag for setup flow
+      isHoldingRef.current = true;
       await handleSetupAndRecord();
       isHoldingRef.current = false;
     }
@@ -252,13 +254,13 @@ export const MicButton: React.FC<MicButtonProps> = ({
 
     if (alwaysListening) {
       if (isAlwaysListeningLoading) {
-        return '⏳ Downloading wake word model (~39MB)...';
+        return 'Downloading wake word model (~39MB)...';
       }
       if (isAlwaysListeningActive) {
-        return '🟣 Listening for "Hey Cooper"...';
+        return 'Listening for "Hey Cooper"...';
       }
       if (isTinyModelLoaded) {
-        return '🟣 Say "Hey Cooper" to start';
+        return 'Say "Hey Cooper" to start';
       }
       return 'Click to setup wake words';
     }
@@ -300,16 +302,16 @@ export const MicButton: React.FC<MicButtonProps> = ({
       >
         {isRecording ? (
           <div className="mic-recording-indicator">
-            <MicrophoneIcon size={20} />
+            <MicrophoneIcon size={18} />
             <span className="pulse-ring pulse-ring-green" />
           </div>
         ) : isSettingUp || isProcessing ? (
           <div className="mic-setup-indicator">
-            <MicrophoneIcon size={20} />
+            <MicrophoneIcon size={18} />
             <span className="setup-spinner" />
           </div>
         ) : (
-          <MicrophoneIcon size={20} />
+          <MicrophoneIcon size={18} />
         )}
       </button>
 
@@ -330,9 +332,7 @@ export const MicButton: React.FC<MicButtonProps> = ({
         </div>
       )}
 
-      {isRecording && (
-        <div className="mic-recording-status mic-listening-status">🟢 Listening...</div>
-      )}
+      {isRecording && <div className="mic-recording-status mic-listening-status">Listening...</div>}
     </div>
   );
 };
