@@ -292,6 +292,41 @@ describe('SessionHistory Component', () => {
       expect(screen.getByText('Last 30 Days')).toBeInTheDocument();
       expect(screen.getByText('Older')).toBeInTheDocument();
     });
+
+    it('orders sessions newest-first within each timeframe', async () => {
+      const newerDate = new Date();
+      const olderDate = new Date(newerDate.getTime() - 60 * 60 * 1000);
+
+      const older = {
+        sessionId: 'today-older',
+        name: 'Older today session',
+        modifiedTime: olderDate.toISOString(),
+      };
+      const newer = {
+        sessionId: 'today-newer',
+        name: 'Newer today session',
+        modifiedTime: newerDate.toISOString(),
+      };
+
+      await renderAndSettle(
+        <SessionHistory
+          isOpen={true}
+          onClose={mockOnClose}
+          sessions={[older, newer]}
+          onResumeSession={mockOnResumeSession}
+          onDeleteSession={mockOnDeleteSession}
+          activeSessions={[]}
+          activeSessionId={null}
+          onSwitchToSession={mockOnSwitchToSession}
+        />
+      );
+
+      const newerEl = screen.getByText('Newer today session');
+      const olderEl = screen.getByText('Older today session');
+      expect(
+        newerEl.compareDocumentPosition(olderEl) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+    });
   });
 
   describe('Session Display', () => {

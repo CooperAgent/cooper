@@ -74,6 +74,13 @@ const categorizeByTime = (sessions: DisplaySession[]) => {
     }
   }
 
+  // Newest-first within each timeframe
+  for (const category of categories) {
+    category.sessions.sort(
+      (a, b) => new Date(b.modifiedTime).getTime() - new Date(a.modifiedTime).getTime()
+    );
+  }
+
   return categories.filter((c) => c.sessions.length > 0);
 };
 
