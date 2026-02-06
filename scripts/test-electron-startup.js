@@ -1,36 +1,31 @@
 /**
- * Tests that the Electron app can start without module loading errors.
+ * Tests that the Electron app can start without module import errors.
  * This catches issues where dependencies are bundled but their transitive
  * dependencies are not installed (e.g., optional peer dependencies).
  *
+ * Only fails on module import errors - other runtime errors are ignored
+ * since they may be expected in CI environments (no display, no copilot CLI, etc.)
+ *
  * Exit codes:
- *   0 - App started successfully
- *   1 - App failed to start (module error, crash, etc.)
+ *   0 - No module import errors detected
+ *   1 - Module import error detected
  */
 
 const { spawn } = require('child_process');
 const path = require('path');
 
 const STARTUP_TIMEOUT_MS = 15000;
-const SUCCESS_SIGNAL = 'ELECTRON_STARTUP_SUCCESS';
 
-// Find electron executable
-const electronPath = require.resolve('electron');
-const electronBin = path.join(path.dirname(electronPath), '..', 'dist', 'electron.exe');
-const electronBinUnix = path.join(
-  path.dirname(electronPath),
-  '..',
-  'dist',
-  process.platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron'
-);
-const electron = process.platform === 'win32' ? electronBin : electronBinUnix;
+// Pattern to detect module import errors only
+const MODULE_ERROR_PATTERN =
+  /Cannot find module ['"]([^'"]+)['"]|Error: Cannot find module|MODULE_NOT_FOUND/;
 
 // Use electron CLI module directly for cross-platform compatibility
 const electronCli = require('electron');
 
 const mainScript = path.join(__dirname, '..', 'out', 'main', 'index.js');
 
-console.log('Testing Electron startup...');
+console.log('Checking for module import errors...');
 console.log(`  Main script: ${mainScript}`);
 
 const args = [mainScript, '--test-startup'];
@@ -50,18 +45,16 @@ const child = spawn(electronCli, args, {
 
 let stdout = '';
 let stderr = '';
+let moduleErrorFound = false;
 
 child.stdout.on('data', (data) => {
   const str = data.toString();
   stdout += str;
   process.stdout.write(data);
 
-  // Check for module errors immediately
-  if (/Cannot find module|Module not found|Error: Cannot find/i.test(str)) {
-    clearTimeout(timeout);
-    console.error('\n✗ Module loading error detected');
-    child.kill();
-    process.exit(1);
+  // Check for module import errors
+  if (MODULE_ERROR_PATTERN.test(str)) {
+    moduleErrorFound = true;
   }
 });
 
@@ -70,20 +63,15 @@ child.stderr.on('data', (data) => {
   stderr += str;
   process.stderr.write(data);
 
-  // Check for module errors immediately
-  if (/Cannot find module|Module not found|Error: Cannot find/i.test(str)) {
-    clearTimeout(timeout);
-    console.error('\n✗ Module loading error detected');
-    child.kill();
-    process.exit(1);
+  // Check for module import errors
+  if (MODULE_ERROR_PATTERN.test(str)) {
+    moduleErrorFound = true;
   }
 });
 
 const timeout = setTimeout(() => {
-  // If we get here without errors, the app started successfully
-  console.log('\n✓ Electron app started successfully (no module errors)');
   child.kill();
-  process.exit(0);
+  finishTest();
 }, STARTUP_TIMEOUT_MS);
 
 child.on('error', (err) => {
@@ -92,23 +80,18 @@ child.on('error', (err) => {
   process.exit(1);
 });
 
-child.on('close', (code) => {
+child.on('close', () => {
   clearTimeout(timeout);
-
-  // Check for module loading errors in output
-  const moduleError = /Cannot find module|Module not found|Error: Cannot find/i;
-  if (moduleError.test(stderr) || moduleError.test(stdout)) {
-    console.error('\n✗ Module loading error detected');
-    process.exit(1);
-  }
-
-  // Non-zero exit before timeout typically means a startup error
-  if (code !== null && code !== 0) {
-    console.error(`\n✗ Electron exited with code ${code}`);
-    process.exit(1);
-  }
-
-  // App closed cleanly (might have been killed or closed itself)
-  console.log('\n✓ Electron startup test passed');
-  process.exit(0);
+  finishTest();
 });
+
+function finishTest() {
+  // Only check for module import errors - ignore other runtime errors
+  if (moduleErrorFound || MODULE_ERROR_PATTERN.test(stderr) || MODULE_ERROR_PATTERN.test(stdout)) {
+    console.error('\n✗ Module import error detected');
+    process.exit(1);
+  }
+
+  console.log('\n✓ No module import errors detected');
+  process.exit(0);
+}

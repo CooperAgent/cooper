@@ -69,7 +69,7 @@ jobs:
       - name: Install Electron binary
         run: node node_modules/electron/install.js
 
-      - name: Test Electron startup
+      - name: Check for module import errors
         run: node scripts/test-electron-startup.js
         env:
           DISPLAY: ':99'
