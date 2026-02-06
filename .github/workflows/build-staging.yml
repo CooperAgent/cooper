@@ -66,6 +66,9 @@ jobs:
           sudo apt-get install -y xvfb
           Xvfb :99 -screen 0 1024x768x24 &
 
+      - name: Install Electron binary
+        run: node node_modules/electron/install.js
+
       - name: Test Electron startup
         run: node scripts/test-electron-startup.js
         env:
