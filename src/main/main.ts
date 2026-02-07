@@ -3309,6 +3309,45 @@ ipcMain.handle('git:checkoutBranch', async (_event, data: { cwd: string; branchN
   }
 });
 
+// Git operations - switch to an existing branch
+ipcMain.handle('git:switchBranch', async (_event, data: { cwd: string; branchName: string }) => {
+  try {
+    const branch = (data.branchName || '').trim();
+    if (!branch) {
+      return { success: false, error: 'Branch name is required' };
+    }
+
+    // Try different methods to switch to the branch
+    // Method 1: Try git switch (for local branches)
+    try {
+      await execAsync(`git switch "${branch.replace(/"/g, '\\"')}"`, { cwd: data.cwd });
+      return { success: true };
+    } catch (switchError) {
+      // Method 2: Try git checkout (handles more cases)
+      try {
+        await execAsync(`git checkout "${branch.replace(/"/g, '\\"')}"`, { cwd: data.cwd });
+        return { success: true };
+      } catch (checkoutError) {
+        // Method 3: Branch might not exist locally, try to create from remote tracking
+        try {
+          await execAsync(
+            `git checkout -b "${branch.replace(/"/g, '\\"')}" "origin/${branch.replace(/"/g, '\\"')}"`,
+            { cwd: data.cwd }
+          );
+          return { success: true };
+        } catch (trackingError) {
+          // All methods failed, return the last error
+          console.error('Git switch branch - all methods failed:', trackingError);
+          return { success: false, error: String(trackingError) };
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Git switch branch failed:', error);
+    return { success: false, error: String(error) };
+  }
+});
+
 // Git operations - merge worktree branch to main/master
 ipcMain.handle(
   'git:mergeToMain',
