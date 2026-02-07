@@ -124,9 +124,19 @@ export const GitBranchWidget: React.FC<GitBranchWidgetProps> = ({
         onBranchChange?.();
       } else {
         console.error('Failed to switch branch:', result.error);
+        // Show user-friendly error message
+        let errorMsg = 'Failed to switch branch';
+        if (result.error?.includes('uncommitted') || result.error?.includes('overwritten')) {
+          errorMsg =
+            'Cannot switch: you have uncommitted changes. Please commit or stash them first.';
+        } else if (result.error?.includes('not found') || result.error?.includes('did not match')) {
+          errorMsg = `Branch "${targetBranch}" not found`;
+        }
+        alert(errorMsg);
       }
     } catch (err) {
       console.error('Failed to switch branch:', err);
+      alert('Failed to switch branch. See console for details.');
     } finally {
       setIsSwitching(false);
       setIsDropdownOpen(false);
