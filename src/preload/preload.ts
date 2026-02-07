@@ -71,6 +71,13 @@ const electronAPI = {
     ): Promise<{ success: boolean }> => {
       return ipcRenderer.invoke('copilot:saveOpenSessions', sessions);
     },
+    // Persist a single session's mark/note immediately
+    saveSessionMark: (
+      sessionId: string,
+      mark: { markedForReview?: boolean; reviewNote?: string }
+    ): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('copilot:saveSessionMark', { sessionId, mark });
+    },
     renameSession: (sessionId: string, name: string): Promise<{ success: boolean }> => {
       return ipcRenderer.invoke('copilot:renameSession', { sessionId, name });
     },
@@ -808,6 +815,12 @@ const electronAPI = {
       return ipcRenderer.invoke('skills:getAll', cwd);
     },
   },
+  // Copilot Instructions Management
+  instructions: {
+    getAll: (cwd?: string): Promise<{ instructions: Instruction[]; errors: string[] }> => {
+      return ipcRenderer.invoke('instructions:getAll', cwd);
+    },
+  },
   // Browser Automation Management
   browser: {
     hasActive: (): Promise<{ active: boolean }> => {
@@ -1085,6 +1098,14 @@ interface Skill {
   path: string;
   type: 'personal' | 'project';
   source: 'copilot' | 'claude';
+}
+
+// Copilot Instruction types
+interface Instruction {
+  name: string;
+  path: string;
+  type: 'personal' | 'project' | 'organization';
+  scope: 'repository' | 'path-specific';
 }
 
 // Worktree Session types
