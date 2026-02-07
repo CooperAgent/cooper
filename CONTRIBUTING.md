@@ -27,3 +27,7 @@ Thanks for your interest in contributing! Here's how to get started.
 ## Reporting Issues
 
 Open a GitHub issue with a clear description and steps to reproduce. For security vulnerabilities, see [SECURITY.md](SECURITY.md).
+
+## Community
+
+Join our [Discord server](https://discord.gg/HPmg6ygq6d) to report bugs, request features, or get involved with the project. We'd love to have you!
