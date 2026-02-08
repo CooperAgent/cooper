@@ -139,11 +139,16 @@ jobs:
         run: npm run prebuild-info && npx electron-vite build
 
       - name: Set up macOS keychain
-        if: runner.os == 'macOS' && env.CSC_LINK
+        if: runner.os == 'macOS'
         env:
           CSC_LINK: ${{ secrets.MAC_CERTS }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
         run: |
+          if [ -z "$CSC_LINK" ]; then
+            echo "No signing certificate provided, skipping keychain setup"
+            exit 0
+          fi
+
           KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
           KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
 
