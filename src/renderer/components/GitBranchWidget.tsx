@@ -3,13 +3,19 @@ import React, { useState, useEffect } from 'react';
 interface GitBranchWidgetProps {
   cwd?: string;
   refreshKey?: number;
+  onWorktreeChange?: (isWorktree: boolean) => void;
 }
 
-export const GitBranchWidget: React.FC<GitBranchWidgetProps> = ({ cwd, refreshKey }) => {
+export const GitBranchWidget: React.FC<GitBranchWidgetProps> = ({
+  cwd,
+  refreshKey,
+  onWorktreeChange,
+}) => {
   const [branch, setBranch] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isWorktree, setIsWorktree] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!cwd) {
@@ -41,12 +47,15 @@ export const GitBranchWidget: React.FC<GitBranchWidgetProps> = ({ cwd, refreshKe
         });
         // Also check if cwd itself is a worktree path
         const isWorktreePath = cwd.includes('.copilot-sessions');
-        setIsWorktree(!!worktreeSession || isWorktreePath);
+        const worktreeValue = !!worktreeSession || isWorktreePath;
+        setIsWorktree(worktreeValue);
+        onWorktreeChange?.(worktreeValue);
       } catch (err) {
         console.error('Failed to get git branch:', err);
         setError('Failed to get branch');
         setBranch(null);
         setIsWorktree(false);
+        onWorktreeChange?.(false);
       } finally {
         setIsLoading(false);
       }
@@ -83,6 +92,18 @@ export const GitBranchWidget: React.FC<GitBranchWidgetProps> = ({ cwd, refreshKe
     );
   }
 
+  const handleCopy = () => {
+    if (branch) {
+      navigator.clipboard
+        .writeText(branch)
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        })
+        .catch(() => {});
+    }
+  };
+
   return (
     <div className="flex items-center gap-1.5 text-xs min-w-0" data-testid="git-branch-widget">
       <svg
@@ -102,14 +123,38 @@ export const GitBranchWidget: React.FC<GitBranchWidgetProps> = ({ cwd, refreshKe
       <span className="text-copilot-text font-mono truncate" title={branch}>
         {branch}
       </span>
-      {isWorktree && (
-        <span
-          className="px-1.5 py-0.5 bg-copilot-accent/20 text-copilot-accent rounded text-[10px] font-medium shrink-0"
-          title="This session is running in an isolated worktree"
-        >
-          worktree
-        </span>
-      )}
+      <button
+        className="shrink-0 p-0.5 rounded hover:bg-copilot-surface text-copilot-text-muted hover:text-copilot-text transition-colors"
+        title={copied ? 'Copied!' : 'Copy branch'}
+        aria-label={copied ? 'Copied!' : 'Copy branch'}
+        onClick={handleCopy}
+      >
+        {copied ? (
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="text-copilot-success"
+          >
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+        ) : (
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+          </svg>
+        )}
+      </button>
     </div>
   );
 };

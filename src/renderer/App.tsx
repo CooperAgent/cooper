@@ -589,6 +589,7 @@ const App: React.FC = () => {
   const [addCommandValue, setAddCommandValue] = useState('');
   const [showEditedFiles, setShowEditedFiles] = useState(false);
   const [cwdCopied, setCwdCopied] = useState(false);
+  const [isWorktreeSession, setIsWorktreeSession] = useState(false);
   const [filePreviewPath, setFilePreviewPath] = useState<string | null>(null);
   const [isGitRepo, setIsGitRepo] = useState<boolean>(true);
   const [showCommitModal, setShowCommitModal] = useState(false);
@@ -4861,9 +4862,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               {/* Git Branch */}
               <div className="px-4 py-3 border-b border-copilot-border">
                 <div className="text-xs text-copilot-text-muted uppercase tracking-wide mb-2">
-                  Git Branch
+                  Git Branch{isWorktreeSession && ' (worktree)'}
                 </div>
-                <GitBranchWidget cwd={activeTab?.cwd} refreshKey={activeTab?.gitBranchRefresh} />
+                <GitBranchWidget
+                  cwd={activeTab?.cwd}
+                  refreshKey={activeTab?.gitBranchRefresh}
+                  onWorktreeChange={setIsWorktreeSession}
+                />
               </div>
 
               {/* Edited Files Count */}
@@ -6913,12 +6918,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   <div className="px-3 py-2 border-b border-copilot-surface">
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <div className="text-[10px] text-copilot-text-muted uppercase tracking-wide">
-                        Git Branch
+                        Git Branch{isWorktreeSession && ' (worktree)'}
                       </div>
                     </div>
                     <GitBranchWidget
                       cwd={activeTab?.cwd}
                       refreshKey={activeTab?.gitBranchRefresh}
+                      onWorktreeChange={setIsWorktreeSession}
                     />
                   </div>
 
