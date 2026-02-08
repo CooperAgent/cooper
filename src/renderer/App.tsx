@@ -97,6 +97,7 @@ import {
   LISA_REVIEW_APPROVE_SIGNAL,
   LISA_REVIEW_REJECT_PREFIX,
   Skill,
+  Instruction,
 } from './types';
 import { generateId, generateTabName, setTabCounter } from './utils/session';
 import { playNotificationSound } from './utils/sound';
@@ -578,6 +579,7 @@ const App: React.FC = () => {
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [previousSessions, setPreviousSessions] = useState<PreviousSession[]>([]);
   const [showSessionHistory, setShowSessionHistory] = useState(false);
   const [showAllowedCommands, setShowAllowedCommands] = useState(false);
@@ -662,6 +664,10 @@ const App: React.FC = () => {
   // Agent Skills state
   const [skills, setSkills] = useState<Skill[]>([]);
   const [showSkills, setShowSkills] = useState(false);
+
+  // Copilot Instructions state
+  const [instructions, setInstructions] = useState<Instruction[]>([]);
+  const [showInstructions, setShowInstructions] = useState(false);
 
   // Voice control settings
   const [pushToTalk, setPushToTalk] = useState(() => {
@@ -828,7 +834,7 @@ const App: React.FC = () => {
   // Settings modal state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsDefaultSection, setSettingsDefaultSection] = useState<
-    'themes' | 'voice' | 'sounds' | undefined
+    'themes' | 'voice' | 'sounds' | 'commands' | undefined
   >(undefined);
   const [soundEnabled, setSoundEnabled] = useState(() => {
     const saved = localStorage.getItem('copilot-sound-enabled');
@@ -1139,6 +1145,7 @@ const App: React.FC = () => {
         reviewNote: t.reviewNote,
         untrackedFiles: t.untrackedFiles,
         fileViewMode: t.fileViewMode,
+        yoloMode: t.yoloMode,
       }));
       window.electronAPI.copilot.saveOpenSessions(openSessions);
     }
@@ -1342,6 +1349,23 @@ const App: React.FC = () => {
     loadSkills();
   }, [activeTab?.cwd]);
 
+  // Load Copilot Instructions on startup and when active tab changes
+  useEffect(() => {
+    const loadInstructions = async () => {
+      try {
+        const cwd = activeTab?.cwd;
+        const result = await window.electronAPI.instructions.getAll(cwd);
+        setInstructions(result.instructions || []);
+        if (result.errors?.length > 0) {
+          console.warn('Some instructions had errors:', result.errors);
+        }
+      } catch (error) {
+        console.error('Failed to load instructions:', error);
+      }
+    };
+    loadInstructions();
+  }, [activeTab?.cwd]);
+
   // Helper to update a specific tab
   const updateTab = useCallback((tabId: string, updates: Partial<TabState>) => {
     setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, ...updates } : tab)));
@@ -1388,6 +1412,16 @@ const App: React.FC = () => {
         })
         .catch((error) => {
           console.error('Failed to load global safe commands:', error);
+        });
+
+      // Load favorite models in background (non-blocking)
+      window.electronAPI.copilot
+        .getFavoriteModels()
+        .then((favorites) => {
+          setFavoriteModels(favorites);
+        })
+        .catch((error) => {
+          console.error('Failed to load favorite models:', error);
         });
 
       // If no sessions exist, we need to create one (with trust check)
@@ -1470,6 +1504,7 @@ const App: React.FC = () => {
               lisaConfig,
               markedForReview: s.markedForReview,
               reviewNote: s.reviewNote,
+              yoloMode: s.yoloMode,
             };
           });
 
@@ -1544,6 +1579,7 @@ const App: React.FC = () => {
             currentIntentTimestamp: null,
             gitBranchRefresh: 0,
             lisaConfig,
+            yoloMode: s.yoloMode,
           },
         ];
       });
@@ -2362,6 +2398,17 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       }
     );
 
+    const unsubscribeYoloModeChanged = window.electronAPI.copilot.onYoloModeChanged((data) => {
+      if (data.enabled && data.flushedCount > 0) {
+        // Clear pending confirmations that were flushed by the backend
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === data.sessionId ? { ...tab, pendingConfirmations: [] } : tab
+          )
+        );
+      }
+    });
+
     return () => {
       unsubscribeReady();
       unsubscribeDelta();
@@ -2376,6 +2423,7 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeUsageInfo();
       unsubscribeCompactionStart();
       unsubscribeCompactionComplete();
+      unsubscribeYoloModeChanged();
     };
   }, []);
 
@@ -3899,6 +3947,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       useRalphWiggum?: boolean;
       ralphMaxIterations?: number;
       useLisaSimpson?: boolean;
+      yoloMode?: boolean;
     }
   ) => {
     try {
@@ -3927,6 +3976,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         await window.electronAPI.copilot.addAlwaysAllowed(result.sessionId, cmd);
       }
 
+      // Enable yolo mode if requested
+      if (autoStart?.yoloMode) {
+        await window.electronAPI.copilot.setYoloMode(result.sessionId, true);
+      }
+
       const newTab: TabState = {
         id: result.sessionId,
         name: `${branch} (worktree)`,
@@ -3945,6 +3999,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         currentIntent: null,
         currentIntentTimestamp: null,
         gitBranchRefresh: 0,
+        yoloMode: autoStart?.yoloMode || false,
       };
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(result.sessionId);
@@ -4264,11 +4319,25 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     const tab = tabs.find((t) => t.id === tabId);
     if (!tab) return;
     const newMarked = !tab.markedForReview;
+    const newReviewNote = newMarked ? tab.reviewNote : undefined;
     updateTab(tabId, {
       markedForReview: newMarked,
       // Clear note if unmarking
-      reviewNote: newMarked ? tab.reviewNote : undefined,
+      reviewNote: newReviewNote,
     });
+    // Persist mark immediately to avoid races on app quit
+    try {
+      window.electronAPI.copilot
+        .saveSessionMark(tabId, {
+          markedForReview: newMarked,
+          reviewNote: newReviewNote,
+        })
+        .catch((e) => {
+          console.error('Failed to persist session mark:', e);
+        });
+    } catch (e) {
+      console.error('Failed to call saveSessionMark:', e);
+    }
     setContextMenu(null);
   };
 
@@ -4282,13 +4351,25 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
   const handleSaveNote = () => {
     if (!noteInputModal) return;
     const note = noteInputValue.trim();
-    updateTab(noteInputModal.tabId, {
+    const tabId = noteInputModal.tabId;
+    const existingMarked = tabs.find((t) => t.id === tabId)?.markedForReview;
+    const newMarked = note ? true : existingMarked;
+    updateTab(tabId, {
       reviewNote: note || undefined,
       // Auto-mark for review when adding a note
-      markedForReview: note
-        ? true
-        : tabs.find((t) => t.id === noteInputModal.tabId)?.markedForReview,
+      markedForReview: newMarked,
     });
+    // Persist mark/note immediately
+    try {
+      window.electronAPI.copilot
+        .saveSessionMark(tabId, {
+          markedForReview: newMarked,
+          reviewNote: note || undefined,
+        })
+        .catch((e) => console.error('Failed to persist session mark:', e));
+    } catch (e) {
+      console.error('Failed to call saveSessionMark:', e);
+    }
     setNoteInputModal(null);
     setNoteInputValue('');
     // Scroll to show the note banner at the bottom
@@ -4301,6 +4382,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
   const handleClearNote = (tabId: string) => {
     updateTab(tabId, { reviewNote: undefined });
+    try {
+      window.electronAPI.copilot
+        .saveSessionMark(tabId, { reviewNote: undefined })
+        .catch((e) => console.error('Failed to persist session mark:', e));
+    } catch (e) {
+      console.error('Failed to call saveSessionMark:', e);
+    }
   };
 
   const handleResumePreviousSession = async (prevSession: PreviousSession) => {
@@ -4480,10 +4568,38 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     }
   };
 
+  const handleToggleFavoriteModel = async (modelId: string) => {
+    const isFavorite = favoriteModels.includes(modelId);
+    try {
+      if (isFavorite) {
+        await window.electronAPI.copilot.removeFavoriteModel(modelId);
+        setFavoriteModels((prev) => prev.filter((m) => m !== modelId));
+      } else {
+        await window.electronAPI.copilot.addFavoriteModel(modelId);
+        setFavoriteModels((prev) => [...prev, modelId]);
+      }
+    } catch (error) {
+      console.error('Failed to toggle favorite model:', error);
+    }
+  };
+
   // Memoize cleaned edited files for the active tab
   const cleanedEditedFiles = useMemo(() => {
     return activeTab ? getCleanEditedFiles(activeTab.editedFiles) : [];
   }, [activeTab]);
+
+  // Memoize sorted models with favorites first
+  const sortedModels = useMemo(() => {
+    const favorites = availableModels.filter((m) => favoriteModels.includes(m.id));
+    const nonFavorites = availableModels.filter((m) => !favoriteModels.includes(m.id));
+    return [...favorites, ...nonFavorites];
+  }, [availableModels, favoriteModels]);
+
+  // Calculate divider index (after last favorite, if any favorites exist)
+  const modelDividers = useMemo(() => {
+    const favoriteCount = availableModels.filter((m) => favoriteModels.includes(m.id)).length;
+    return favoriteCount > 0 ? [favoriteCount - 1] : [];
+  }, [availableModels, favoriteModels]);
 
   // Callbacks for TerminalProvider
   const handleOpenTerminal = useCallback(() => {
@@ -4640,9 +4756,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   label="Model"
                   icon={<MonitorIcon size={16} />}
                   value={activeTab?.model || null}
-                  options={availableModels.map((m) => ({
+                  options={sortedModels.map((m) => ({
                     id: m.id,
                     label: m.name || m.id,
+                    isFavorite: favoriteModels.includes(m.id),
                     rightContent: (
                       <span
                         className={`text-xs ${
@@ -4662,6 +4779,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   onSelect={(modelId) => {
                     handleModelChange(modelId);
                   }}
+                  onToggleFavorite={handleToggleFavoriteModel}
+                  dividers={modelDividers}
                   size="md"
                   testId="mobile-drawer-model-select"
                 />
@@ -4759,109 +4878,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   </div>
                 </div>
               )}
-
-              {/* Allowed Commands */}
-              <div className="border-b border-copilot-border">
-                <button
-                  onClick={() => {
-                    setShowAllowedCommands(!showAllowedCommands);
-                    if (!showAllowedCommands) {
-                      refreshAlwaysAllowed();
-                      refreshGlobalSafeCommands();
-                    }
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
-                >
-                  <ChevronRightIcon
-                    size={14}
-                    className={`transition-transform ${showAllowedCommands ? 'rotate-90' : ''}`}
-                  />
-                  <span>Allowed Commands</span>
-                  {(activeTab?.alwaysAllowed.length || 0) + globalSafeCommands.length > 0 && (
-                    <span className="ml-auto text-copilot-accent">
-                      {(activeTab?.alwaysAllowed.length || 0) + globalSafeCommands.length}
-                    </span>
-                  )}
-                </button>
-                {showAllowedCommands && (
-                  <div className="px-4 pb-3">
-                    {/* Add command input */}
-                    <div className="flex flex-col gap-2 mb-2">
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={addCommandScope}
-                          onChange={(e) =>
-                            setAddCommandScope(e.target.value as 'session' | 'global')
-                          }
-                          className="px-2 py-1.5 text-xs bg-copilot-surface border border-copilot-border rounded text-copilot-text shrink-0"
-                        >
-                          <option value="session">Session</option>
-                          <option value="global">Global</option>
-                        </select>
-                        <input
-                          type="text"
-                          value={addCommandValue}
-                          onChange={(e) => setAddCommandValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleAddAllowedCommand();
-                          }}
-                          placeholder="npm, git..."
-                          className="flex-1 min-w-0 px-2 py-1.5 text-xs bg-copilot-surface border border-copilot-border rounded text-copilot-text placeholder:text-copilot-text-muted"
-                        />
-                        <button
-                          onClick={handleAddAllowedCommand}
-                          disabled={!addCommandValue.trim()}
-                          className="px-2 py-1.5 text-xs bg-copilot-accent text-copilot-text rounded disabled:opacity-50 shrink-0"
-                        >
-                          Add
-                        </button>
-                      </div>
-                    </div>
-                    {/* Commands list */}
-                    <div className="max-h-32 overflow-y-auto space-y-1">
-                      {(activeTab?.alwaysAllowed.length || 0) + globalSafeCommands.length === 0 ? (
-                        <div className="text-xs text-copilot-text-muted">No allowed commands</div>
-                      ) : (
-                        <>
-                          {globalSafeCommands.map((cmd) => (
-                            <div key={`global-${cmd}`} className="flex items-center gap-2 text-xs">
-                              <GlobeIcon size={12} className="text-copilot-accent" />
-                              <span className="flex-1 truncate font-mono text-copilot-text-muted">
-                                {cmd}
-                              </span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveGlobalSafeCommand(cmd);
-                                }}
-                                className="p-1 text-copilot-error hover:bg-copilot-surface rounded"
-                              >
-                                <CloseIcon size={14} />
-                              </button>
-                            </div>
-                          ))}
-                          {activeTab?.alwaysAllowed.map((cmd) => (
-                            <div key={`session-${cmd}`} className="flex items-center gap-2 text-xs">
-                              <span className="flex-1 truncate font-mono text-copilot-text-muted">
-                                {cmd}
-                              </span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveAlwaysAllowed(cmd);
-                                }}
-                                className="p-1 text-copilot-error hover:bg-copilot-surface rounded"
-                              >
-                                <CloseIcon size={14} />
-                              </button>
-                            </div>
-                          ))}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
 
               {/* MCP Servers */}
               <div className="border-b border-copilot-border">
@@ -4982,6 +4998,149 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   </div>
                 )}
               </div>
+
+              {/* Copilot Instructions */}
+              <div className="border-b border-copilot-border">
+                <button
+                  onClick={() => setShowInstructions(!showInstructions)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                >
+                  <ChevronRightIcon
+                    size={14}
+                    className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
+                  />
+                  <span>Instructions</span>
+                  {instructions.length > 0 && (
+                    <span className="ml-auto text-copilot-accent">{instructions.length}</span>
+                  )}
+                </button>
+                {showInstructions && (
+                  <div className="px-4 pb-3">
+                    {instructions.length === 0 ? (
+                      <div className="text-xs text-copilot-text-muted">
+                        No instruction files found
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {instructions.map((instruction) => (
+                          <div
+                            key={instruction.path}
+                            className="text-xs cursor-pointer hover:bg-copilot-surface rounded px-1 py-0.5"
+                            onClick={() => window.electronAPI.file.openFile(instruction.path)}
+                            title={instruction.path}
+                          >
+                            <div className="flex items-center gap-2">
+                              <FileIcon size={12} className="text-copilot-accent" />
+                              <span className="text-copilot-text">{instruction.name}</span>
+                            </div>
+                            <div className="text-[10px] text-copilot-text-muted ml-5 truncate">
+                              {instruction.type === 'personal'
+                                ? 'Personal'
+                                : instruction.type === 'organization'
+                                  ? 'Organization'
+                                  : 'Project'}
+                              {instruction.scope === 'path-specific' ? ' · Path-specific' : ''}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Allowed Commands - pinned to bottom */}
+            <div className="mt-auto border-t border-copilot-border">
+              <div className="flex items-center">
+                {!activeTab?.yoloMode && (
+                  <button
+                    onClick={() => {
+                      setShowAllowedCommands(!showAllowedCommands);
+                      if (!showAllowedCommands) {
+                        refreshAlwaysAllowed();
+                      }
+                    }}
+                    className="flex-1 flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                  >
+                    <ChevronRightIcon
+                      size={14}
+                      className={`transition-transform ${showAllowedCommands ? '-rotate-90' : ''}`}
+                    />
+                    <span>Allowed Commands</span>
+                    {(activeTab?.alwaysAllowed.length || 0) > 0 && (
+                      <span className="ml-auto text-copilot-accent">
+                        {activeTab?.alwaysAllowed.length || 0}
+                      </span>
+                    )}
+                  </button>
+                )}
+                {activeTab?.yoloMode && (
+                  <span className="flex-1 text-xs text-copilot-error/70 pl-4">
+                    All actions auto-approved — no confirmations will be shown
+                  </span>
+                )}
+                <button
+                  onClick={async () => {
+                    if (!activeTab) return;
+                    const newValue = !activeTab.yoloMode;
+                    await window.electronAPI.copilot.setYoloMode(activeTab.id, newValue);
+                    updateTab(activeTab.id, { yoloMode: newValue });
+                    if (newValue) {
+                      updateTab(activeTab.id, { pendingConfirmations: [] });
+                    }
+                  }}
+                  className={`shrink-0 px-4 py-3 text-sm transition-colors ${
+                    activeTab?.yoloMode
+                      ? 'font-bold text-copilot-error'
+                      : 'text-copilot-text-muted hover:text-copilot-text'
+                  }`}
+                  title={
+                    activeTab?.yoloMode
+                      ? 'YOLO mode ON — all actions auto-approved. Click to disable.'
+                      : 'Enable YOLO mode — auto-approve all actions without confirmation'
+                  }
+                >
+                  YOLO
+                </button>
+              </div>
+              {!activeTab?.yoloMode && showAllowedCommands && (
+                <div className="px-4 pb-3">
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {(activeTab?.alwaysAllowed.length || 0) === 0 ? (
+                      <div className="text-xs text-copilot-text-muted">No session commands</div>
+                    ) : (
+                      activeTab?.alwaysAllowed.map((cmd) => (
+                        <div key={`session-${cmd}`} className="flex items-center gap-2 text-xs">
+                          <span className="flex-1 truncate font-mono text-copilot-text-muted">
+                            {cmd}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveAlwaysAllowed(cmd);
+                            }}
+                            className="p-1 text-copilot-error hover:bg-copilot-surface rounded"
+                          >
+                            <CloseIcon size={14} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setRightDrawerOpen(false);
+                      setSettingsDefaultSection('commands');
+                      setShowSettingsModal(true);
+                    }}
+                    className="flex items-center gap-2 w-full mt-2 pt-2 text-xs text-copilot-text-muted hover:text-copilot-accent transition-colors border-t border-copilot-border"
+                  >
+                    <GlobeIcon size={12} />
+                    <span>Global Allowed</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </SidebarDrawer>
@@ -5211,9 +5370,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     label="Model"
                     icon={<MonitorIcon size={14} />}
                     value={activeTab?.model || null}
-                    options={availableModels.map((m) => ({
+                    options={sortedModels.map((m) => ({
                       id: m.id,
                       label: m.name || m.id,
+                      isFavorite: favoriteModels.includes(m.id),
                       rightContent: (
                         <span
                           className={`text-xs ${
@@ -5233,6 +5393,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     onSelect={(modelId) => {
                       handleModelChange(modelId);
                     }}
+                    onToggleFavorite={handleToggleFavoriteModel}
+                    dividers={modelDividers}
                     testId="sidebar-model-select"
                   />
                 </div>
@@ -5857,7 +6019,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               }}
                               className="px-4 py-2 rounded-l bg-copilot-success hover:brightness-110 text-copilot-text-inverse text-sm font-medium transition-colors"
                             >
-                              Allow
+                              {allowMode === 'once'
+                                ? 'Allow'
+                                : allowMode === 'session'
+                                  ? 'Allow (Session)'
+                                  : 'Allow (Global)'}
                             </button>
                             <button
                               onClick={() => setShowAllowDropdown(!showAllowDropdown)}
@@ -6868,207 +7034,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     )}
                   </div>
 
-                  {/* Allowed Commands (merged session + global) */}
-                  <div className="border-b border-copilot-border" data-tour="allowed-commands">
-                    <div className="flex items-center">
-                      <button
-                        onClick={() => {
-                          setShowAllowedCommands(!showAllowedCommands);
-                          if (!showAllowedCommands) {
-                            refreshAlwaysAllowed();
-                            refreshGlobalSafeCommands();
-                          } else {
-                            // Hide the add command input when collapsing
-                            setShowAddAllowedCommand(false);
-                          }
-                        }}
-                        className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
-                      >
-                        <ChevronRightIcon
-                          size={8}
-                          className={`transition-transform ${showAllowedCommands ? 'rotate-90' : ''}`}
-                        />
-                        <span>Allowed Commands</span>
-                        {(activeTab?.alwaysAllowed.length || 0) + globalSafeCommands.length > 0 && (
-                          <span className="text-copilot-accent">
-                            ({(activeTab?.alwaysAllowed.length || 0) + globalSafeCommands.length})
-                          </span>
-                        )}
-                      </button>
-                      <div className="relative mr-1">
-                        <IconButton
-                          icon={<PlusIcon size={12} />}
-                          onClick={() => {
-                            setShowAddAllowedCommand(!showAddAllowedCommand);
-                            if (!showAllowedCommands) {
-                              setShowAllowedCommands(true);
-                              refreshAlwaysAllowed();
-                              refreshGlobalSafeCommands();
-                            }
-                          }}
-                          variant="success"
-                          size="sm"
-                          title="Add allowed command"
-                        />
-                      </div>
-                    </div>
-                    {showAddAllowedCommand && activeTab && (
-                      <div className="px-3 pb-2">
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={addCommandScope}
-                            onChange={(e) =>
-                              setAddCommandScope(e.target.value as 'session' | 'global')
-                            }
-                            className="px-2 py-1 text-[10px] bg-copilot-surface border border-copilot-border rounded text-copilot-text focus:outline-none focus:border-copilot-accent"
-                          >
-                            <option value="session">Session</option>
-                            <option
-                              value="global"
-                              disabled={addCommandValue.trim().toLowerCase().startsWith('write')}
-                            >
-                              Global
-                            </option>
-                          </select>
-                          <input
-                            type="text"
-                            value={addCommandValue}
-                            onChange={(e) => {
-                              setAddCommandValue(e.target.value);
-                              // Reset to session scope if user types a "write" command while global is selected
-                              if (
-                                addCommandScope === 'global' &&
-                                e.target.value.trim().toLowerCase().startsWith('write')
-                              ) {
-                                setAddCommandScope('session');
-                              }
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleAddAllowedCommand();
-                              if (e.key === 'Escape') {
-                                setShowAddAllowedCommand(false);
-                                setAddCommandValue('');
-                              }
-                            }}
-                            placeholder="e.g., npm, git, python"
-                            className="flex-1 px-2 py-1 text-[10px] bg-copilot-surface border border-copilot-border rounded text-copilot-text placeholder:text-copilot-text-muted focus:outline-none focus:border-copilot-accent"
-                            autoFocus
-                          />
-                          <button
-                            onClick={handleAddAllowedCommand}
-                            disabled={!addCommandValue.trim()}
-                            className="px-2 py-1 text-[10px] bg-copilot-accent text-copilot-text rounded hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Add
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    {showAllowedCommands && activeTab && (
-                      <div className="max-h-48 overflow-y-auto">
-                        {activeTab.alwaysAllowed.length === 0 && globalSafeCommands.length === 0 ? (
-                          <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
-                            No allowed commands
-                          </div>
-                        ) : (
-                          (() => {
-                            const isSpecialExe = (exe: string) =>
-                              exe.startsWith('write') ||
-                              exe.startsWith('url') ||
-                              exe.startsWith('mcp');
-                            const toPretty = (exe: string) => {
-                              const hasColon = exe.includes(':');
-                              const [rawPrefix, rawRest] = hasColon
-                                ? exe.split(':', 2)
-                                : [exe, null];
-                              const prefix = rawPrefix;
-                              const rest = rawRest;
-
-                              const isSpecial =
-                                prefix === 'write' || prefix === 'url' || prefix === 'mcp';
-                              const meaning =
-                                prefix === 'write'
-                                  ? 'File changes'
-                                  : prefix === 'url'
-                                    ? 'Web access'
-                                    : prefix === 'mcp'
-                                      ? 'MCP tools'
-                                      : '';
-
-                              return isSpecial ? (rest ? `${meaning}: ${rest}` : meaning) : exe;
-                            };
-
-                            // Combine session and global commands with type indicator
-                            type AllowedCommand = {
-                              cmd: string;
-                              isGlobal: boolean;
-                              isSpecial: boolean;
-                              pretty: string;
-                            };
-                            const allCommands: AllowedCommand[] = [
-                              ...activeTab.alwaysAllowed.map((cmd) => ({
-                                cmd,
-                                isGlobal: false,
-                                isSpecial: isSpecialExe(cmd),
-                                pretty: toPretty(cmd),
-                              })),
-                              ...globalSafeCommands.map((cmd) => ({
-                                cmd,
-                                isGlobal: true,
-                                isSpecial: false,
-                                pretty: cmd,
-                              })),
-                            ].sort((a, b) => {
-                              // Global commands first, then special, then alphabetically
-                              if (a.isGlobal !== b.isGlobal) return a.isGlobal ? -1 : 1;
-                              if (a.isSpecial !== b.isSpecial) return a.isSpecial ? -1 : 1;
-                              return a.pretty.localeCompare(b.pretty);
-                            });
-
-                            return (
-                              <div className="pb-1">
-                                {allCommands.map(({ cmd, isGlobal, isSpecial, pretty }) => (
-                                  <div
-                                    key={`${isGlobal ? 'global' : 'session'}-${cmd}`}
-                                    className="flex items-center gap-2 px-3 py-1 text-[10px] hover:bg-copilot-surface-hover transition-colors"
-                                  >
-                                    {isGlobal && (
-                                      <GlobeIcon
-                                        size={10}
-                                        className="shrink-0 text-copilot-accent"
-                                      />
-                                    )}
-                                    <span
-                                      className={`flex-1 truncate font-mono ${
-                                        isSpecial
-                                          ? 'text-copilot-accent'
-                                          : 'text-copilot-text-muted'
-                                      }`}
-                                      title={pretty}
-                                    >
-                                      {pretty}
-                                    </span>
-                                    <button
-                                      onClick={() =>
-                                        isGlobal
-                                          ? handleRemoveGlobalSafeCommand(cmd)
-                                          : handleRemoveAlwaysAllowed(cmd)
-                                      }
-                                      className="shrink-0 text-copilot-error hover:brightness-110"
-                                      title="Remove"
-                                    >
-                                      <CloseIcon size={10} />
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            );
-                          })()
-                        )}
-                      </div>
-                    )}
-                  </div>
-
                   {/* MCP Servers & Skills Section */}
                   <div data-tour="mcp-skills">
                     {/* MCP Servers */}
@@ -7232,9 +7197,204 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         </div>
                       )}
                     </div>
+
+                    {/* Separator */}
+                    <div className="border-t border-copilot-border" />
+
+                    {/* Copilot Instructions */}
+                    <div>
+                      <div className="flex items-center">
+                        <button
+                          onClick={() => setShowInstructions(!showInstructions)}
+                          className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                        >
+                          <ChevronRightIcon
+                            size={8}
+                            className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
+                          />
+                          <span>Instructions</span>
+                          {instructions.length > 0 && (
+                            <span className="text-copilot-accent">({instructions.length})</span>
+                          )}
+                        </button>
+                      </div>
+                      {showInstructions && (
+                        <div className="max-h-48 overflow-y-auto">
+                          {instructions.length === 0 ? (
+                            <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
+                              No instruction files found
+                            </div>
+                          ) : (
+                            instructions.map((instruction) => (
+                              <div
+                                key={instruction.path}
+                                className="group px-3 py-1.5 hover:bg-copilot-surface border-b border-copilot-border last:border-b-0 cursor-pointer"
+                                onClick={() => window.electronAPI.file.openFile(instruction.path)}
+                                title={instruction.path}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <FileIcon size={10} className="shrink-0 text-copilot-accent" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-xs text-copilot-text truncate">
+                                      {instruction.name}
+                                    </div>
+                                    <div className="text-[9px] text-copilot-text-muted">
+                                      {instruction.type === 'personal'
+                                        ? 'Personal'
+                                        : instruction.type === 'organization'
+                                          ? 'Organization'
+                                          : 'Project'}
+                                      {instruction.scope === 'path-specific'
+                                        ? ' · Path-specific'
+                                        : ''}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   {/* End MCP/Skills wrapper */}
                 </div>
+              </div>
+
+              {/* Allowed Commands - pinned to bottom */}
+              <div className="mt-auto border-t border-copilot-border" data-tour="allowed-commands">
+                <div className="flex items-center">
+                  {!activeTab?.yoloMode && (
+                    <button
+                      onClick={() => {
+                        setShowAllowedCommands(!showAllowedCommands);
+                        if (!showAllowedCommands) {
+                          refreshAlwaysAllowed();
+                        }
+                      }}
+                      className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                    >
+                      <ChevronRightIcon
+                        size={8}
+                        className={`transition-transform ${showAllowedCommands ? '-rotate-90' : ''}`}
+                      />
+                      <span>Allowed Commands</span>
+                      {(activeTab?.alwaysAllowed.length || 0) > 0 && (
+                        <span className="text-copilot-accent">
+                          ({activeTab?.alwaysAllowed.length || 0})
+                        </span>
+                      )}
+                    </button>
+                  )}
+                  {activeTab?.yoloMode && (
+                    <span className="flex-1 text-[10px] text-copilot-error/70 pl-3">
+                      All actions auto-approved — no confirmations will be shown
+                    </span>
+                  )}
+                  <button
+                    onClick={async () => {
+                      if (!activeTab) return;
+                      const newValue = !activeTab.yoloMode;
+                      await window.electronAPI.copilot.setYoloMode(activeTab.id, newValue);
+                      updateTab(activeTab.id, { yoloMode: newValue });
+                      if (newValue) {
+                        updateTab(activeTab.id, { pendingConfirmations: [] });
+                      }
+                    }}
+                    className={`shrink-0 px-3 py-2 text-xs transition-colors ${
+                      activeTab?.yoloMode
+                        ? 'font-bold text-copilot-error'
+                        : 'text-copilot-text-muted hover:text-copilot-text'
+                    }`}
+                    title={
+                      activeTab?.yoloMode
+                        ? 'YOLO mode ON — all actions auto-approved. Click to disable.'
+                        : 'Enable YOLO mode — auto-approve all actions without confirmation'
+                    }
+                  >
+                    YOLO
+                  </button>
+                </div>
+                {!activeTab?.yoloMode && showAllowedCommands && activeTab && (
+                  <div className="max-h-48 overflow-y-auto">
+                    {activeTab.alwaysAllowed.length === 0 ? (
+                      <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
+                        No session commands
+                      </div>
+                    ) : (
+                      <div className="pb-1">
+                        {(() => {
+                          const isSpecialExe = (exe: string) =>
+                            exe.startsWith('write') ||
+                            exe.startsWith('url') ||
+                            exe.startsWith('mcp');
+                          const toPretty = (exe: string) => {
+                            const hasColon = exe.includes(':');
+                            const [rawPrefix, rawRest] = hasColon ? exe.split(':', 2) : [exe, null];
+                            const prefix = rawPrefix;
+                            const rest = rawRest;
+
+                            const isSpecial =
+                              prefix === 'write' || prefix === 'url' || prefix === 'mcp';
+                            const meaning =
+                              prefix === 'write'
+                                ? 'File changes'
+                                : prefix === 'url'
+                                  ? 'Web access'
+                                  : prefix === 'mcp'
+                                    ? 'MCP tools'
+                                    : '';
+
+                            return isSpecial ? (rest ? `${meaning}: ${rest}` : meaning) : exe;
+                          };
+
+                          return activeTab.alwaysAllowed
+                            .map((cmd) => ({
+                              cmd,
+                              isSpecial: isSpecialExe(cmd),
+                              pretty: toPretty(cmd),
+                            }))
+                            .sort((a, b) => {
+                              if (a.isSpecial !== b.isSpecial) return a.isSpecial ? -1 : 1;
+                              return a.pretty.localeCompare(b.pretty);
+                            })
+                            .map(({ cmd, isSpecial, pretty }) => (
+                              <div
+                                key={`session-${cmd}`}
+                                className="flex items-center gap-2 px-3 py-1 text-[10px] hover:bg-copilot-surface-hover transition-colors"
+                              >
+                                <span
+                                  className={`flex-1 truncate font-mono ${
+                                    isSpecial ? 'text-copilot-accent' : 'text-copilot-text-muted'
+                                  }`}
+                                  title={pretty}
+                                >
+                                  {pretty}
+                                </span>
+                                <button
+                                  onClick={() => handleRemoveAlwaysAllowed(cmd)}
+                                  className="shrink-0 text-copilot-error hover:brightness-110"
+                                  title="Remove"
+                                >
+                                  <CloseIcon size={10} />
+                                </button>
+                              </div>
+                            ));
+                        })()}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => {
+                        setSettingsDefaultSection('commands');
+                        setShowSettingsModal(true);
+                      }}
+                      className="flex items-center gap-2 w-full px-3 py-1.5 text-[10px] text-copilot-text-muted hover:text-copilot-accent hover:bg-copilot-surface-hover transition-colors border-t border-copilot-border"
+                    >
+                      <GlobeIcon size={10} />
+                      <span>Global Allowed</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ) : !isMobile ? (
@@ -8003,6 +8163,17 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
           availableVoices={voiceSpeech.availableVoices}
           selectedVoiceURI={voiceSpeech.selectedVoiceURI}
           onVoiceChange={voiceSpeech.setSelectedVoiceURI}
+          // Global commands
+          globalSafeCommands={globalSafeCommands}
+          onAddGlobalSafeCommand={async (cmd) => {
+            try {
+              await window.electronAPI.copilot.addGlobalSafeCommand(cmd);
+              setGlobalSafeCommands((prev) => [...prev, cmd]);
+            } catch (error) {
+              console.error('Failed to add global safe command:', error);
+            }
+          }}
+          onRemoveGlobalSafeCommand={handleRemoveGlobalSafeCommand}
         />
 
         {/* Welcome Wizard - Spotlight Tour */}

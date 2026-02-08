@@ -152,6 +152,9 @@ async function writeMcpConfig(config: MCPConfigFile): Promise<void> {
 // Agent Skills - imported from skills module
 import { getAllSkills } from './skills';
 
+// Copilot Instructions - imported from instructions module
+import { getAllInstructions } from './instructions';
+
 // Set up file logging only - no IPC to renderer (causes errors)
 log.transports.file.level = 'info';
 log.transports.console.level = 'info';
@@ -194,6 +197,7 @@ interface StoredSession {
   reviewNote?: string;
   untrackedFiles?: string[];
   fileViewMode?: 'flat' | 'tree';
+  yoloMode?: boolean;
 }
 
 const store = new Store({
@@ -205,6 +209,7 @@ const store = new Store({
     sessionCwds: {} as Record<string, string>, // Persistent map of sessionId -> cwd (survives session close)
     sessionMarks: {} as Record<string, { markedForReview?: boolean; reviewNote?: string }>, // Persistent mark/note state
     globalSafeCommands: [] as string[], // Globally safe commands that are auto-approved for all sessions
+    favoriteModels: [] as string[], // Model IDs marked as favorites (shown at top of model selector)
     hasSeenWelcomeWizard: false as boolean, // Whether user has completed the welcome wizard
     wizardVersion: 0 as number, // Version of wizard shown (bump to re-show wizard after updates)
     installationId: '' as string, // Unique ID for this installation (for telemetry user identification)
@@ -346,9 +351,23 @@ const copilotClients = new Map<string, CopilotClient>();
 const inFlightCopilotClients = new Map<string, Promise<CopilotClient>>();
 
 // Resolve CLI path for packaged apps
-function getCliPath(): string | undefined {
+function getCliPath(): string {
   if (!app.isPackaged) {
-    return undefined; // Use default "copilot" from PATH in dev
+    // In dev, the SDK's import.meta.resolve doesn't work in bundled code,
+    // and passing index.js would spawn it with Electron (process.execPath)
+    // which lacks newer Node.js globals. Use the native platform binary instead.
+    const platform = process.platform;
+    const arch = process.arch;
+    const cliName = platform === 'win32' ? 'copilot.exe' : 'copilot';
+    return join(
+      __dirname,
+      '..',
+      '..',
+      'node_modules',
+      '@github',
+      `copilot-${platform}-${arch}`,
+      cliName
+    );
   }
 
   // When packaged, the copilot binary is in the unpacked asar
@@ -516,6 +535,7 @@ interface SessionState {
   alwaysAllowed: Set<string>; // Per-session always-allowed executables
   allowedPaths: Set<string>; // Per-session allowed out-of-scope paths (parent directories)
   isProcessing: boolean; // Whether the session is currently waiting for a response
+  yoloMode: boolean; // Auto-approve all permission requests without prompting
 }
 const sessions = new Map<string, SessionState>();
 let activeSessionId: string | null = null;
@@ -608,20 +628,18 @@ async function resumeDisconnectedSession(
         sessionId,
         toolCallId: event.data.toolCallId,
         toolName: event.data.toolName,
-        input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
+        input: event.data.arguments || (event.data as Record<string, unknown>),
       });
     } else if (event.type === 'tool.execution_complete') {
       log.info(`[${sessionId}] Tool end FULL:`, JSON.stringify(event.data, null, 2));
+      const completeData = event.data as Record<string, unknown>;
       mainWindow.webContents.send('copilot:tool-end', {
         sessionId,
         toolCallId: event.data.toolCallId,
-        toolName: event.data.toolName,
-        input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
-        output: event.data.output,
+        toolName: completeData.toolName,
+        input: completeData.arguments || completeData,
+        output: event.data.result?.content || completeData.output,
       });
-    } else if (event.type === 'tool.confirmation_requested') {
-      log.info(`[${sessionId}] Confirmation requested:`, event.data);
-      mainWindow.webContents.send('copilot:confirm', { sessionId, ...event.data });
     } else if (event.type === 'session.error') {
       log.info(`[${sessionId}] Session error:`, event.data);
       const errorMessage = event.data?.message || JSON.stringify(event.data);
@@ -713,6 +731,7 @@ interface EarlyResumedSession {
   alwaysAllowed?: string[];
   untrackedFiles?: string[];
   fileViewMode?: 'flat' | 'tree';
+  yoloMode?: boolean;
   messages?: { role: 'user' | 'assistant'; content: string }[]; // Pre-loaded messages
 }
 let earlyResumedSessions: EarlyResumedSession[] = [];
@@ -756,6 +775,7 @@ async function startEarlySessionResumption(): Promise<void> {
         alwaysAllowed,
         untrackedFiles,
         fileViewMode,
+        yoloMode,
       } = storedSession;
       const sessionCwd = cwd || (app.isPackaged ? app.getPath('home') : process.cwd());
       const sessionModel = model || (store.get('model') as string) || 'gpt-5.2';
@@ -799,18 +819,17 @@ async function startEarlySessionResumption(): Promise<void> {
               sessionId,
               toolCallId: event.data.toolCallId,
               toolName: event.data.toolName,
-              input:
-                event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
+              input: event.data.arguments || (event.data as Record<string, unknown>),
             });
           } else if (event.type === 'tool.execution_complete') {
             console.log(`[${sessionId}] Tool end FULL:`, JSON.stringify(event.data, null, 2));
+            const completeData = event.data as Record<string, unknown>;
             mainWindow.webContents.send('copilot:tool-end', {
               sessionId,
               toolCallId: event.data.toolCallId,
-              toolName: event.data.toolName,
-              input:
-                event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
-              output: event.data.output,
+              toolName: completeData.toolName,
+              input: completeData.arguments || completeData,
+              output: event.data.result?.content || completeData.output,
             });
           }
         });
@@ -825,6 +844,7 @@ async function startEarlySessionResumption(): Promise<void> {
           alwaysAllowed: alwaysAllowedSet,
           allowedPaths: new Set(),
           isProcessing: false,
+          yoloMode: yoloMode || false,
         });
 
         console.log(`Early resumed session ${sessionId}`);
@@ -854,6 +874,7 @@ async function startEarlySessionResumption(): Promise<void> {
           alwaysAllowed: storedAlwaysAllowed,
           untrackedFiles: untrackedFiles || [],
           fileViewMode: fileViewMode || 'flat',
+          yoloMode: yoloMode || false,
           messages,
         };
         earlyResumedSessions.push(resumed);
@@ -1076,6 +1097,12 @@ async function handlePermissionRequest(
   const globalSafeCommands = new Set((store.get('globalSafeCommands') as string[]) || []);
 
   console.log(`[${ourSessionId}] Permission request:`, request.kind);
+
+  // Yolo mode: auto-approve all requests without prompting
+  if (sessionState?.yoloMode) {
+    console.log(`[${ourSessionId}] Yolo mode: auto-approved ${request.kind}`);
+    return { kind: 'approved' };
+  }
 
   // For shell commands, check each executable individually
   if (request.kind === 'shell' && req.fullCommandText) {
@@ -1432,20 +1459,18 @@ Browser tools available: browser_navigate, browser_click, browser_fill, browser_
         sessionId,
         toolCallId: event.data.toolCallId,
         toolName: event.data.toolName,
-        input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
+        input: event.data.arguments || (event.data as Record<string, unknown>),
       });
     } else if (event.type === 'tool.execution_complete') {
       console.log(`[${sessionId}] Tool end FULL:`, JSON.stringify(event.data, null, 2));
+      const completeData = event.data as Record<string, unknown>;
       mainWindow.webContents.send('copilot:tool-end', {
         sessionId,
         toolCallId: event.data.toolCallId,
-        toolName: event.data.toolName,
-        input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
-        output: event.data.output,
+        toolName: completeData.toolName,
+        input: completeData.arguments || completeData,
+        output: event.data.result?.content || completeData.output,
       });
-    } else if (event.type === 'tool.confirmation_requested') {
-      console.log(`[${sessionId}] Confirmation requested:`, event.data);
-      mainWindow.webContents.send('copilot:confirm', { sessionId, ...event.data });
     } else if (event.type === 'session.error') {
       console.log(`[${sessionId}] Session error:`, event.data);
       const errorMessage = event.data?.message || JSON.stringify(event.data);
@@ -1505,6 +1530,7 @@ Browser tools available: browser_navigate, browser_click, browser_fill, browser_
     alwaysAllowed: new Set(),
     allowedPaths: new Set(),
     isProcessing: false,
+    yoloMode: false,
   });
   activeSessionId = sessionId;
 
@@ -1743,18 +1769,17 @@ async function initCopilot(): Promise<void> {
               sessionId,
               toolCallId: event.data.toolCallId,
               toolName: event.data.toolName,
-              input:
-                event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
+              input: event.data.arguments || (event.data as Record<string, unknown>),
             });
           } else if (event.type === 'tool.execution_complete') {
             console.log(`[${sessionId}] Tool end FULL:`, JSON.stringify(event.data, null, 2));
+            const completeData = event.data as Record<string, unknown>;
             mainWindow.webContents.send('copilot:tool-end', {
               sessionId,
               toolCallId: event.data.toolCallId,
-              toolName: event.data.toolName,
-              input:
-                event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
-              output: event.data.output,
+              toolName: completeData.toolName,
+              input: completeData.arguments || completeData,
+              output: event.data.result?.content || completeData.output,
             });
           }
         });
@@ -1769,6 +1794,7 @@ async function initCopilot(): Promise<void> {
           alwaysAllowed: alwaysAllowedSet,
           allowedPaths: new Set(),
           isProcessing: false,
+          yoloMode: storedSession?.yoloMode || false,
         });
 
         const resumed = {
@@ -1780,6 +1806,7 @@ async function initCopilot(): Promise<void> {
           alwaysAllowed: storedAlwaysAllowed,
           untrackedFiles: storedSession?.untrackedFiles || [],
           fileViewMode: storedSession?.fileViewMode || 'flat',
+          yoloMode: storedSession?.yoloMode || false,
         };
         resumedSessions.push(resumed);
         console.log(
@@ -2355,6 +2382,45 @@ ipcMain.handle(
   }
 );
 
+// Handle yolo mode toggle
+ipcMain.handle(
+  'copilot:setYoloMode',
+  async (_event, data: { sessionId: string; enabled: boolean }) => {
+    const sessionState = sessions.get(data.sessionId);
+    if (sessionState) {
+      sessionState.yoloMode = data.enabled;
+      console.log(`[${data.sessionId}] Yolo mode ${data.enabled ? 'enabled' : 'disabled'}`);
+
+      // If enabling yolo mode, auto-approve any pending confirmations
+      if (data.enabled) {
+        const pendingIds = Array.from(pendingPermissions.keys()).filter((id) => {
+          const pending = pendingPermissions.get(id);
+          return pending?.sessionId === data.sessionId;
+        });
+        for (const id of pendingIds) {
+          const pending = pendingPermissions.get(id);
+          if (pending) {
+            pendingPermissions.delete(id);
+            pending.resolve({ kind: 'approved' });
+            console.log(`[${data.sessionId}] Yolo mode: flushed pending permission ${id}`);
+          }
+        }
+        // Notify renderer to clear pending confirmations
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('copilot:yoloModeChanged', {
+            sessionId: data.sessionId,
+            enabled: true,
+            flushedCount: pendingIds.length,
+          });
+        }
+      }
+
+      return { success: true };
+    }
+    return { success: false };
+  }
+);
+
 ipcMain.handle('copilot:setModel', async (_event, data: { sessionId: string; model: string }) => {
   const validModels = getVerifiedModels().map((m) => m.id);
   if (!validModels.includes(data.model)) {
@@ -2436,6 +2502,50 @@ ipcMain.handle(
     } catch (error) {
       log.error('Failed to save image to temp:', error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+);
+
+// Persist a single session's mark/note immediately
+ipcMain.handle(
+  'copilot:saveSessionMark',
+  async (
+    _event,
+    args: { sessionId: string; mark: { markedForReview?: boolean; reviewNote?: string } }
+  ) => {
+    try {
+      const { sessionId, mark } = args;
+      const sessionMarks =
+        (store.get('sessionMarks') as Record<
+          string,
+          { markedForReview?: boolean; reviewNote?: string }
+        >) || {};
+
+      // If nothing to save (both undefined or empty), remove existing mark
+      const hasMark =
+        typeof mark.markedForReview !== 'undefined' ||
+        (typeof mark.reviewNote === 'string' && mark.reviewNote !== '');
+      if (!hasMark) {
+        delete sessionMarks[sessionId];
+      } else {
+        sessionMarks[sessionId] = {
+          ...(sessionMarks[sessionId] || {}),
+          markedForReview:
+            typeof mark.markedForReview !== 'undefined'
+              ? mark.markedForReview
+              : sessionMarks[sessionId]?.markedForReview,
+          reviewNote:
+            typeof mark.reviewNote !== 'undefined'
+              ? mark.reviewNote
+              : sessionMarks[sessionId]?.reviewNote,
+        };
+      }
+
+      store.set('sessionMarks', sessionMarks);
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to save session mark:', error);
+      return { success: false };
     }
   }
 );
@@ -2715,6 +2825,27 @@ ipcMain.handle('copilot:removeGlobalSafeCommand', async (_event, command: string
   return { success: true };
 });
 
+// Favorite Models Management
+ipcMain.handle('copilot:getFavoriteModels', async () => {
+  return (store.get('favoriteModels') as string[]) || [];
+});
+
+ipcMain.handle('copilot:addFavoriteModel', async (_event, modelId: string) => {
+  const favoriteModels = (store.get('favoriteModels') as string[]) || [];
+  if (!favoriteModels.includes(modelId)) {
+    favoriteModels.push(modelId);
+    store.set('favoriteModels', favoriteModels);
+  }
+  return { success: true };
+});
+
+ipcMain.handle('copilot:removeFavoriteModel', async (_event, modelId: string) => {
+  const favoriteModels = (store.get('favoriteModels') as string[]) || [];
+  const updated = favoriteModels.filter((m) => m !== modelId);
+  store.set('favoriteModels', updated);
+  return { success: true };
+});
+
 // URL Allowlist/Denylist Management
 ipcMain.handle('copilot:getAllowedUrls', async () => {
   return (store.get('allowedUrls') as string[]) || [];
@@ -2931,6 +3062,31 @@ ipcMain.handle('git:getDiff', async (_event, data: { cwd: string; files: string[
       const { stdout: status } = await execAsync(`git status --porcelain -- ${fileArgs}`, {
         cwd: data.cwd,
       });
+
+      // For untracked files, generate a proper diff using --no-index
+      const statusLines = status.split('\n').filter(Boolean);
+      const untrackedFiles = statusLines
+        .filter((line) => line.startsWith('??'))
+        .map((line) => line.substring(3).trim());
+
+      if (untrackedFiles.length > 0) {
+        let combinedDiff = '';
+        for (const file of untrackedFiles) {
+          try {
+            await execAsync(`git diff --no-index -- /dev/null "${file}"`, { cwd: data.cwd });
+          } catch (diffError: unknown) {
+            // git diff --no-index exits with code 1 when differences are found
+            const err = diffError as { stdout?: string };
+            if (err.stdout) {
+              combinedDiff += err.stdout + '\n';
+            }
+          }
+        }
+        if (combinedDiff.trim()) {
+          return { diff: combinedDiff, success: true };
+        }
+      }
+
       return { diff: status || 'No changes detected', success: true };
     }
 
@@ -3816,20 +3972,18 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
         sessionId,
         toolCallId: event.data.toolCallId,
         toolName: event.data.toolName,
-        input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
+        input: event.data.arguments || (event.data as Record<string, unknown>),
       });
     } else if (event.type === 'tool.execution_complete') {
       console.log(`[${sessionId}] Tool end FULL:`, JSON.stringify(event.data, null, 2));
+      const completeData = event.data as Record<string, unknown>;
       mainWindow.webContents.send('copilot:tool-end', {
         sessionId,
         toolCallId: event.data.toolCallId,
-        toolName: event.data.toolName,
-        input: event.data.arguments || event.data.input || (event.data as Record<string, unknown>),
-        output: event.data.output,
+        toolName: completeData.toolName,
+        input: completeData.arguments || completeData,
+        output: event.data.result?.content || completeData.output,
       });
-    } else if (event.type === 'tool.confirmation_requested') {
-      console.log(`[${sessionId}] Confirmation requested:`, event.data);
-      mainWindow.webContents.send('copilot:confirm', { sessionId, ...event.data });
     } else if (event.type === 'session.error') {
       console.log(`[${sessionId}] Session error:`, event.data);
       const errorMessage = event.data?.message || JSON.stringify(event.data);
@@ -3889,6 +4043,7 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
     alwaysAllowed: new Set(),
     allowedPaths: new Set(),
     isProcessing: false,
+    yoloMode: false,
   });
   activeSessionId = sessionId;
 
@@ -3954,6 +4109,20 @@ ipcMain.handle('skills:getAll', async (_event, cwd?: string) => {
   }
   const result = await getAllSkills(projectCwd);
   console.log(`Found ${result.skills.length} skills (${result.errors.length} errors)`);
+  return result;
+});
+
+// Copilot Instructions handlers
+ipcMain.handle('instructions:getAll', async (_event, cwd?: string) => {
+  let projectCwd = cwd;
+  if (!projectCwd && sessions.size > 0) {
+    const firstSession = sessions.values().next().value;
+    if (firstSession) {
+      projectCwd = firstSession.cwd;
+    }
+  }
+  const result = await getAllInstructions(projectCwd);
+  console.log(`Found ${result.instructions.length} instructions (${result.errors.length} errors)`);
   return result;
 });
 
