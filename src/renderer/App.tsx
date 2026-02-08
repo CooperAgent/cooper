@@ -55,6 +55,8 @@ import {
   SearchableBranchSelect,
   CodeBlockWithCopy,
   RepeatIcon,
+  StarIcon,
+  StarFilledIcon,
   WarningIcon,
   ArchiveIcon,
   UnarchiveIcon,
@@ -762,6 +764,11 @@ const App: React.FC = () => {
   // Lisa Simpson loop state - multi-phase analytical workflow
   const [showLisaSettings, setShowLisaSettings] = useState(false);
   const [lisaEnabled, setLisaEnabled] = useState(false);
+
+  // Top bar selector state (Models, Agents, Loops)
+  const [openTopBarSelector, setOpenTopBarSelector] = useState<
+    'models' | 'agents' | 'loops' | null
+  >(null);
 
   // Worktree session state
   const [showCreateWorktree, setShowCreateWorktree] = useState(false);
@@ -4648,7 +4655,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             <button
               onClick={() => setRightDrawerOpen(true)}
               className="p-2 text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-bg rounded transition-colors"
-              title="Open activity"
+              title="Open environment"
             >
               <ZapIcon size={20} />
             </button>
@@ -4756,50 +4763,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               </button>
             </div>
 
-            {/* Settings Section - Model & Theme */}
+            {/* Settings Section */}
             <div className="border-t border-copilot-border">
-              {/* Model Selector */}
-              <div className="border-b border-copilot-border">
-                <AccordionSelect
-                  label="Model"
-                  icon={<MonitorIcon size={16} />}
-                  value={activeTab?.model || null}
-                  options={sortedModels.map((m) => ({
-                    id: m.id,
-                    label: m.name || m.id,
-                    isFavorite: favoriteModels.includes(m.id),
-                    rightContent: (
-                      <span
-                        className={`text-xs ${
-                          m.source === 'fallback'
-                            ? 'text-copilot-text-muted italic'
-                            : m.multiplier === 0
-                              ? 'text-copilot-success'
-                              : m.multiplier < 1
-                                ? 'text-copilot-success'
-                                : m.multiplier > 1
-                                  ? 'text-copilot-warning'
-                                  : 'text-copilot-text-muted'
-                        }`}
-                      >
-                        {m.source === 'fallback'
-                          ? 'unlisted'
-                          : m.multiplier === 0
-                            ? 'free'
-                            : `${m.multiplier}×`}
-                      </span>
-                    ),
-                  }))}
-                  onSelect={(modelId) => {
-                    handleModelChange(modelId);
-                  }}
-                  onToggleFavorite={handleToggleFavoriteModel}
-                  dividers={modelDividers}
-                  size="md"
-                  testId="mobile-drawer-model-select"
-                />
-              </div>
-
               {/* Settings Button */}
               <button
                 onClick={() => {
@@ -4816,7 +4781,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
           </div>
         </SidebarDrawer>
 
-        {/* Mobile Right Drawer (Activity) */}
+        {/* Mobile Right Drawer (Environment) */}
         <SidebarDrawer
           isOpen={rightDrawerOpen}
           onClose={() => setRightDrawerOpen(false)}
@@ -4826,7 +4791,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
           <div className="flex flex-col h-full">
             {/* Drawer Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-copilot-border">
-              <span className="text-sm font-medium text-copilot-text">Activity</span>
+              <span className="text-sm font-medium text-copilot-text">Environment</span>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -4838,7 +4803,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               </button>
             </div>
 
-            {/* Activity Content - Using AccordionSelect for mobile-friendly UI */}
+            {/* Environment Content - Using AccordionSelect for mobile-friendly UI */}
             <div className="flex-1 overflow-y-auto">
               {/* Status */}
               <div className="px-4 py-3 border-b border-copilot-border">
@@ -5384,47 +5349,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   </button>
                 </div>
 
-                {/* Model Selector */}
-                <div className="border-t border-copilot-border" data-tour="model-selector">
-                  <AccordionSelect
-                    label="Model"
-                    icon={<MonitorIcon size={14} />}
-                    value={activeTab?.model || null}
-                    options={sortedModels.map((m) => ({
-                      id: m.id,
-                      label: m.name || m.id,
-                      isFavorite: favoriteModels.includes(m.id),
-                      rightContent: (
-                        <span
-                          className={`text-xs ${
-                            m.source === 'fallback'
-                              ? 'text-copilot-text-muted italic'
-                              : m.multiplier === 0
-                                ? 'text-copilot-success'
-                                : m.multiplier < 1
-                                  ? 'text-copilot-success'
-                                  : m.multiplier > 1
-                                    ? 'text-copilot-warning'
-                                    : 'text-copilot-text-muted'
-                          }`}
-                        >
-                          {m.source === 'fallback'
-                            ? 'unlisted'
-                            : m.multiplier === 0
-                              ? 'free'
-                              : `${m.multiplier}×`}
-                        </span>
-                      ),
-                    }))}
-                    onSelect={(modelId) => {
-                      handleModelChange(modelId);
-                    }}
-                    onToggleFavorite={handleToggleFavoriteModel}
-                    dividers={modelDividers}
-                    testId="sidebar-model-select"
-                  />
-                </div>
-
                 {/* Settings Button */}
                 <div className="border-t border-copilot-border h-[32px] flex items-center">
                   <button
@@ -5467,58 +5391,358 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
           {/* Main Content Area */}
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            {/* Terminal Toggle Button */}
+            {/* Top Bar - Models, Agents, Loops selectors */}
             {activeTab && (
-              <button
-                onClick={() => {
-                  if (terminalOpenSessions.has(activeTab.id)) {
-                    setTerminalOpenSessions((prev) => {
-                      const next = new Set(prev);
-                      next.delete(activeTab.id);
-                      return next;
-                    });
-                  } else {
-                    setTerminalOpenSessions((prev) => new Set(prev).add(activeTab.id));
-                    // Track that this session has had a terminal initialized
-                    setTerminalInitializedSessions((prev) => new Set(prev).add(activeTab.id));
-                    trackEvent(TelemetryEvents.FEATURE_TERMINAL_OPENED);
-                  }
-                }}
-                className={`shrink-0 flex items-center gap-2 px-4 py-2 text-xs border-b border-copilot-border ${
-                  terminalOpenSessions.has(activeTab.id)
-                    ? 'text-copilot-accent bg-copilot-surface'
-                    : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface'
-                }`}
-                data-tour="terminal-toggle"
-              >
-                <TerminalIcon size={14} />
-                <span className="font-medium">Terminal</span>
-                <ChevronDownIcon
-                  size={12}
-                  className={`transition-transform duration-200 ${terminalOpenSessions.has(activeTab.id) ? 'rotate-180' : ''}`}
-                />
-              </button>
-            )}
+              <div className="shrink-0 flex items-center border-b border-copilot-border bg-copilot-surface relative">
+                {/* Models Selector */}
+                <div className="relative" data-tour="model-selector">
+                  <button
+                    onClick={() =>
+                      setOpenTopBarSelector(openTopBarSelector === 'models' ? null : 'models')
+                    }
+                    className={`flex items-center gap-1.5 px-3 py-2 text-xs transition-colors ${
+                      openTopBarSelector === 'models'
+                        ? 'text-copilot-accent bg-copilot-surface-hover'
+                        : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover'
+                    }`}
+                    title="Select model"
+                  >
+                    <MonitorIcon size={12} />
+                    <span className="font-medium truncate max-w-[120px]">
+                      {(() => {
+                        const m = sortedModels.find((m) => m.id === activeTab?.model);
+                        return m?.name || activeTab?.model || 'Model';
+                      })()}
+                    </span>
+                    <ChevronDownIcon
+                      size={10}
+                      className={`transition-transform duration-200 ${openTopBarSelector === 'models' ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {openTopBarSelector === 'models' && (
+                    <div className="absolute top-full left-0 z-50 mt-0.5 w-72 max-h-80 overflow-y-auto bg-copilot-bg border border-copilot-border rounded-lg shadow-lg">
+                      {sortedModels.map((m, idx) => {
+                        const isFav = favoriteModels.includes(m.id);
+                        return (
+                          <React.Fragment key={m.id}>
+                            <button
+                              onClick={() => {
+                                handleModelChange(m.id);
+                                setOpenTopBarSelector(null);
+                              }}
+                              className={`group w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-copilot-surface-hover transition-colors ${
+                                m.id === activeTab?.model
+                                  ? 'text-copilot-accent bg-copilot-surface'
+                                  : 'text-copilot-text'
+                              }`}
+                            >
+                              {handleToggleFavoriteModel && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleFavoriteModel(m.id);
+                                  }}
+                                  className={`shrink-0 transition-colors ${
+                                    isFav
+                                      ? 'text-copilot-warning'
+                                      : 'text-transparent group-hover:text-copilot-text-muted hover:!text-copilot-warning'
+                                  }`}
+                                  title={isFav ? 'Remove from favorites' : 'Add to favorites'}
+                                >
+                                  {isFav ? <StarFilledIcon size={12} /> : <StarIcon size={12} />}
+                                </button>
+                              )}
+                              <span className="flex-1 text-left truncate">
+                                {m.id === activeTab?.model && (
+                                  <span className="text-copilot-accent">✓ </span>
+                                )}
+                                {m.name || m.id}
+                              </span>
+                              <span
+                                className={`shrink-0 text-xs ${
+                                  m.source === 'fallback'
+                                    ? 'text-copilot-text-muted italic'
+                                    : m.multiplier === 0
+                                      ? 'text-copilot-success'
+                                      : m.multiplier < 1
+                                        ? 'text-copilot-success'
+                                        : m.multiplier > 1
+                                          ? 'text-copilot-warning'
+                                          : 'text-copilot-text-muted'
+                                }`}
+                              >
+                                {m.source === 'fallback'
+                                  ? 'unlisted'
+                                  : m.multiplier === 0
+                                    ? 'free'
+                                    : `${m.multiplier}×`}
+                              </span>
+                            </button>
+                            {modelDividers.includes(idx) && (
+                              <div className="border-t border-copilot-border" />
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
 
-            {/* Embedded Terminal Panels - render one per initialized session to preserve state */}
-            {tabs
-              .filter((tab) => terminalInitializedSessions.has(tab.id))
-              .map((tab) => (
-                <TerminalPanel
-                  key={tab.id}
-                  sessionId={tab.id}
-                  cwd={tab.cwd}
-                  isOpen={terminalOpenSessions.has(tab.id) && activeTabId === tab.id}
-                  onClose={() =>
-                    setTerminalOpenSessions((prev) => {
-                      const next = new Set(prev);
-                      next.delete(tab.id);
-                      return next;
-                    })
-                  }
-                  onSendToAgent={handleSendTerminalOutput}
-                />
-              ))}
+                <div className="w-px h-4 bg-copilot-border" />
+
+                {/* Agents Selector (Placeholder) */}
+                <div className="relative">
+                  <button
+                    onClick={() =>
+                      setOpenTopBarSelector(openTopBarSelector === 'agents' ? null : 'agents')
+                    }
+                    className={`flex items-center gap-1.5 px-3 py-2 text-xs transition-colors ${
+                      openTopBarSelector === 'agents'
+                        ? 'text-copilot-accent bg-copilot-surface-hover'
+                        : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover'
+                    }`}
+                    title="Agents (coming soon)"
+                  >
+                    <ZapIcon size={12} />
+                    <span className="font-medium">Agents</span>
+                    <ChevronDownIcon
+                      size={10}
+                      className={`transition-transform duration-200 ${openTopBarSelector === 'agents' ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {openTopBarSelector === 'agents' && (
+                    <div className="absolute top-full left-0 z-50 mt-0.5 w-56 bg-copilot-bg border border-copilot-border rounded-lg shadow-lg">
+                      <div className="px-4 py-6 text-center">
+                        <ZapIcon size={20} className="mx-auto text-copilot-text-muted mb-2" />
+                        <p className="text-xs text-copilot-text-muted">Coming soon</p>
+                        <p className="text-[10px] text-copilot-text-muted mt-1">
+                          Custom agent support is in development
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="w-px h-4 bg-copilot-border" />
+
+                {/* Loops Selector */}
+                <div className="relative" data-tour="agent-modes">
+                  <button
+                    onClick={() => {
+                      if (openTopBarSelector === 'loops') {
+                        setOpenTopBarSelector(null);
+                        setShowRalphSettings(false);
+                        setShowLisaSettings(false);
+                      } else {
+                        setOpenTopBarSelector('loops');
+                        setShowRalphSettings(true);
+                        setShowLisaSettings(false);
+                      }
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-2 text-xs transition-colors ${
+                      ralphEnabled || lisaEnabled
+                        ? 'text-copilot-warning'
+                        : openTopBarSelector === 'loops'
+                          ? 'text-copilot-accent bg-copilot-surface-hover'
+                          : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover'
+                    }`}
+                    title="Agent Loops - Ralph Wiggum (Simple Loop) or Lisa Simpson (Multi-Phase)"
+                  >
+                    {lisaEnabled ? (
+                      <LisaIcon size={12} />
+                    ) : ralphEnabled ? (
+                      <RalphIcon size={12} />
+                    ) : (
+                      <RepeatIcon size={12} />
+                    )}
+                    <span className="font-medium">
+                      {lisaEnabled ? 'Lisa' : ralphEnabled ? 'Ralph' : 'Loops'}
+                    </span>
+                    <ChevronDownIcon
+                      size={10}
+                      className={`transition-transform duration-200 ${openTopBarSelector === 'loops' ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {openTopBarSelector === 'loops' && (
+                    <div
+                      className="absolute top-full left-0 z-50 mt-0.5 w-80 bg-copilot-bg border border-copilot-border rounded-lg shadow-lg p-3"
+                      data-tour="agent-modes-panel"
+                    >
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-xs font-medium text-copilot-text">Agent Loops</span>
+                        <span className="flex-1" />
+                        <button
+                          onClick={() => {
+                            setOpenTopBarSelector(null);
+                            setShowRalphSettings(false);
+                            setShowLisaSettings(false);
+                          }}
+                          className="p-1 rounded hover:bg-copilot-surface-hover"
+                        >
+                          <CloseIcon size={10} className="text-copilot-text-muted" />
+                        </button>
+                      </div>
+
+                      {/* Mode Selection Row */}
+                      <div className="flex gap-2 mb-3">
+                        {/* Ralph Option */}
+                        <button
+                          onClick={() => {
+                            const enabling = !ralphEnabled;
+                            setRalphEnabled(enabling);
+                            if (enabling) {
+                              setLisaEnabled(false);
+                              trackEvent(TelemetryEvents.FEATURE_RALPH_ENABLED);
+                            }
+                          }}
+                          className={`flex-1 p-2 rounded-lg border transition-all ${
+                            ralphEnabled
+                              ? 'border-copilot-warning bg-copilot-warning/10'
+                              : 'border-copilot-border hover:border-copilot-text-muted'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <RalphIcon size={20} />
+                            <div className="text-left">
+                              <div className="text-xs font-medium text-copilot-text">Ralph</div>
+                              <div className="text-[10px] text-copilot-text-muted">Simple loop</div>
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* Lisa Option */}
+                        <button
+                          onClick={() => {
+                            const enabling = !lisaEnabled;
+                            setLisaEnabled(enabling);
+                            if (enabling) {
+                              setRalphEnabled(false);
+                              trackEvent(TelemetryEvents.FEATURE_LISA_ENABLED);
+                            }
+                          }}
+                          className={`flex-1 p-2 rounded-lg border transition-all ${
+                            lisaEnabled
+                              ? 'border-copilot-accent bg-copilot-accent/10'
+                              : 'border-copilot-border hover:border-copilot-text-muted'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <LisaIcon size={20} />
+                            <div className="text-left">
+                              <div className="text-xs font-medium text-copilot-text">Lisa</div>
+                              <div className="text-[10px] text-copilot-text-muted">Multi-phase</div>
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+
+                      {/* Ralph Settings */}
+                      {ralphEnabled && (
+                        <div className="space-y-2.5 pt-2 border-t border-copilot-border">
+                          <div className="flex items-center gap-2">
+                            <label className="text-[10px] text-copilot-text-muted">
+                              Max iterations
+                            </label>
+                            <input
+                              type="number"
+                              value={ralphMaxIterations}
+                              onChange={(e) =>
+                                setRalphMaxIterations(Math.max(1, parseInt(e.target.value) || 1))
+                              }
+                              className="w-14 bg-copilot-surface border border-copilot-border rounded px-2 py-0.5 text-xs text-copilot-text"
+                              min={1}
+                              max={100}
+                            />
+                          </div>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={ralphClearContext}
+                              onChange={(e) => setRalphClearContext(e.target.checked)}
+                              className="rounded border-copilot-border w-3.5 h-3.5"
+                            />
+                            <span className="text-[10px] text-copilot-text-muted">
+                              Clear context between iterations
+                            </span>
+                            <span
+                              className="text-[9px] text-copilot-text-muted/60"
+                              title="Forces agent to rely on file state, not chat history (recommended)"
+                            >
+                              (recommended)
+                            </span>
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={ralphRequireScreenshot}
+                              onChange={(e) => setRalphRequireScreenshot(e.target.checked)}
+                              className="rounded border-copilot-border w-3.5 h-3.5"
+                            />
+                            <span className="text-[10px] text-copilot-text-muted">
+                              Require screenshot
+                            </span>
+                          </label>
+                          <p className="text-[10px] text-copilot-text-muted">
+                            Agent loops until verified complete: plan, test, fix errors, verify all
+                            items.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Lisa Settings */}
+                      {lisaEnabled && (
+                        <div className="pt-2 border-t border-copilot-border">
+                          <div className="text-[10px] text-copilot-text-muted space-y-1">
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="px-1.5 py-0.5 bg-copilot-surface rounded">
+                                📋 Plan
+                              </span>
+                              <span>→</span>
+                              <span className="px-1 py-0.5 bg-copilot-warning/20 rounded text-[9px]">
+                                👀
+                              </span>
+                              <span>→</span>
+                              <span className="px-1.5 py-0.5 bg-copilot-surface rounded">
+                                💻 Code
+                              </span>
+                              <span>→</span>
+                              <span className="px-1 py-0.5 bg-copilot-warning/20 rounded text-[9px]">
+                                👀
+                              </span>
+                              <span>→</span>
+                              <span className="px-1.5 py-0.5 bg-copilot-surface rounded">
+                                🧪 Test
+                              </span>
+                              <span>→</span>
+                              <span className="px-1 py-0.5 bg-copilot-warning/20 rounded text-[9px]">
+                                👀
+                              </span>
+                            </div>
+                            <p>
+                              Reviewer checks after each phase. Can reject back to{' '}
+                              <strong>any</strong> earlier phase (e.g., from Code Review back to
+                              Plan if architecture needs rethinking).
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Click-away handler for dropdowns */}
+                {openTopBarSelector && (
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => {
+                      setOpenTopBarSelector(null);
+                      setShowRalphSettings(false);
+                      setShowLisaSettings(false);
+                    }}
+                  />
+                )}
+              </div>
+            )}
 
             {/* Messages Area - Conversation Only */}
             <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0" data-clarity-mask="true">
@@ -6131,168 +6355,28 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 );
               })()}
 
+            {/* Embedded Terminal Panels - render one per initialized session, opens upward above input */}
+            {tabs
+              .filter((tab) => terminalInitializedSessions.has(tab.id))
+              .map((tab) => (
+                <TerminalPanel
+                  key={tab.id}
+                  sessionId={tab.id}
+                  cwd={tab.cwd}
+                  isOpen={terminalOpenSessions.has(tab.id) && activeTabId === tab.id}
+                  onClose={() =>
+                    setTerminalOpenSessions((prev) => {
+                      const next = new Set(prev);
+                      next.delete(tab.id);
+                      return next;
+                    })
+                  }
+                  onSendToAgent={handleSendTerminalOutput}
+                />
+              ))}
+
             {/* Input Area */}
             <div className="shrink-0 p-3 bg-copilot-surface border-t border-copilot-border">
-              {/* Agent Modes Panel - Combined Ralph & Lisa */}
-              {(showRalphSettings || showLisaSettings) && !activeTab?.isProcessing && (
-                <div
-                  className="mb-2 p-3 bg-copilot-bg rounded-lg border border-copilot-border"
-                  data-tour="agent-modes-panel"
-                >
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xs font-medium text-copilot-text">Agent Modes</span>
-                    <span className="flex-1" />
-                    <button
-                      onClick={() => {
-                        setShowRalphSettings(false);
-                        setShowLisaSettings(false);
-                      }}
-                      className="p-1 rounded hover:bg-copilot-surface-hover"
-                    >
-                      <CloseIcon size={10} className="text-copilot-text-muted" />
-                    </button>
-                  </div>
-
-                  {/* Mode Selection Row */}
-                  <div className="flex gap-2 mb-3">
-                    {/* Ralph Option */}
-                    <button
-                      onClick={() => {
-                        const enabling = !ralphEnabled;
-                        setRalphEnabled(enabling);
-                        if (enabling) {
-                          setLisaEnabled(false);
-                          trackEvent(TelemetryEvents.FEATURE_RALPH_ENABLED);
-                        }
-                      }}
-                      className={`flex-1 p-2 rounded-lg border transition-all ${
-                        ralphEnabled
-                          ? 'border-copilot-warning bg-copilot-warning/10'
-                          : 'border-copilot-border hover:border-copilot-text-muted'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <RalphIcon size={24} />
-                        <div className="text-left">
-                          <div className="text-xs font-medium text-copilot-text">Ralph Wiggum</div>
-                          <div className="text-[10px] text-copilot-text-muted">Simple loop</div>
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* Lisa Option */}
-                    <button
-                      onClick={() => {
-                        const enabling = !lisaEnabled;
-                        setLisaEnabled(enabling);
-                        if (enabling) {
-                          setRalphEnabled(false);
-                          trackEvent(TelemetryEvents.FEATURE_LISA_ENABLED);
-                        }
-                      }}
-                      className={`flex-1 p-2 rounded-lg border transition-all ${
-                        lisaEnabled
-                          ? 'border-copilot-accent bg-copilot-accent/10'
-                          : 'border-copilot-border hover:border-copilot-text-muted'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <LisaIcon size={24} />
-                        <div className="text-left">
-                          <div className="text-xs font-medium text-copilot-text">Lisa Simpson</div>
-                          <div className="text-[10px] text-copilot-text-muted">Multi-phase</div>
-                        </div>
-                      </div>
-                    </button>
-                  </div>
-
-                  {/* Ralph Settings */}
-                  {ralphEnabled && (
-                    <div className="space-y-2.5 pt-2 border-t border-copilot-border">
-                      <div className="flex items-center gap-2">
-                        <label className="text-[10px] text-copilot-text-muted">
-                          Max iterations
-                        </label>
-                        <input
-                          type="number"
-                          value={ralphMaxIterations}
-                          onChange={(e) =>
-                            setRalphMaxIterations(Math.max(1, parseInt(e.target.value) || 1))
-                          }
-                          className="w-14 bg-copilot-surface border border-copilot-border rounded px-2 py-0.5 text-xs text-copilot-text"
-                          min={1}
-                          max={100}
-                        />
-                      </div>
-                      <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={ralphClearContext}
-                          onChange={(e) => setRalphClearContext(e.target.checked)}
-                          className="rounded border-copilot-border w-3.5 h-3.5"
-                        />
-                        <span className="text-[10px] text-copilot-text-muted">
-                          Clear context between iterations
-                        </span>
-                        <span
-                          className="text-[9px] text-copilot-text-muted/60"
-                          title="Forces agent to rely on file state, not chat history (recommended)"
-                        >
-                          (recommended)
-                        </span>
-                      </label>
-                      <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={ralphRequireScreenshot}
-                          onChange={(e) => setRalphRequireScreenshot(e.target.checked)}
-                          className="rounded border-copilot-border w-3.5 h-3.5"
-                        />
-                        <span className="text-[10px] text-copilot-text-muted">
-                          Require screenshot
-                        </span>
-                      </label>
-                      <p className="text-[10px] text-copilot-text-muted">
-                        Agent loops until verified complete: plan, test, fix errors, verify all
-                        items.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Lisa Settings */}
-                  {lisaEnabled && (
-                    <div className="pt-2 border-t border-copilot-border">
-                      <div className="text-[10px] text-copilot-text-muted space-y-1">
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <span className="px-1.5 py-0.5 bg-copilot-surface rounded">📋 Plan</span>
-                          <span>→</span>
-                          <span className="px-1 py-0.5 bg-copilot-warning/20 rounded text-[9px]">
-                            👀
-                          </span>
-                          <span>→</span>
-                          <span className="px-1.5 py-0.5 bg-copilot-surface rounded">💻 Code</span>
-                          <span>→</span>
-                          <span className="px-1 py-0.5 bg-copilot-warning/20 rounded text-[9px]">
-                            👀
-                          </span>
-                          <span>→</span>
-                          <span className="px-1.5 py-0.5 bg-copilot-surface rounded">🧪 Test</span>
-                          <span>→</span>
-                          <span className="px-1 py-0.5 bg-copilot-warning/20 rounded text-[9px]">
-                            👀
-                          </span>
-                        </div>
-                        <p>
-                          Reviewer checks after each phase. Can reject back to <strong>any</strong>{' '}
-                          earlier phase (e.g., from Code Review back to Plan if architecture needs
-                          rethinking).
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
               {/* Lisa Phase Progress - Shows during active Lisa loop or after completion */}
               {(activeTab?.lisaConfig?.active || activeTab?.lisaConfig?.phaseHistory?.length) && (
                 <div className="mb-2 p-3 bg-copilot-bg rounded-lg border border-copilot-border">
@@ -6469,7 +6553,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
               {/* Context Usage Indicator */}
               {activeTab?.contextUsage && (
-                <div className="mb-2 flex items-center gap-2 px-1">
+                <div className="mb-1.5 flex items-center gap-2 px-1">
                   <div className="flex-1 h-1.5 bg-copilot-border rounded-full overflow-hidden">
                     <div
                       className={`h-full transition-all duration-300 ${
@@ -6625,36 +6709,33 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   className="hidden"
                 />
 
-                {/* Agent Mode Selector - toggles settings panel */}
-                {!activeTab?.isProcessing && (
-                  <button
-                    onClick={() => {
-                      const isOpen = showRalphSettings || showLisaSettings;
-                      setShowRalphSettings(!isOpen);
-                      setShowLisaSettings(false);
-                    }}
-                    className={`shrink-0 p-2 pl-2.5 pr-0 transition-colors ${
-                      ralphEnabled || lisaEnabled
-                        ? 'text-copilot-warning'
-                        : showRalphSettings || showLisaSettings
-                          ? 'text-copilot-accent'
-                          : 'text-copilot-text-muted hover:text-copilot-text'
-                    }`}
-                    title="Agent Modes - Ralph Wiggum (Simple Loop) or Lisa Simpson (Multi-Phase)"
-                    data-tour="agent-modes"
-                  >
-                    {lisaEnabled ? (
-                      <LisaIcon size={16} />
-                    ) : ralphEnabled ? (
-                      <RalphIcon size={16} />
-                    ) : (
-                      <ChevronRightIcon
-                        size={14}
-                        className={`transition-transform ${showRalphSettings || showLisaSettings ? 'rotate-90' : ''}`}
-                      />
-                    )}
-                  </button>
-                )}
+                {/* Terminal Toggle Button */}
+                <button
+                  onClick={() => {
+                    if (activeTab) {
+                      if (terminalOpenSessions.has(activeTab.id)) {
+                        setTerminalOpenSessions((prev) => {
+                          const next = new Set(prev);
+                          next.delete(activeTab.id);
+                          return next;
+                        });
+                      } else {
+                        setTerminalOpenSessions((prev) => new Set(prev).add(activeTab.id));
+                        setTerminalInitializedSessions((prev) => new Set(prev).add(activeTab.id));
+                        trackEvent(TelemetryEvents.FEATURE_TERMINAL_OPENED);
+                      }
+                    }
+                  }}
+                  className={`shrink-0 p-2 pl-2.5 pr-0 transition-colors ${
+                    activeTab && terminalOpenSessions.has(activeTab.id)
+                      ? 'text-copilot-accent'
+                      : 'text-copilot-text-muted hover:text-copilot-text'
+                  }`}
+                  title="Toggle terminal"
+                  data-tour="terminal-toggle"
+                >
+                  <TerminalIcon size={16} />
+                </button>
 
                 <textarea
                   ref={inputRef}
@@ -6832,7 +6913,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             </div>
           )}
 
-          {/* Right Panel - Activity & Session Info */}
+          {/* Right Panel - Environment & Session Info */}
           {!rightPanelCollapsed && !isMobile ? (
             <div
               className="border-l border-copilot-border flex flex-col shrink-0 bg-copilot-bg"
@@ -6843,7 +6924,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 <button
                   onClick={toggleRightPanel}
                   className="shrink-0 p-1 text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover rounded transition-colors"
-                  title="Collapse activity panel"
+                  title="Collapse environment panel"
                 >
                   <ChevronDownIcon size={12} className="-rotate-90" />
                 </button>
@@ -7438,14 +7519,14 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             <button
               onClick={toggleRightPanel}
               className="shrink-0 w-10 bg-copilot-bg border-l border-copilot-border flex flex-col items-center py-2 gap-2 hover:bg-copilot-surface transition-colors"
-              title="Show activity panel"
+              title="Show environment panel"
             >
               <ChevronDownIcon size={14} className="rotate-90 text-copilot-text-muted" />
               <span
                 className="text-[10px] text-copilot-text-muted"
                 style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
               >
-                Activity
+                Environment
               </span>
               {activeTab?.isProcessing && (
                 <span className="w-2 h-2 rounded-full bg-copilot-warning animate-pulse" />

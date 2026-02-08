@@ -41,31 +41,31 @@ const tourSteps: TourStep[] = [
     title: 'Embedded Terminal',
     description: 'Click here to open the terminal.',
     descriptionAfterClick: 'Use "Add to Message" to attach terminal output to your prompt!',
-    position: 'bottom',
+    position: 'top',
     requiresClick: true,
     cleanupOnNext: '[data-tour="terminal-toggle"]',
   },
   {
     selector: '[data-tour="agent-modes"]',
     selectorAfterClick: '[data-tour="agent-modes-panel"]',
-    expandToIncludeOriginal: true, // Keep chevron highlighted when expanded
-    title: 'Agent Modes (Ralph & Lisa)',
-    description: 'Click this to reveal the agent modes.',
+    expandToIncludeOriginal: true,
+    title: 'Agent Loops (Ralph & Lisa)',
+    description: 'Click this to reveal the agent loop modes.',
     descriptionAfterClick:
       'Ralph Wiggum runs iterative loops. Lisa Simpson does multi-phase analysis. Try them!',
-    position: 'top',
-    positionAfterClick: 'top',
+    position: 'bottom',
+    positionAfterClick: 'bottom',
     requiresClick: true,
     cleanupOnNext: '[data-tour="agent-modes"]',
-    highlightPadding: { right: 8 }, // Extra padding to center around chevron
-    highlightPaddingAfterClick: { left: 8, right: 8, bottom: 8 }, // Padding around expanded panel
+    highlightPadding: { right: 8 },
+    highlightPaddingAfterClick: { left: 8, right: 8, bottom: 8 },
   },
   {
     selector: '[data-tour="model-selector"]',
     title: 'Model Selection',
     description:
       'Switch between GPT-4.1, Claude Opus-4, Sonnet, Gemini, and more models per session.',
-    position: 'top',
+    position: 'bottom',
   },
   {
     selector: '[data-tour="edited-files"]',
