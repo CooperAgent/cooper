@@ -5517,7 +5517,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 <div className="w-px h-4 bg-copilot-border" />
 
                 {/* Loops Selector */}
-                <div className="relative" data-tour="agent-modes">
+                <div className="relative">
                   <button
                     onClick={() => {
                       if (openTopBarSelector === 'loops') {
@@ -5538,6 +5538,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                           : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover'
                     }`}
                     title="Agent Loops - Ralph Wiggum (Simple Loop) or Lisa Simpson (Multi-Phase)"
+                    data-tour="agent-modes"
                   >
                     {lisaEnabled ? (
                       <LisaIcon size={12} />
