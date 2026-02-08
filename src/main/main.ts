@@ -2401,10 +2401,7 @@ ipcMain.handle('copilot:setModel', async (_event, data: { sessionId: string; mod
   if (sessionState) {
     const { cwd, client } = sessionState;
 
-    // Destroy local session state (conversation history is preserved on server)
-    console.log(`Destroying session ${data.sessionId} before model change to ${data.model}`);
-    await sessionState.session.destroy();
-    sessions.delete(data.sessionId);
+    console.log(`Resuming session ${data.sessionId} with model change to ${data.model}`);
 
     const mcpConfig = await readMcpConfig();
     const browserTools = createBrowserTools(data.sessionId);
@@ -2419,6 +2416,10 @@ ipcMain.handle('copilot:setModel', async (_event, data: { sessionId: string; mod
     });
 
     const resumedSessionId = resumedSession.sessionId;
+
+    // Clean up old session state only after successful resume
+    sessions.delete(data.sessionId);
+
     registerSessionEventForwarding(resumedSessionId, resumedSession);
 
     sessions.set(resumedSessionId, {
