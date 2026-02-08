@@ -578,6 +578,9 @@ const App: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // Drag-and-drop state for session reordering
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [previousSessions, setPreviousSessions] = useState<PreviousSession[]>([]);
@@ -4310,6 +4313,50 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     }
   };
 
+  // Drag-and-drop handlers for session reordering
+  const handleTabDragStart = (e: React.DragEvent, tabId: string) => {
+    setDraggedTabId(tabId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', tabId);
+  };
+
+  const handleTabDragOver = (e: React.DragEvent, tabId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (tabId !== draggedTabId) {
+      setDragOverTabId(tabId);
+    }
+  };
+
+  const handleTabDragLeave = () => {
+    setDragOverTabId(null);
+  };
+
+  const handleTabDrop = (e: React.DragEvent, targetTabId: string) => {
+    e.preventDefault();
+    if (!draggedTabId || draggedTabId === targetTabId) {
+      setDraggedTabId(null);
+      setDragOverTabId(null);
+      return;
+    }
+    setTabs((prev) => {
+      const draggedIndex = prev.findIndex((t) => t.id === draggedTabId);
+      const targetIndex = prev.findIndex((t) => t.id === targetTabId);
+      if (draggedIndex === -1 || targetIndex === -1) return prev;
+      const newTabs = [...prev];
+      const [removed] = newTabs.splice(draggedIndex, 1);
+      newTabs.splice(targetIndex, 0, removed);
+      return newTabs;
+    });
+    setDraggedTabId(null);
+    setDragOverTabId(null);
+  };
+
+  const handleTabDragEnd = () => {
+    setDraggedTabId(null);
+    setDragOverTabId(null);
+  };
+
   // Context menu handlers for session right-click
   const handleTabContextMenu = (e: React.MouseEvent, tabId: string) => {
     e.preventDefault();
@@ -4706,6 +4753,12 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
+                  draggable={!tab.isRenaming}
+                  onDragStart={(e) => handleTabDragStart(e, tab.id)}
+                  onDragOver={(e) => handleTabDragOver(e, tab.id)}
+                  onDragLeave={handleTabDragLeave}
+                  onDrop={(e) => handleTabDrop(e, tab.id)}
+                  onDragEnd={handleTabDragEnd}
                   onClick={() => {
                     handleSwitchTab(tab.id);
                     setLeftDrawerOpen(false);
@@ -4714,7 +4767,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     tab.id === activeTabId
                       ? 'bg-copilot-surface text-copilot-text border-l-2 border-l-copilot-accent'
                       : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border-l-2 border-l-transparent'
-                  }`}
+                  } ${draggedTabId === tab.id ? 'opacity-50' : ''} ${dragOverTabId === tab.id ? 'border-t-2 border-t-copilot-accent' : ''}`}
                 >
                   {/* Status indicator */}
                   {tab.pendingConfirmations.length > 0 ? (
@@ -5216,13 +5269,19 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 {tabs.map((tab) => (
                   <div
                     key={tab.id}
+                    draggable={!tab.isRenaming}
+                    onDragStart={(e) => handleTabDragStart(e, tab.id)}
+                    onDragOver={(e) => handleTabDragOver(e, tab.id)}
+                    onDragLeave={handleTabDragLeave}
+                    onDrop={(e) => handleTabDrop(e, tab.id)}
+                    onDragEnd={handleTabDragEnd}
                     onClick={() => handleSwitchTab(tab.id)}
                     onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
                     className={`group w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors text-left cursor-pointer ${
                       tab.id === activeTabId
                         ? 'bg-copilot-surface text-copilot-text border-l-2 border-l-copilot-accent'
                         : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border-l-2 border-l-transparent'
-                    }`}
+                    } ${draggedTabId === tab.id ? 'opacity-50' : ''} ${dragOverTabId === tab.id ? 'border-t-2 border-t-copilot-accent' : ''}`}
                   >
                     {/* Status indicator - priority: pending > processing > marked > unread > idle */}
                     {tab.pendingConfirmations.length > 0 ? (
