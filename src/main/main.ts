@@ -547,6 +547,13 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
   session.on((event) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
 
+    // Only forward events if this session object is still the active one for this sessionId
+    // This prevents duplicate events when model changes cause a new session object to be created
+    const currentState = sessions.get(sessionId);
+    if (currentState && currentState.session !== session) {
+      return; // This is an old session object, ignore its events
+    }
+
     console.log(`[${sessionId}] Event:`, event.type);
 
     if (event.type === 'assistant.message_delta') {
@@ -942,7 +949,7 @@ const BASELINE_MODELS: ModelInfo[] = [
 // Note: multiplier is estimated, actual cost may differ
 const FALLBACK_MODELS: ModelInfo[] = [
   { id: 'claude-opus-4.6', name: 'Claude Opus 4.6', multiplier: 3, source: 'fallback' },
-  { id: 'claude-opus-4.6-fast', name: 'Claude Opus 4.6 (fast)', multiplier: 3, source: 'fallback' },
+  { id: 'claude-opus-4.6-fast', name: 'Claude Opus 4.6 (fast)', multiplier: 9, source: 'fallback' },
 ];
 
 // Cache for verified models (models confirmed available for current user)
@@ -2399,43 +2406,56 @@ ipcMain.handle('copilot:setModel', async (_event, data: { sessionId: string; mod
 
   const sessionState = sessions.get(data.sessionId);
   if (sessionState) {
-    const { cwd, client } = sessionState;
+    const { cwd, client, alwaysAllowed, allowedPaths } = sessionState;
 
-    // Destroy local session state (conversation history is preserved on server)
-    console.log(`Destroying session ${data.sessionId} before model change to ${data.model}`);
-    await sessionState.session.destroy();
-    sessions.delete(data.sessionId);
+    console.log(`Changing model for session ${data.sessionId} to ${data.model}`);
 
     const mcpConfig = await readMcpConfig();
     const browserTools = createBrowserTools(data.sessionId);
 
-    // Resume the same session with the new model — preserves conversation context
-    const resumedSession = await client.resumeSession(data.sessionId, {
-      model: data.model,
-      mcpServers: mcpConfig.mcpServers,
-      tools: browserTools,
-      onPermissionRequest: (request, invocation) =>
-        handlePermissionRequest(request, invocation, resumedSession.sessionId),
-    });
+    try {
+      // Resume the same session with the new model — preserves conversation context
+      // Note: We do NOT destroy the session first - resumeSession handles the model change
+      const resumedSession = await client.resumeSession(data.sessionId, {
+        model: data.model,
+        mcpServers: mcpConfig.mcpServers,
+        tools: browserTools,
+        onPermissionRequest: (request, invocation) =>
+          handlePermissionRequest(request, invocation, resumedSession.sessionId),
+      });
 
-    const resumedSessionId = resumedSession.sessionId;
-    registerSessionEventForwarding(resumedSessionId, resumedSession);
+      const resumedSessionId = resumedSession.sessionId;
 
-    sessions.set(resumedSessionId, {
-      session: resumedSession,
-      client,
-      model: data.model,
-      cwd,
-      alwaysAllowed: new Set(sessionState.alwaysAllowed),
-      allowedPaths: new Set(sessionState.allowedPaths),
-      isProcessing: false,
-    });
-    activeSessionId = resumedSessionId;
+      // Always register event forwarding on the new session object
+      // (resumeSession returns a new CopilotSession instance even if ID is same)
+      registerSessionEventForwarding(resumedSessionId, resumedSession);
 
-    console.log(`Session ${resumedSessionId} resumed with model ${data.model}`);
-    return { sessionId: resumedSessionId, model: data.model, cwd };
+      // Clean up old session entry if ID changed
+      if (resumedSessionId !== data.sessionId) {
+        sessions.delete(data.sessionId);
+      }
+
+      sessions.set(resumedSessionId, {
+        session: resumedSession,
+        client,
+        model: data.model,
+        cwd,
+        alwaysAllowed: new Set(alwaysAllowed),
+        allowedPaths: new Set(allowedPaths),
+        isProcessing: false,
+      });
+      activeSessionId = resumedSessionId;
+
+      console.log(`Session ${resumedSessionId} resumed with model ${data.model}`);
+      return { sessionId: resumedSessionId, model: data.model, cwd };
+    } catch (resumeError) {
+      console.error(`Failed to resume session with model ${data.model}:`, resumeError);
+      // Re-throw so frontend knows about the failure
+      throw resumeError;
+    }
   }
 
+  console.log(`Session ${data.sessionId} not found in sessions map, only storing model preference`);
   return { model: data.model };
 });
 
