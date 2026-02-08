@@ -913,11 +913,31 @@ interface ModelInfo {
   source?: 'api' | 'fallback'; // 'api' = from listModels(), 'fallback' = hardcoded (not in API yet)
 }
 
+// Baseline models for initial render before API loads
+// These provide immediate UI while waiting for the API response
+const BASELINE_MODELS: ModelInfo[] = [
+  { id: 'gpt-4.1', name: 'GPT-4.1', multiplier: 0, source: 'api' },
+  { id: 'gpt-5-mini', name: 'GPT-5 mini', multiplier: 0, source: 'api' },
+  { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', multiplier: 0.33, source: 'api' },
+  { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1-Codex-Mini', multiplier: 0.33, source: 'api' },
+  { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', multiplier: 1, source: 'api' },
+  { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', multiplier: 1, source: 'api' },
+  { id: 'gpt-5.2-codex', name: 'GPT-5.2-Codex', multiplier: 1, source: 'api' },
+  { id: 'gpt-5.1-codex-max', name: 'GPT-5.1-Codex-Max', multiplier: 1, source: 'api' },
+  { id: 'gpt-5.1-codex', name: 'GPT-5.1-Codex', multiplier: 1, source: 'api' },
+  { id: 'gpt-5.2', name: 'GPT-5.2', multiplier: 1, source: 'api' },
+  { id: 'gpt-5.1', name: 'GPT-5.1', multiplier: 1, source: 'api' },
+  { id: 'gpt-5', name: 'GPT-5', multiplier: 1, source: 'api' },
+  { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', multiplier: 1, source: 'api' },
+  { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', multiplier: 3, source: 'api' },
+];
+
 // Fallback models that work but aren't returned by listModels() API yet
 // These should be removed once the API returns them
+// Note: multiplier is estimated, actual cost may differ
 const FALLBACK_MODELS: ModelInfo[] = [
   { id: 'claude-opus-4.6', name: 'Claude Opus 4.6', multiplier: 3, source: 'fallback' },
-  { id: 'claude-opus-4.6-fast', name: 'Claude Opus 4.6 (fast)', multiplier: 9, source: 'fallback' },
+  { id: 'claude-opus-4.6-fast', name: 'Claude Opus 4.6 (fast)', multiplier: 3, source: 'fallback' },
 ];
 
 // Cache for verified models (models confirmed available for current user)
@@ -933,45 +953,59 @@ function getVerifiedModels(): ModelInfo[] {
   if (verifiedModelsCache && Date.now() - verifiedModelsCache.timestamp < MODEL_CACHE_TTL) {
     return verifiedModelsCache.models;
   }
-  // If no cache, return fallback models only (API models load async)
-  return FALLBACK_MODELS;
+  // If no cache, return baseline + fallback models (API models load async)
+  return [...BASELINE_MODELS, ...FALLBACK_MODELS];
 }
 
 // Fetch models from API and merge with fallback models
 // API models are source of truth; fallback models added if not already in API response
 async function verifyAvailableModels(client: CopilotClient): Promise<ModelInfo[]> {
   console.log('Fetching models from API...');
-  const apiModels = await client.listModels();
 
-  console.log(`API returned ${apiModels.length} models`);
+  try {
+    const apiModels = await client.listModels();
 
-  // Convert API response to ModelInfo, sorted by multiplier (low to high)
-  const models: ModelInfo[] = apiModels
-    .map((m) => ({
-      id: m.id,
-      name: m.name || m.id,
-      multiplier: (m as { billing?: { multiplier?: number } }).billing?.multiplier ?? 1,
-      source: 'api' as const,
-    }))
-    .sort((a, b) => a.multiplier - b.multiplier);
+    console.log(`API returned ${apiModels.length} models`);
 
-  // Add fallback models that aren't in API response
-  const apiIds = new Set(models.map((m) => m.id));
-  for (const fallback of FALLBACK_MODELS) {
-    if (!apiIds.has(fallback.id)) {
-      console.log(`Adding fallback model: ${fallback.id} (not in API response)`);
-      models.push(fallback);
+    // Convert API response to ModelInfo, sorted by multiplier (low to high)
+    const models: ModelInfo[] = apiModels
+      .map((m) => {
+        // Extract billing multiplier with runtime check
+        const billing = (m as { billing?: { multiplier?: number } }).billing;
+        const multiplier = typeof billing?.multiplier === 'number' ? billing.multiplier : 1;
+        return {
+          id: m.id,
+          name: m.name || m.id,
+          multiplier,
+          source: 'api' as const,
+        };
+      })
+      .sort((a, b) => a.multiplier - b.multiplier);
+
+    // Add fallback models that aren't in API response
+    const apiIds = new Set(models.map((m) => m.id));
+    for (const fallback of FALLBACK_MODELS) {
+      if (!apiIds.has(fallback.id)) {
+        console.log(`Adding fallback model: ${fallback.id} (not in API response)`);
+        models.push(fallback);
+      }
     }
+
+    // Re-sort after adding fallbacks
+    models.sort((a, b) => a.multiplier - b.multiplier);
+
+    verifiedModelsCache = { models, timestamp: Date.now() };
+    console.log(
+      `Model list complete: ${models.length} models (${apiModels.length} from API, ${models.length - apiModels.length} fallback)`
+    );
+    return models;
+  } catch (error) {
+    console.error('Failed to fetch models from API:', error);
+    // On error, use baseline + fallback models
+    const fallbackList = [...BASELINE_MODELS, ...FALLBACK_MODELS];
+    verifiedModelsCache = { models: fallbackList, timestamp: Date.now() };
+    return fallbackList;
   }
-
-  // Re-sort after adding fallbacks
-  models.sort((a, b) => a.multiplier - b.multiplier);
-
-  verifiedModelsCache = { models, timestamp: Date.now() };
-  console.log(
-    `Model list complete: ${models.length} models (${apiModels.length} from API, ${models.length - apiModels.length} fallback)`
-  );
-  return models;
 }
 
 // Preferred models for quick, simple AI tasks (in order of preference)
@@ -4291,8 +4325,7 @@ if (!gotTheLock) {
     earlyResumptionPromise = startEarlySessionResumption();
 
     console.log(
-      'Fallback models (until API loads):',
-      FALLBACK_MODELS.map((m) => `${m.name} (${m.multiplier}×)`).join(', ')
+      `Initial models: ${BASELINE_MODELS.length} baseline + ${FALLBACK_MODELS.length} fallback`
     );
 
     // Set up custom application menu
