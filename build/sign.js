@@ -207,7 +207,8 @@ function getMachOType(filePath) {
 
 function getSigningParams(context) {
   const appPath = context.app || context.path || context.appPath;
-  const entitlements = process.env.CSC_ENTITLEMENTS || null;
+  const entitlements =
+    process.env.CSC_ENTITLEMENTS || context.entitlements || context.entitlementsInherit || null;
   const keychain = context.keychain || process.env.CSC_KEYCHAIN || null;
 
   let identity = null;

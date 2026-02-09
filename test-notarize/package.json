@@ -22,7 +22,8 @@
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "notarize": true,
+      "notarize": false,
+      "sign": "../build/sign.js",
       "entitlements": "../build/entitlements.mac.plist",
       "entitlementsInherit": "../build/entitlements.mac.plist"
     },
