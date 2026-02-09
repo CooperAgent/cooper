@@ -170,28 +170,31 @@ jobs:
           security default-keychain -s "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
-          # Persist keychain path and password for re-unlock before build
+          # Extract signing identity hash for the custom sign script
+          IDENTITY_HASH=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application" | head -1 | awk '{print $2}')
+          echo "--- Signing identity ---"
+          echo "Hash: $IDENTITY_HASH"
+
+          # Persist for build step
           echo "CSC_KEYCHAIN=$KEYCHAIN_PATH" >> $GITHUB_ENV
           echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> $GITHUB_ENV
-
-          # Verify the identity is discoverable
-          echo "--- Identities in keychain ---"
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          echo "CSC_NAME=$IDENTITY_HASH" >> $GITHUB_ENV
 
       - name: Build distributables (macOS)
         if: runner.os == 'macOS'
         run: |
-          # Re-unlock keychain right before signing (in case it auto-locked during vite build)
+          # Re-unlock keychain right before signing
           if [ -n "$CSC_KEYCHAIN" ]; then
             security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$CSC_KEYCHAIN"
           fi
           npx electron-builder --mac --publish never
         timeout-minutes: 30
         env:
-          # Don't pass CSC_LINK — it causes electron-builder to create its own keychain
-          # (bypassing our partition-list setup) which makes codesign hang.
+          # Custom sign script (build/sign.js) reads CSC_KEYCHAIN and CSC_NAME directly.
+          # Do NOT pass CSC_LINK — it triggers electron-builder's own keychain management.
           CSC_KEYCHAIN: ${{ env.CSC_KEYCHAIN }}
-          CSC_NAME: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_NAME: ${{ env.CSC_NAME }}
+          CSC_ENTITLEMENTS: build/entitlements.mac.plist
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}

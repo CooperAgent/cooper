@@ -57,6 +57,7 @@
           ]
         }
       ],
+      "sign": "build/sign.js",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "notarize": true,
