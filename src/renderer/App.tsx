@@ -3819,7 +3819,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       if (!result.sessionId) {
         throw new Error('Model change did not return a valid session');
       }
-      // Update the tab in-place: swap session ID and model, preserve everything else
+      // Update the tab model (session ID is preserved by resumeSession)
       setTabs((prev) =>
         prev.map((t) =>
           t.id === activeTab.id
@@ -3832,7 +3832,9 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             : t
         )
       );
-      setActiveTabId(result.sessionId);
+      if (result.sessionId !== activeTab.id) {
+        setActiveTabId(result.sessionId);
+      }
       setStatus('connected');
     } catch (error) {
       console.error('Failed to change model:', error);
