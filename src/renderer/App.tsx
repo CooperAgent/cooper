@@ -436,8 +436,9 @@ const App: React.FC = () => {
   // Settings modal state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsDefaultSection, setSettingsDefaultSection] = useState<
-    'themes' | 'voice' | 'sounds' | 'commands' | undefined
+    'themes' | 'voice' | 'sounds' | 'commands' | 'accessibility' | undefined
   >(undefined);
+  const [zoomFactor, setZoomFactor] = useState(1);
   const [soundEnabled, setSoundEnabled] = useState(() => {
     const saved = localStorage.getItem('copilot-sound-enabled');
     return saved !== null ? saved === 'true' : true; // Default to enabled
@@ -466,6 +467,48 @@ const App: React.FC = () => {
     progress: number;
     status: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (!window.electronAPI?.window?.getZoomFactor) return;
+    window.electronAPI.window.getZoomFactor().then((result) => {
+      if (typeof result.zoomFactor === 'number') {
+        setZoomFactor(result.zoomFactor);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI?.window?.onZoomChanged) return;
+    return window.electronAPI.window.onZoomChanged((data) => {
+      if (typeof data.zoomFactor === 'number') {
+        setZoomFactor(data.zoomFactor);
+      }
+    });
+  }, []);
+
+  const handleZoomIn = useCallback(async () => {
+    if (!window.electronAPI?.window?.zoomIn) return;
+    const result = await window.electronAPI.window.zoomIn();
+    if (typeof result.zoomFactor === 'number') {
+      setZoomFactor(result.zoomFactor);
+    }
+  }, []);
+
+  const handleZoomOut = useCallback(async () => {
+    if (!window.electronAPI?.window?.zoomOut) return;
+    const result = await window.electronAPI.window.zoomOut();
+    if (typeof result.zoomFactor === 'number') {
+      setZoomFactor(result.zoomFactor);
+    }
+  }, []);
+
+  const handleResetZoom = useCallback(async () => {
+    if (!window.electronAPI?.window?.resetZoom) return;
+    const result = await window.electronAPI.window.resetZoom();
+    if (typeof result.zoomFactor === 'number') {
+      setZoomFactor(result.zoomFactor);
+    }
+  }, []);
 
   // Listen for download progress updates
   useEffect(() => {
@@ -7438,6 +7481,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
           soundEnabled={soundEnabled}
           onSoundEnabledChange={handleSoundEnabledChange}
           defaultSection={settingsDefaultSection}
+          zoomFactor={zoomFactor}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onResetZoom={handleResetZoom}
           // Voice settings
           voiceSupported={voiceSpeech.isSupported}
           voiceMuted={voiceSpeech.isMuted}
