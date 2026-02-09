@@ -1,0 +1,40 @@
+{
+  "name": "test-notarize",
+  "version": "0.0.1",
+  "main": "main.js",
+  "private": true,
+  "devDependencies": {
+    "electron": "35.1.5",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "com.cooper.test-notarize",
+    "productName": "TestNotarize",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "sign": "../build/sign.js",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "notarize": false,
+      "entitlements": "../build/entitlements.mac.plist",
+      "entitlementsInherit": "../build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js"
+    ]
+  }
+}
