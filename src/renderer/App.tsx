@@ -245,6 +245,9 @@ const App: React.FC = () => {
   const [instructions, setInstructions] = useState<Instruction[]>([]);
   const [showInstructions, setShowInstructions] = useState(false);
 
+  // Subagents state (for chevron widget in right pane)
+  const [showSubagents, setShowSubagents] = useState(false);
+
   const instructionSections = useMemo(() => {
     const grouped = groupBy(instructions, (instruction) => instruction.type);
     return INSTRUCTION_TYPE_ORDER.map((type) => ({
@@ -271,6 +274,12 @@ const App: React.FC = () => {
   const flatInstructions = useMemo(
     () => instructionSections.flatMap((section) => section.items),
     [instructionSections]
+  );
+
+  // Flat list of all non-system agents for subagents widget
+  const flatAgents = useMemo(
+    () => agents.filter((agent) => agent.type !== 'system'),
+    [agents]
   );
 
   const mcpEntries = useMemo(() => Object.entries(mcpServers), [mcpServers]);
@@ -1427,6 +1436,16 @@ const App: React.FC = () => {
       );
     });
 
+    const unsubscribeAgentSelected = window.electronAPI.copilot.onAgentSelected((data) => {
+      const { sessionId, agentName, agentDisplayName } = data;
+      const agentLabel = agentDisplayName || agentName;
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === sessionId ? { ...tab, activeAgentName: agentLabel } : tab
+        )
+      );
+    });
+
     const unsubscribeIdle = window.electronAPI.copilot.onIdle((data) => {
       const { sessionId } = data;
 
@@ -2114,6 +2133,7 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeReady();
       unsubscribeDelta();
       unsubscribeMessage();
+      unsubscribeAgentSelected();
       unsubscribeIdle();
       unsubscribeToolStart();
       unsubscribeToolEnd();
@@ -4012,20 +4032,23 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     }
   };
 
-  const handleModelChange = async (model: string) => {
+  const handleModelChange = async (
+    model: string
+  ): Promise<{ sessionId: string; model: string; cwd?: string; newSession?: boolean } | null> => {
     if (!activeTab || model === activeTab.model) {
-      return;
+      return null;
     }
 
     setStatus('connecting');
 
     try {
+      const previousTabId = activeTab.id;
       const hasMessages = activeTab.messages.length > 0;
       const result = await window.electronAPI.copilot.setModel(activeTab.id, model, hasMessages);
       // Update the tab in-place: swap session ID and model, preserve everything else
       setTabs((prev) =>
         prev.map((t) =>
-          t.id === activeTab.id
+          t.id === previousTabId
             ? {
                 ...t,
                 id: result.sessionId,
@@ -4039,11 +4062,22 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             : t
         )
       );
+      if (result.sessionId !== previousTabId) {
+        setSelectedAgentByTab((prev) => {
+          const selectedAgent = prev[previousTabId];
+          if (!selectedAgent) return prev;
+          const next = { ...prev, [result.sessionId]: selectedAgent };
+          delete next[previousTabId];
+          return next;
+        });
+      }
       setActiveTabId(result.sessionId);
       setStatus('connected');
+      return result;
     } catch (error) {
       console.error('Failed to change model:', error);
       setStatus('connected');
+      return null;
     }
   };
 
@@ -4435,6 +4469,59 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 )}
               </div>
 
+              {/* Copilot Instructions */}
+              <div className="border-b border-copilot-border">
+                <div className="flex items-center">
+                  <button
+                    onClick={() => setShowInstructions(!showInstructions)}
+                    className="flex-1 flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                  >
+                    <ChevronRightIcon
+                      size={14}
+                      className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
+                    />
+                    <span>Instructions</span>
+                    {instructions.length > 0 && (
+                      <span className="ml-auto text-copilot-accent">{instructions.length}</span>
+                    )}
+                  </button>
+                  <button
+                    onClick={(event) => handleOpenEnvironment('instructions', event)}
+                    className="mr-3 px-2 py-1 text-[10px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
+                    title="Open Environment view"
+                  >
+                    Environment
+                  </button>
+                </div>
+                {showInstructions && (
+                  <div className="px-4 pb-3">
+                    {flatInstructions.length === 0 ? (
+                      <div className="text-xs text-copilot-text-muted">
+                        No instruction files found
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {flatInstructions.map((instruction) => (
+                          <div key={instruction.path} className="text-xs">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => window.electronAPI.file.openFile(instruction.path)}
+                                className="shrink-0 text-copilot-accent"
+                                title={`Open ${instruction.name}`}
+                              >
+                                <FileIcon size={12} />
+                              </button>
+                              <span className="text-copilot-text truncate">{instruction.name}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Agent Skills */}
               <div className="border-b border-copilot-border">
                 <div className="flex items-center">
@@ -4486,50 +4573,50 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 )}
               </div>
 
-              {/* Copilot Instructions */}
+              {/* Subagents */}
               <div className="border-b border-copilot-border">
                 <div className="flex items-center">
                   <button
-                    onClick={() => setShowInstructions(!showInstructions)}
+                    onClick={() => setShowSubagents(!showSubagents)}
                     className="flex-1 flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                   >
                     <ChevronRightIcon
                       size={14}
-                      className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
+                      className={`transition-transform ${showSubagents ? 'rotate-90' : ''}`}
                     />
-                    <span>Instructions</span>
-                    {instructions.length > 0 && (
-                      <span className="ml-auto text-copilot-accent">{instructions.length}</span>
+                    <span>Subagents</span>
+                    {flatAgents.length > 0 && (
+                      <span className="ml-auto text-copilot-accent">{flatAgents.length}</span>
                     )}
                   </button>
                   <button
-                    onClick={(event) => handleOpenEnvironment('instructions', event)}
+                    onClick={(event) => handleOpenEnvironment('agents', event)}
                     className="mr-3 px-2 py-1 text-[10px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
                     title="Open Environment view"
                   >
                     Environment
                   </button>
                 </div>
-                {showInstructions && (
+                {showSubagents && (
                   <div className="px-4 pb-3">
-                    {flatInstructions.length === 0 ? (
-                      <div className="text-xs text-copilot-text-muted">
-                        No instruction files found
-                      </div>
+                    {flatAgents.length === 0 ? (
+                      <div className="text-xs text-copilot-text-muted">No subagents found</div>
                     ) : (
                       <div className="space-y-2">
-                        {flatInstructions.map((instruction) => (
-                          <div key={instruction.path} className="text-xs">
+                        {flatAgents.map((agent) => (
+                          <div key={agent.path} className="text-xs">
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => window.electronAPI.file.openFile(instruction.path)}
+                                onClick={(event) =>
+                                  handleOpenEnvironment('agents', event, agent.path)
+                                }
                                 className="shrink-0 text-copilot-accent"
-                                title={`Open ${instruction.name}`}
+                                title={`View ${agent.name}`}
                               >
-                                <FileIcon size={12} />
+                                <ZapIcon size={12} />
                               </button>
-                              <span className="text-copilot-text truncate">{instruction.name}</span>
+                              <span className="text-copilot-text truncate">{agent.name}</span>
                             </div>
                           </div>
                         ))}
@@ -6173,7 +6260,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                       )}
                     </div>
 
-                    {/* Agents Selector */}
+                    {/* Agents Selector - Commented out until SDK supports true agent selection */}
+                    {/* TODO: Uncomment when @github/copilot-sdk exposes selectCustomAgent() or selectedCustomAgent config
                     <div className="relative">
                       <button
                         onClick={() =>
@@ -6210,13 +6298,55 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                                 {section.agents.map((agent) => {
                                   const isFav = favoriteAgents.includes(agent.path);
                                   const isActive = activeAgentPath === agent.path;
-                                  const selectAgent = () => {
+                                  const selectAgent = async () => {
                                     if (!activeTab) return;
-                                    setSelectedAgentByTab((prev) => ({
-                                      ...prev,
-                                      [activeTab.id]: agent.path,
-                                    }));
                                     setOpenTopBarSelector(null);
+                                    const selectedAgentName =
+                                      agent.path === COOPER_DEFAULT_AGENT.path ? undefined : agent.name;
+                                    const previousSessionId = activeTab.id;
+                                    let updatedSessionId = activeTab.id;
+                                    let hasMessages = activeTab.messages.length > 0;
+                                    if (agent.model && activeTab.model !== agent.model) {
+                                      const modelResult = await handleModelChange(agent.model);
+                                      if (modelResult?.sessionId) {
+                                        updatedSessionId = modelResult.sessionId;
+                                        hasMessages = !modelResult.newSession;
+                                      }
+                                    }
+                                    setSelectedAgentByTab((prev) => {
+                                      const next = { ...prev, [updatedSessionId]: agent.path };
+                                      if (updatedSessionId !== previousSessionId) {
+                                        delete next[previousSessionId];
+                                      }
+                                      return next;
+                                    });
+                                    try {
+                                      const result = await window.electronAPI.copilot.setActiveAgent(
+                                        updatedSessionId,
+                                        selectedAgentName,
+                                        hasMessages
+                                      );
+                                      if (result.sessionId !== updatedSessionId) {
+                                        const priorSessionId = updatedSessionId;
+                                        updatedSessionId = result.sessionId;
+                                        setTabs((prev) =>
+                                          prev.map((t) =>
+                                            t.id === priorSessionId ? { ...t, id: result.sessionId } : t
+                                          )
+                                        );
+                                        setSelectedAgentByTab((prev) => {
+                                          const next = { ...prev, [result.sessionId]: agent.path };
+                                          delete next[priorSessionId];
+                                          return next;
+                                        });
+                                        setActiveTabId(result.sessionId);
+                                      }
+                                    } catch (error) {
+                                      console.error('Failed to select agent:', error);
+                                    }
+                                    updateTab(updatedSessionId, {
+                                      activeAgentName: selectedAgentName ? agent.name : undefined,
+                                    });
                                   };
                                   return (
                                     <div
@@ -6285,6 +6415,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         </div>
                       )}
                     </div>
+                    */}
 
                     {/* Loops Selector */}
                     <div className="relative">
@@ -6874,6 +7005,68 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     {/* Separator */}
                     <div className="border-t border-copilot-border" />
 
+                    {/* Copilot Instructions */}
+                    <div>
+                      <div className="flex items-center">
+                        <button
+                          onClick={() => setShowInstructions(!showInstructions)}
+                          className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                        >
+                          <ChevronRightIcon
+                            size={8}
+                            className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
+                          />
+                          <span>Instructions</span>
+                          {instructions.length > 0 && (
+                            <span className="text-copilot-accent">({instructions.length})</span>
+                          )}
+                        </button>
+                        <button
+                          onClick={(event) => handleOpenEnvironment('instructions', event)}
+                          className="mr-2 px-1.5 py-0.5 text-[9px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
+                          title="Open Environment view"
+                        >
+                          Environment
+                        </button>
+                      </div>
+                      {showInstructions && (
+                        <div className="max-h-48 overflow-y-auto">
+                          {flatInstructions.length === 0 ? (
+                            <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
+                              No instruction files found
+                            </div>
+                          ) : (
+                            <div className="px-3 pb-2 pt-1">
+                              <div className="space-y-2">
+                                {flatInstructions.map((instruction) => (
+                                  <div key={instruction.path} className="text-xs">
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          window.electronAPI.file.openFile(instruction.path)
+                                        }
+                                        className="shrink-0 text-copilot-accent"
+                                        title={`Open ${instruction.name}`}
+                                      >
+                                        <FileIcon size={12} />
+                                      </button>
+                                      <span className="text-copilot-text truncate">
+                                        {instruction.name}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Separator */}
+                    <div className="border-t border-copilot-border" />
+
                     {/* Agent Skills */}
                     <div>
                       <div className="flex items-center">
@@ -6934,54 +7127,54 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     {/* Separator */}
                     <div className="border-t border-copilot-border" />
 
-                    {/* Copilot Instructions */}
+                    {/* Subagents */}
                     <div>
                       <div className="flex items-center">
                         <button
-                          onClick={() => setShowInstructions(!showInstructions)}
+                          onClick={() => setShowSubagents(!showSubagents)}
                           className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                         >
                           <ChevronRightIcon
                             size={8}
-                            className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
+                            className={`transition-transform ${showSubagents ? 'rotate-90' : ''}`}
                           />
-                          <span>Instructions</span>
-                          {instructions.length > 0 && (
-                            <span className="text-copilot-accent">({instructions.length})</span>
+                          <span>Subagents</span>
+                          {flatAgents.length > 0 && (
+                            <span className="text-copilot-accent">({flatAgents.length})</span>
                           )}
                         </button>
                         <button
-                          onClick={(event) => handleOpenEnvironment('instructions', event)}
+                          onClick={(event) => handleOpenEnvironment('agents', event)}
                           className="mr-2 px-1.5 py-0.5 text-[9px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
                           title="Open Environment view"
                         >
                           Environment
                         </button>
                       </div>
-                      {showInstructions && (
+                      {showSubagents && (
                         <div className="max-h-48 overflow-y-auto">
-                          {flatInstructions.length === 0 ? (
+                          {flatAgents.length === 0 ? (
                             <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
-                              No instruction files found
+                              No subagents found
                             </div>
                           ) : (
                             <div className="px-3 pb-2 pt-1">
                               <div className="space-y-2">
-                                {flatInstructions.map((instruction) => (
-                                  <div key={instruction.path} className="text-xs">
+                                {flatAgents.map((agent) => (
+                                  <div key={agent.path} className="text-xs">
                                     <div className="flex items-center gap-2">
                                       <button
                                         type="button"
-                                        onClick={() =>
-                                          window.electronAPI.file.openFile(instruction.path)
+                                        onClick={(event) =>
+                                          handleOpenEnvironment('agents', event, agent.path)
                                         }
                                         className="shrink-0 text-copilot-accent"
-                                        title={`Open ${instruction.name}`}
+                                        title={`View ${agent.name}`}
                                       >
-                                        <FileIcon size={12} />
+                                        <ZapIcon size={12} />
                                       </button>
                                       <span className="text-copilot-text truncate">
-                                        {instruction.name}
+                                        {agent.name}
                                       </span>
                                     </div>
                                   </div>

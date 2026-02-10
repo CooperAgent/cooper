@@ -306,21 +306,15 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
       setSelectedAgentFile(null);
       return;
     }
-    if (initialAgentPath && agentPaths.includes(initialAgentPath)) {
-      setSelectedAgentFile(initialAgentPath);
-      return;
-    }
+    // Only use initialAgentPath if no agent is currently selected
     if (!selectedAgentFile || !agentPaths.includes(selectedAgentFile)) {
-      setSelectedAgentFile(agentPaths[0]);
+      if (initialAgentPath && agentPaths.includes(initialAgentPath)) {
+        setSelectedAgentFile(initialAgentPath);
+      } else {
+        setSelectedAgentFile(agentPaths[0]);
+      }
     }
   }, [agentPaths, initialAgentPath, selectedAgentFile]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    if (activeTab !== 'agents') {
-      setSelectedAgentFile(initialAgentPath ?? null);
-    }
-  }, [activeTab, initialAgentPath, isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -881,7 +875,7 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
                       ? `Instructions (${instructionCount})`
                       : tab === 'skills'
                         ? `Skills (${skillCount})`
-                        : `Agents (${agentCount})`;
+                        : `Subagents (${agentCount})`;
 
                   return (
                     <button
@@ -968,7 +962,7 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
                   <div className="py-1">{skillEntries.map((skill) => renderSkillRoot(skill))}</div>
                 )
               ) : agentPaths.length === 0 ? (
-                <div className="px-3 py-2 text-[10px] text-copilot-text-muted">No agents found</div>
+                <div className="px-3 py-2 text-[10px] text-copilot-text-muted">No subagents found</div>
               ) : fileViewMode === 'tree' ? (
                 <div className="py-1">{agentTree.map((node) => renderAgentTreeNode(node))}</div>
               ) : (
