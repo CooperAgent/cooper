@@ -167,6 +167,8 @@ const App: React.FC = () => {
   const [environmentTab, setEnvironmentTab] = useState<'instructions' | 'skills' | 'agents'>(
     'instructions'
   );
+  const [environmentInstructionPath, setEnvironmentInstructionPath] = useState<string | null>(null);
+  const [environmentSkillPath, setEnvironmentSkillPath] = useState<string | null>(null);
   const [environmentAgentPath, setEnvironmentAgentPath] = useState<string | null>(null);
 
   const [isGitRepo, setIsGitRepo] = useState<boolean>(true);
@@ -1062,11 +1064,25 @@ const App: React.FC = () => {
   }, [activeTab?.cwd]);
 
   const handleOpenEnvironment = useCallback(
-    (tab: 'instructions' | 'skills' | 'agents', event?: React.MouseEvent, agentPath?: string) => {
+    (tab: 'instructions' | 'skills' | 'agents', event?: React.MouseEvent, itemPath?: string) => {
       event?.stopPropagation();
       setFilePreviewPath(null);
       setEnvironmentTab(tab);
-      setEnvironmentAgentPath(tab === 'agents' ? (agentPath ?? null) : null);
+      
+      // Set the appropriate path based on the tab
+      if (tab === 'instructions') {
+        setEnvironmentInstructionPath(itemPath ?? null);
+        setEnvironmentSkillPath(null);
+        setEnvironmentAgentPath(null);
+      } else if (tab === 'skills') {
+        setEnvironmentInstructionPath(null);
+        setEnvironmentSkillPath(itemPath ?? null);
+        setEnvironmentAgentPath(null);
+      } else if (tab === 'agents') {
+        setEnvironmentInstructionPath(null);
+        setEnvironmentSkillPath(null);
+        setEnvironmentAgentPath(itemPath ?? null);
+      }
 
       setShowEnvironmentModal(true);
     },
@@ -4471,50 +4487,36 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
               {/* Copilot Instructions */}
               <div className="border-b border-copilot-border">
-                <div className="flex items-center">
-                  <button
-                    onClick={() => setShowInstructions(!showInstructions)}
-                    className="flex-1 flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
-                  >
-                    <ChevronRightIcon
-                      size={14}
-                      className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
-                    />
-                    <span>Instructions</span>
-                    {instructions.length > 0 && (
-                      <span className="ml-auto text-copilot-accent">{instructions.length}</span>
-                    )}
-                  </button>
-                  <button
-                    onClick={(event) => handleOpenEnvironment('instructions', event)}
-                    className="mr-3 px-2 py-1 text-[10px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
-                    title="Open Environment view"
-                  >
-                    Environment
-                  </button>
-                </div>
+                <button
+                  onClick={() => setShowInstructions(!showInstructions)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                >
+                  <ChevronRightIcon
+                    size={14}
+                    className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
+                  />
+                  <span>Instructions</span>
+                  {instructions.length > 0 && (
+                    <span className="ml-auto text-copilot-accent">{instructions.length}</span>
+                  )}
+                </button>
                 {showInstructions && (
-                  <div className="px-4 pb-3">
+                  <div>
                     {flatInstructions.length === 0 ? (
-                      <div className="text-xs text-copilot-text-muted">
+                      <div className="px-4 py-2 text-xs text-copilot-text-muted">
                         No instruction files found
                       </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="divide-y divide-copilot-border">
                         {flatInstructions.map((instruction) => (
-                          <div key={instruction.path} className="text-xs">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => window.electronAPI.file.openFile(instruction.path)}
-                                className="shrink-0 text-copilot-accent"
-                                title={`Open ${instruction.name}`}
-                              >
-                                <FileIcon size={12} />
-                              </button>
-                              <span className="text-copilot-text truncate">{instruction.name}</span>
-                            </div>
-                          </div>
+                          <button
+                            key={instruction.path}
+                            onClick={(event) => handleOpenEnvironment('instructions', event, instruction.path)}
+                            className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
+                          >
+                            <FileIcon size={12} className="shrink-0 text-copilot-accent" />
+                            <span className="truncate">{instruction.name}</span>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -4524,49 +4526,42 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
               {/* Agent Skills */}
               <div className="border-b border-copilot-border">
-                <div className="flex items-center">
-                  <button
-                    onClick={() => setShowSkills(!showSkills)}
-                    className="flex-1 flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
-                  >
-                    <ChevronRightIcon
-                      size={14}
-                      className={`transition-transform ${showSkills ? 'rotate-90' : ''}`}
-                    />
-                    <span>Agent Skills</span>
-                    {skills.length > 0 && (
-                      <span className="ml-auto text-copilot-accent">{skills.length}</span>
-                    )}
-                  </button>
-                  <button
-                    onClick={(event) => handleOpenEnvironment('skills', event)}
-                    className="mr-3 px-2 py-1 text-[10px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
-                    title="Open Environment view"
-                  >
-                    Environment
-                  </button>
-                </div>
+                <button
+                  onClick={() => setShowSkills(!showSkills)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                >
+                  <ChevronRightIcon
+                    size={14}
+                    className={`transition-transform ${showSkills ? 'rotate-90' : ''}`}
+                  />
+                  <span>Agent Skills</span>
+                  {skills.length > 0 && (
+                    <span className="ml-auto text-copilot-accent">{skills.length}</span>
+                  )}
+                </button>
                 {showSkills && (
-                  <div className="px-4 pb-3">
+                  <div>
                     {flatSkills.length === 0 ? (
-                      <div className="text-xs text-copilot-text-muted">No skills found</div>
+                      <div className="px-4 py-2 text-xs text-copilot-text-muted">No skills found</div>
                     ) : (
-                      <div className="space-y-2">
-                        {flatSkills.map((skill) => (
-                          <div key={skill.path} className="text-xs">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => window.electronAPI.file.openFile(skill.path)}
-                                className="shrink-0 text-copilot-accent"
-                                title={`Open ${skill.name}`}
-                              >
-                                <BookIcon size={12} />
-                              </button>
-                              <span className="text-copilot-text truncate">{skill.name}</span>
-                            </div>
-                          </div>
-                        ))}
+                      <div className="divide-y divide-copilot-border">
+                        {flatSkills.map((skill) => {
+                          // Find the SKILL.md file in the skill's files array
+                          const skillMdPath = skill.files.find(f => 
+                            f.toLowerCase().endsWith('skill.md') || f.toLowerCase().endsWith('skill.markdown')
+                          ) || skill.files[0] || skill.path;
+                          
+                          return (
+                            <button
+                              key={skill.path}
+                              onClick={(event) => handleOpenEnvironment('skills', event, skillMdPath)}
+                              className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
+                            >
+                              <BookIcon size={12} className="shrink-0 text-copilot-accent" />
+                              <span className="truncate">{skill.name}</span>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -4575,50 +4570,34 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
               {/* Subagents */}
               <div className="border-b border-copilot-border">
-                <div className="flex items-center">
-                  <button
-                    onClick={() => setShowSubagents(!showSubagents)}
-                    className="flex-1 flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
-                  >
-                    <ChevronRightIcon
-                      size={14}
-                      className={`transition-transform ${showSubagents ? 'rotate-90' : ''}`}
-                    />
-                    <span>Subagents</span>
-                    {flatAgents.length > 0 && (
-                      <span className="ml-auto text-copilot-accent">{flatAgents.length}</span>
-                    )}
-                  </button>
-                  <button
-                    onClick={(event) => handleOpenEnvironment('agents', event)}
-                    className="mr-3 px-2 py-1 text-[10px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
-                    title="Open Environment view"
-                  >
-                    Environment
-                  </button>
-                </div>
+                <button
+                  onClick={() => setShowSubagents(!showSubagents)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                >
+                  <ChevronRightIcon
+                    size={14}
+                    className={`transition-transform ${showSubagents ? 'rotate-90' : ''}`}
+                  />
+                  <span>Subagents</span>
+                  {flatAgents.length > 0 && (
+                    <span className="ml-auto text-copilot-accent">{flatAgents.length}</span>
+                  )}
+                </button>
                 {showSubagents && (
-                  <div className="px-4 pb-3">
+                  <div>
                     {flatAgents.length === 0 ? (
-                      <div className="text-xs text-copilot-text-muted">No subagents found</div>
+                      <div className="px-4 py-2 text-xs text-copilot-text-muted">No subagents found</div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="divide-y divide-copilot-border">
                         {flatAgents.map((agent) => (
-                          <div key={agent.path} className="text-xs">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={(event) =>
-                                  handleOpenEnvironment('agents', event, agent.path)
-                                }
-                                className="shrink-0 text-copilot-accent"
-                                title={`View ${agent.name}`}
-                              >
-                                <ZapIcon size={12} />
-                              </button>
-                              <span className="text-copilot-text truncate">{agent.name}</span>
-                            </div>
-                          </div>
+                          <button
+                            key={agent.path}
+                            onClick={(event) => handleOpenEnvironment('agents', event, agent.path)}
+                            className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
+                          >
+                            <ZapIcon size={12} className="shrink-0 text-copilot-accent" />
+                            <span className="truncate">{agent.name}</span>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -7007,28 +6986,19 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
                     {/* Copilot Instructions */}
                     <div>
-                      <div className="flex items-center">
-                        <button
-                          onClick={() => setShowInstructions(!showInstructions)}
-                          className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
-                        >
-                          <ChevronRightIcon
-                            size={8}
-                            className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
-                          />
-                          <span>Instructions</span>
-                          {instructions.length > 0 && (
-                            <span className="text-copilot-accent">({instructions.length})</span>
-                          )}
-                        </button>
-                        <button
-                          onClick={(event) => handleOpenEnvironment('instructions', event)}
-                          className="mr-2 px-1.5 py-0.5 text-[9px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
-                          title="Open Environment view"
-                        >
-                          Environment
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => setShowInstructions(!showInstructions)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                      >
+                        <ChevronRightIcon
+                          size={8}
+                          className={`transition-transform ${showInstructions ? 'rotate-90' : ''}`}
+                        />
+                        <span>Instructions</span>
+                        {instructions.length > 0 && (
+                          <span className="text-copilot-accent">({instructions.length})</span>
+                        )}
+                      </button>
                       {showInstructions && (
                         <div className="max-h-48 overflow-y-auto">
                           {flatInstructions.length === 0 ? (
@@ -7036,28 +7006,17 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               No instruction files found
                             </div>
                           ) : (
-                            <div className="px-3 pb-2 pt-1">
-                              <div className="space-y-2">
-                                {flatInstructions.map((instruction) => (
-                                  <div key={instruction.path} className="text-xs">
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          window.electronAPI.file.openFile(instruction.path)
-                                        }
-                                        className="shrink-0 text-copilot-accent"
-                                        title={`Open ${instruction.name}`}
-                                      >
-                                        <FileIcon size={12} />
-                                      </button>
-                                      <span className="text-copilot-text truncate">
-                                        {instruction.name}
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                            <div className="divide-y divide-copilot-border">
+                              {flatInstructions.map((instruction) => (
+                                <button
+                                  key={instruction.path}
+                                  onClick={(event) => handleOpenEnvironment('instructions', event, instruction.path)}
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
+                                >
+                                  <FileIcon size={12} className="shrink-0 text-copilot-accent" />
+                                  <span className="truncate">{instruction.name}</span>
+                                </button>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -7069,28 +7028,19 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
                     {/* Agent Skills */}
                     <div>
-                      <div className="flex items-center">
-                        <button
-                          onClick={() => setShowSkills(!showSkills)}
-                          className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
-                        >
-                          <ChevronRightIcon
-                            size={8}
-                            className={`transition-transform ${showSkills ? 'rotate-90' : ''}`}
-                          />
-                          <span>Agent Skills</span>
-                          {skills.length > 0 && (
-                            <span className="text-copilot-accent">({skills.length})</span>
-                          )}
-                        </button>
-                        <button
-                          onClick={(event) => handleOpenEnvironment('skills', event)}
-                          className="mr-2 px-1.5 py-0.5 text-[9px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
-                          title="Open Environment view"
-                        >
-                          Environment
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => setShowSkills(!showSkills)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                      >
+                        <ChevronRightIcon
+                          size={8}
+                          className={`transition-transform ${showSkills ? 'rotate-90' : ''}`}
+                        />
+                        <span>Agent Skills</span>
+                        {skills.length > 0 && (
+                          <span className="text-copilot-accent">({skills.length})</span>
+                        )}
+                      </button>
                       {showSkills && (
                         <div className="max-h-48 overflow-y-auto">
                           {flatSkills.length === 0 ? (
@@ -7098,26 +7048,24 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               No skills found
                             </div>
                           ) : (
-                            <div className="px-3 pb-2 pt-1">
-                              <div className="space-y-2">
-                                {flatSkills.map((skill) => (
-                                  <div key={skill.path} className="text-xs">
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => window.electronAPI.file.openFile(skill.path)}
-                                        className="shrink-0 text-copilot-accent"
-                                        title={`Open ${skill.name}`}
-                                      >
-                                        <BookIcon size={12} />
-                                      </button>
-                                      <span className="text-copilot-text truncate">
-                                        {skill.name}
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                            <div className="divide-y divide-copilot-border">
+                              {flatSkills.map((skill) => {
+                                // Find the SKILL.md file in the skill's files array
+                                const skillMdPath = skill.files.find(f => 
+                                  f.toLowerCase().endsWith('skill.md') || f.toLowerCase().endsWith('skill.markdown')
+                                ) || skill.files[0] || skill.path;
+                                
+                                return (
+                                  <button
+                                    key={skill.path}
+                                    onClick={(event) => handleOpenEnvironment('skills', event, skillMdPath)}
+                                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
+                                  >
+                                    <BookIcon size={12} className="shrink-0 text-copilot-accent" />
+                                    <span className="truncate">{skill.name}</span>
+                                  </button>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -7129,28 +7077,19 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
                     {/* Subagents */}
                     <div>
-                      <div className="flex items-center">
-                        <button
-                          onClick={() => setShowSubagents(!showSubagents)}
-                          className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
-                        >
-                          <ChevronRightIcon
-                            size={8}
-                            className={`transition-transform ${showSubagents ? 'rotate-90' : ''}`}
-                          />
-                          <span>Subagents</span>
-                          {flatAgents.length > 0 && (
-                            <span className="text-copilot-accent">({flatAgents.length})</span>
-                          )}
-                        </button>
-                        <button
-                          onClick={(event) => handleOpenEnvironment('agents', event)}
-                          className="mr-2 px-1.5 py-0.5 text-[9px] text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface border border-copilot-border rounded transition-colors shrink-0"
-                          title="Open Environment view"
-                        >
-                          Environment
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => setShowSubagents(!showSubagents)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
+                      >
+                        <ChevronRightIcon
+                          size={8}
+                          className={`transition-transform ${showSubagents ? 'rotate-90' : ''}`}
+                        />
+                        <span>Subagents</span>
+                        {flatAgents.length > 0 && (
+                          <span className="text-copilot-accent">({flatAgents.length})</span>
+                        )}
+                      </button>
                       {showSubagents && (
                         <div className="max-h-48 overflow-y-auto">
                           {flatAgents.length === 0 ? (
@@ -7158,28 +7097,19 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               No subagents found
                             </div>
                           ) : (
-                            <div className="px-3 pb-2 pt-1">
-                              <div className="space-y-2">
-                                {flatAgents.map((agent) => (
-                                  <div key={agent.path} className="text-xs">
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={(event) =>
-                                          handleOpenEnvironment('agents', event, agent.path)
-                                        }
-                                        className="shrink-0 text-copilot-accent"
-                                        title={`View ${agent.name}`}
-                                      >
-                                        <ZapIcon size={12} />
-                                      </button>
-                                      <span className="text-copilot-text truncate">
-                                        {agent.name}
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                            <div className="divide-y divide-copilot-border">
+                              {flatAgents.map((agent) => (
+                                <button
+                                  key={agent.path}
+                                  onClick={(event) =>
+                                    handleOpenEnvironment('agents', event, agent.path)
+                                  }
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
+                                >
+                                  <ZapIcon size={12} className="shrink-0 text-copilot-accent" />
+                                  <span className="truncate">{agent.name}</span>
+                                </button>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -7617,6 +7547,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
           agents={agents}
           cwd={activeTab?.cwd}
           initialTab={environmentTab}
+          initialInstructionPath={environmentInstructionPath}
+          initialSkillPath={environmentSkillPath}
           initialAgentPath={environmentAgentPath}
           fileViewMode={activeTab?.fileViewMode || 'flat'}
           onViewModeChange={(mode) => {
