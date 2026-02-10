@@ -111,13 +111,22 @@ interface MCPConfigFile {
 // Path to MCP config file
 const getMcpConfigPath = (): string => join(app.getPath('home'), '.copilot', 'mcp-config.json');
 
+// Get session state base path - respects XDG_STATE_HOME for dev isolation
+const getSessionStatePath = (): string => {
+  const xdgStateHome = process.env.XDG_STATE_HOME;
+  if (xdgStateHome) {
+    return join(xdgStateHome, '.copilot', 'session-state');
+  }
+  return join(app.getPath('home'), '.copilot', 'session-state');
+};
+
 // Copilot folders that are safe to read from without permission (Issue #87)
 // These contain session state data (plans, configs) and are low-risk for read-only access
 const getSafeCopilotReadPaths = (): string[] => {
   const home = app.getPath('home');
   return [
     join(home, '.copilot-sessions'), // Worktree sessions directory
-    join(home, '.copilot', 'session-state'), // Session state (plan.md files)
+    getSessionStatePath(), // Session state (plan.md files)
     join(home, '.copilot', 'skills'), // Personal skills directory
     join(home, '.claude', 'skills'), // Personal Claude skills
     join(home, '.claude', 'commands'), // Legacy Claude commands
@@ -471,8 +480,7 @@ async function getClientForCwd(cwd: string): Promise<CopilotClient> {
 // This can happen when a session is resumed while a tool is executing
 // The bug inserts a session.resume event between tool.execution_start and tool.execution_complete
 async function repairDuplicateToolResults(sessionId: string): Promise<boolean> {
-  const homedir = process.env.HOME || process.env.USERPROFILE || '';
-  const eventsPath = join(homedir, '.copilot', 'session-state', sessionId, 'events.jsonl');
+  const eventsPath = join(getSessionStatePath(), sessionId, 'events.jsonl');
 
   try {
     if (!existsSync(eventsPath)) {
@@ -2714,9 +2722,7 @@ ipcMain.handle(
     // Fallback: destroy+resume approach (preserves history but less efficient)
     // If session has no messages, just create a new session
     if (!data.hasMessages) {
-      console.log(
-        `Creating new session with agent ${data.agentName || 'none'} (empty session)`
-      );
+      console.log(`Creating new session with agent ${data.agentName || 'none'} (empty session)`);
 
       // Destroy the old session
       await sessionState.session.destroy();
@@ -2734,9 +2740,7 @@ ipcMain.handle(
     }
 
     // Session has messages - resume to preserve conversation history
-    console.log(
-      `Switching to agent ${data.agentName || 'none'} for session ${data.sessionId}`
-    );
+    console.log(`Switching to agent ${data.agentName || 'none'} for session ${data.sessionId}`);
     await sessionState.session.destroy();
     sessions.delete(data.sessionId);
 
@@ -3066,7 +3070,7 @@ ipcMain.handle('copilot:deleteSessionFromHistory', async (_event, sessionId: str
     await client.deleteSession(sessionId);
 
     // Also clean up the session-state folder if it exists
-    const sessionStateDir = join(app.getPath('home'), '.copilot', 'session-state', sessionId);
+    const sessionStateDir = join(getSessionStatePath(), sessionId);
     if (existsSync(sessionStateDir)) {
       const { rm } = await import('fs/promises');
       await rm(sessionStateDir, { recursive: true, force: true });

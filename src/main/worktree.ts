@@ -14,6 +14,15 @@ import { net } from 'electron';
 
 const execAsync = promisify(exec);
 
+// Get session state base path - respects XDG_STATE_HOME for dev isolation
+const getSessionStatePath = (): string => {
+  const xdgStateHome = process.env.XDG_STATE_HOME;
+  if (xdgStateHome) {
+    return join(xdgStateHome, '.copilot', 'session-state');
+  }
+  return join(app.getPath('home'), '.copilot', 'session-state');
+};
+
 // GitHub issue types
 interface GitHubIssueComment {
   body: string;
@@ -416,7 +425,7 @@ export async function removeWorktreeSession(
 
   // Clean up associated Copilot session-state folders
   if (session.copilotSessionIds && session.copilotSessionIds.length > 0) {
-    const sessionStateBase = join(app.getPath('home'), '.copilot', 'session-state');
+    const sessionStateBase = getSessionStatePath();
     for (const copilotSessionId of session.copilotSessionIds) {
       const sessionStateDir = join(sessionStateBase, copilotSessionId);
       if (existsSync(sessionStateDir)) {
