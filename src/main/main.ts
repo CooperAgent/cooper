@@ -135,7 +135,7 @@ const getWorktreeSessionsPath = (): string => {
   if (sessionsHome) {
     return sessionsHome;
   }
-  return join(app.getPath('home'), '.copilot-sessions');
+  return join(app.getPath('home'), '.cooper-sessions');
 };
 
 // Path to MCP config file

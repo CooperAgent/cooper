@@ -280,7 +280,8 @@ export function useCommitModal(): UseCommitModalReturn {
         }
 
         // If merge was selected and removeWorktreeAfterMerge is checked, remove the worktree and close session
-        const isWorktreePath = activeTab.cwd.includes('.copilot-sessions');
+        const isWorktreePath =
+          activeTab.cwd.includes('.cooper-sessions') || activeTab.cwd.includes('.copilot-sessions');
         if (commitAction === 'merge') {
           const mergeResult = await window.electronAPI.git.mergeToMain(
             activeTab.cwd,
@@ -401,7 +402,11 @@ export function useCommitModal(): UseCommitModalReturn {
           activeTab.untrackedFiles || []
         );
         if (result.success) {
-          if (removeWorktreeAfterMerge && activeTab.cwd.includes('.copilot-sessions')) {
+          if (
+            removeWorktreeAfterMerge &&
+            (activeTab.cwd.includes('.cooper-sessions') ||
+              activeTab.cwd.includes('.copilot-sessions'))
+          ) {
             const sessionId = activeTab.cwd.split(/[/\\]/).pop() || '';
             if (sessionId) {
               await window.electronAPI.worktree.removeSession({
