@@ -6,7 +6,7 @@
 
 A native desktop GUI for GitHub Copilot, built on the [Copilot SDK](https://github.blog/changelog/2026-01-14-copilot-sdk-in-technical-preview/).
 
-![Cooper Demo](https://github.com/CooperAgent/cooper/releases/download/assets/Copilot.Skins.2-4.gif)
+![Cooper Demo](https://github.com/CooperAgent/cooper/releases/download/assets/Cooper-2.gif)
 
 ## Prerequisites
 
