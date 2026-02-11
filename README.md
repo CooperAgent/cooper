@@ -6,46 +6,40 @@
 
 A native desktop GUI for GitHub Copilot, built on the [Copilot SDK](https://github.blog/changelog/2026-01-14-copilot-sdk-in-technical-preview/).
 
-![Cooper Demo](https://github.com/CooperAgent/cooper/releases/download/assets/Cooper-2.gif)
+![Cooper Demo](https://github.com/user-attachments/assets/72c9d556-4a47-44c0-951e-568df9a9468e)
 
 ## Prerequisites
 
 - A **[GitHub Copilot](https://github.com/features/copilot)** subscription
 - **[GitHub CLI](https://cli.github.com/)** installed and authenticated — run `gh auth login` if you haven't already
 
-## Install
+## Installation
 
-### Windows
+Download the latest release from the **[Releases page](https://github.com/CooperAgent/cooper/releases/latest)**:
 
-Download the latest `.exe` from the **[Releases page](https://github.com/CooperAgent/cooper/releases/latest)** and run it.
+| Platform                  | File                                 | Notes                |
+| ------------------------- | ------------------------------------ | -------------------- |
+| **macOS** (Apple Silicon) | `Cooper-<version>-mac-arm64.dmg`     | Signed and notarized |
+| **Windows** (x64)         | `Cooper-<version>-win-x64-Setup.exe` | Installer            |
 
-### macOS
+> **Note:** Cooper is an open-source project, so release executables are not officially code-signed. Your OS may show a warning on first launch. If you prefer, you can [build from source](#build-from-source) below.
+
+<details>
+<summary><b>Build from source</b></summary>
 
 Requires **Node.js 22+**.
 
+**macOS:**
+
 ```bash
-git clone https://github.com/CooperAgent/cooper.git && cd cooper && npm install && npm run dist && open release/Cooper-*-arm64.dmg
+git clone https://github.com/CooperAgent/cooper.git && cd cooper && npm install && npm run dist
 ```
 
-<details>
-<summary><b>Build from source on Windows</b></summary>
-
-If you prefer building from source instead of using the installer:
+**Windows:**
 
 ```powershell
 git clone https://github.com/CooperAgent/cooper.git; cd cooper; pwsh -NoProfile -File .\scripts\setup-windows.ps1; npm run dist:win
 ```
-
-The setup script installs all Windows-specific prerequisites (Python, VS Build Tools, PowerShell 7+) and npm dependencies automatically.
-
-</details>
-
-<details>
-<summary><b>Using an AI coding agent to install</b></summary>
-
-Tell your agent:
-
-> Clone `https://github.com/CooperAgent/cooper.git`, install dependencies, and build an installer for my OS (macOS → `.dmg`, Windows → `.exe`).
 
 </details>
 
@@ -57,8 +51,9 @@ Tell your agent:
 - 💻 **Embedded Terminal** — Real PTY per session, one click to attach output to your prompt
 - 🎤 **Voice Input/Output** — Speech-to-text and text-to-speech
 - 🔌 **MCP Servers** — Model Context Protocol for extended tool capabilities
-- 🎯 **Agent Skills** — Personal and project skills via `SKILL.md` and `.agent.md` files
-- 🤖 **Model Selection** — GPT-5.2, Opus-4.6, Sonnet, Haiku, Gemini, and more
+- 🎯 **Agent Skills & Subagents** — Personal and project skills via `SKILL.md`, `.agent.md`, and subagent delegation
+- 🤖 **Model Selection** — Dynamic model list with favorites — GPT-5.2, Opus-4.6, Sonnet, Haiku, Gemini, and more
+- ⚡ **YOLO Mode** — Auto-approve tool calls for uninterrupted agent flow
 
 ## Development
 

@@ -59,6 +59,7 @@ import {
 import { GitBranchWidget, CommitModal, useCommitModal } from './features/git';
 import { CreateWorktreeSession } from './features/sessions';
 import { ToolActivitySection } from './features/chat';
+import { SubagentActivitySection } from './features/chat/SubagentActivitySection';
 import { buildLisaPhasePrompt } from './features/agent-loops';
 import { enrichSessionsWithWorktreeData } from './features/sessions';
 import { getCleanEditedFiles } from './features/git';
@@ -279,10 +280,7 @@ const App: React.FC = () => {
   );
 
   // Flat list of all non-system agents for subagents widget
-  const flatAgents = useMemo(
-    () => agents.filter((agent) => agent.type !== 'system'),
-    [agents]
-  );
+  const flatAgents = useMemo(() => agents.filter((agent) => agent.type !== 'system'), [agents]);
 
   const mcpEntries = useMemo(() => Object.entries(mcpServers), [mcpServers]);
 
@@ -648,6 +646,7 @@ const App: React.FC = () => {
                   cwd: '/tmp/test',
                   isProcessing: false,
                   activeTools: [],
+                  activeSubagents: [],
                   hasUnreadCompletion: false,
                   pendingConfirmations: [],
                   needsTitle: false,
@@ -714,12 +713,31 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  // Debug helper: run window.showUpdateModal() in DevTools console to test the modal
+  useEffect(() => {
+    (window as any).showUpdateModal = (info?: {
+      currentVersion?: string;
+      latestVersion?: string;
+      downloadUrl?: string;
+    }) => {
+      const defaults = {
+        currentVersion: buildInfo.baseVersion,
+        latestVersion: '99.0.0',
+        downloadUrl: 'https://github.com/CooperAgent/cooper/releases',
+      };
+      setUpdateInfo({ ...defaults, ...info });
+      setShowUpdateModal(true);
+    };
+    return () => {
+      delete (window as any).showUpdateModal;
+    };
+  }, []);
+
   // Check if user has seen welcome wizard on startup
   useEffect(() => {
     const checkWelcomeWizard = async () => {
       try {
         const { hasSeen } = await window.electronAPI.wizard.hasSeenWelcome();
-        console.log('Welcome wizard check:', { hasSeen });
         if (!hasSeen) {
           // Mark that we should show wizard once data is loaded
           setShouldShowWizardWhenReady(true);
@@ -734,16 +752,26 @@ const App: React.FC = () => {
 
   // Show wizard once data is loaded and we should show it
   useEffect(() => {
-    console.log('Wizard show check:', { shouldShowWizardWhenReady, dataLoaded });
     if (shouldShowWizardWhenReady && dataLoaded) {
       // Small delay to ensure UI has rendered
       const timer = setTimeout(() => {
-        console.log('Showing welcome wizard');
         setShowWelcomeWizard(true);
       }, 300);
       return () => clearTimeout(timer);
     }
   }, [shouldShowWizardWhenReady, dataLoaded]);
+
+  // Expose dev console helper to trigger the wizard: window.cooper.showWizard()
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development' || import.meta.env.DEV) {
+      (window as any).cooper = {
+        ...(window as any).cooper,
+        showWizard: () => {
+          setShowWelcomeWizard(true);
+        },
+      };
+    }
+  }, []);
 
   // Focus input when active tab changes
   useEffect(() => {
@@ -1003,10 +1031,6 @@ const App: React.FC = () => {
       try {
         const config = await window.electronAPI.mcp.getConfig();
         setMcpServers(config.mcpServers || {});
-        const serverCount = Object.keys(config.mcpServers || {}).length;
-        console.log('Loaded MCP servers:', Object.keys(config.mcpServers || {}));
-        if (serverCount > 0) {
-        }
       } catch (error) {
         console.error('Failed to load MCP config:', error);
       }
@@ -1024,7 +1048,6 @@ const App: React.FC = () => {
         if (result.errors?.length > 0) {
           console.warn('Some skills had errors:', result.errors);
         }
-        console.log('Loaded skills:', result.skills?.length || 0);
       } catch (error) {
         console.error('Failed to load skills:', error);
       }
@@ -1068,7 +1091,7 @@ const App: React.FC = () => {
       event?.stopPropagation();
       setFilePreviewPath(null);
       setEnvironmentTab(tab);
-      
+
       // Set the appropriate path based on the tab
       if (tab === 'instructions') {
         setEnvironmentInstructionPath(itemPath ?? null);
@@ -1106,12 +1129,6 @@ const App: React.FC = () => {
   // Set up IPC listeners
   useEffect(() => {
     const unsubscribeReady = window.electronAPI.copilot.onReady(async (data) => {
-      console.log(
-        'Copilot ready with sessions:',
-        data.sessions.length,
-        'previous:',
-        data.previousSessions.length
-      );
       setStatus('connected');
       setAvailableModels(data.models);
 
@@ -1169,6 +1186,7 @@ const App: React.FC = () => {
             cwd: result.cwd,
             isProcessing: false,
             activeTools: [],
+            activeSubagents: [],
             hasUnreadCompletion: false,
             pendingConfirmations: [],
             needsTitle: true,
@@ -1214,6 +1232,7 @@ const App: React.FC = () => {
               cwd: s.cwd,
               isProcessing: false,
               activeTools: [],
+              activeSubagents: [],
               hasUnreadCompletion: false,
               pendingConfirmations: [],
               needsTitle: !s.name, // Only need title if no name provided
@@ -1293,6 +1312,7 @@ const App: React.FC = () => {
             cwd: s.cwd,
             isProcessing: false,
             activeTools: [],
+            activeSubagents: [],
             hasUnreadCompletion: false,
             pendingConfirmations: [],
             needsTitle: !s.name && preloadedMessages.length === 0,
@@ -1386,13 +1406,12 @@ const App: React.FC = () => {
     window.electronAPI.copilot
       .getModels()
       .then((data) => {
-        console.log('Fetched models:', data);
         if (data.models && data.models.length > 0) {
           setAvailableModels(data.models);
           setStatus('connected');
         }
       })
-      .catch((err) => console.log('getModels failed (SDK may still be initializing):', err));
+      .catch(() => {});
 
     const unsubscribeDelta = window.electronAPI.copilot.onDelta((data) => {
       const { sessionId, content } = data;
@@ -1456,9 +1475,7 @@ const App: React.FC = () => {
       const { sessionId, agentName, agentDisplayName } = data;
       const agentLabel = agentDisplayName || agentName;
       setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === sessionId ? { ...tab, activeAgentName: agentLabel } : tab
-        )
+        prev.map((tab) => (tab.id === sessionId ? { ...tab, activeAgentName: agentLabel } : tab))
       );
     });
 
@@ -1470,9 +1487,6 @@ const App: React.FC = () => {
       const now = Date.now();
       const lastIdle = lastIdleTimestampRef.current.get(sessionId) || 0;
       if (now - lastIdle < 500) {
-        console.log(
-          `[Idle] Skipping duplicate idle event for session ${sessionId} (${now - lastIdle}ms since last)`
-        );
         return;
       }
       lastIdleTimestampRef.current.set(sessionId, now);
@@ -1500,14 +1514,17 @@ const App: React.FC = () => {
 
         // Check for Ralph loop continuation
         if (tab?.ralphConfig?.active) {
-          const lastMessage = tab.messages[tab.messages.length - 1];
-          const hasCompletionPromise = lastMessage?.content?.includes(RALPH_COMPLETION_SIGNAL);
+          // Check ALL assistant messages for the completion signal, not just the last one.
+          // A single agent turn can produce multiple assistant.message events (between tool calls),
+          // and the signal may be in an earlier message, not the final one.
+          const hasCompletionPromise = tab.messages.some(
+            (msg) => msg.role === 'assistant' && msg.content?.includes(RALPH_COMPLETION_SIGNAL)
+          );
           const maxReached = tab.ralphConfig.currentIteration >= tab.ralphConfig.maxIterations;
 
           if (!hasCompletionPromise && !maxReached) {
             // Continue Ralph loop
             const nextIteration = tab.ralphConfig.currentIteration + 1;
-            console.log(`[Ralph] Iteration ${nextIteration}/${tab.ralphConfig.maxIterations}`);
 
             const screenshotChecklistItem = tab.ralphConfig.requireScreenshot
               ? '\n- [ ] Screenshot taken of the delivered feature'
@@ -1517,7 +1534,10 @@ const App: React.FC = () => {
             // If clearContextBetweenIterations is true, we provide minimal context (like Gemini Ralph)
             // and instruct the agent to re-read files for state (reduces context pollution)
             const clearContext = tab.ralphConfig.clearContextBetweenIterations ?? true;
-            const lastResponseContent = lastMessage?.content || '';
+            const lastAssistantMsg = [...tab.messages]
+              .reverse()
+              .find((m) => m.role === 'assistant');
+            const lastResponseContent = lastAssistantMsg?.content || '';
 
             let continuationPrompt: string;
 
@@ -1630,9 +1650,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
             });
           } else {
             // Ralph loop complete - stop it and close settings
-            console.log(
-              `[Ralph] Loop complete. Reason: ${hasCompletionPromise ? 'completion promise found' : 'max iterations reached'}`
-            );
             setShowRalphSettings(false);
             setShowLisaSettings(false);
           }
@@ -1640,11 +1657,18 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
 
         // Check for Lisa Simpson loop continuation
         if (tab?.lisaConfig?.active) {
-          const lastMessage = tab.messages[tab.messages.length - 1];
-          const lastContent = lastMessage?.content || '';
-          const hasPhaseComplete = lastContent.includes(LISA_PHASE_COMPLETE_SIGNAL);
-          const hasReviewApprove = lastContent.includes(LISA_REVIEW_APPROVE_SIGNAL);
-          const hasReviewReject = lastContent.includes(LISA_REVIEW_REJECT_PREFIX);
+          // Check ALL recent assistant messages for phase signals, not just the last one.
+          // Same rationale as Ralph: multi-message turns may have signals in earlier messages.
+          const recentAssistantMessages = tab.messages.filter((msg) => msg.role === 'assistant');
+          const hasPhaseComplete = recentAssistantMessages.some((msg) =>
+            msg.content?.includes(LISA_PHASE_COMPLETE_SIGNAL)
+          );
+          const hasReviewApprove = recentAssistantMessages.some((msg) =>
+            msg.content?.includes(LISA_REVIEW_APPROVE_SIGNAL)
+          );
+          const hasReviewReject = recentAssistantMessages.some((msg) =>
+            msg.content?.includes(LISA_REVIEW_REJECT_PREFIX)
+          );
           const currentPhase = tab.lisaConfig.currentPhase;
           const currentVisitCount = tab.lisaConfig.phaseIterations[currentPhase] || 1;
 
@@ -1688,13 +1712,9 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
             // Review approved - move to next phase (or complete if final-review)
             nextPhase = getNextPhase(currentPhase);
             if (nextPhase) {
-              console.log(
-                `[Lisa] ${getPhaseDisplayName(currentPhase)} approved! Moving to ${getPhaseDisplayName(nextPhase)}`
-              );
               shouldContinue = true;
             } else {
               // Final review approved - Lisa loop complete!
-              console.log(`[Lisa] Final review approved! Loop complete.`);
               shouldContinue = false;
             }
           } else if (isReviewPhase && hasReviewReject) {
@@ -1706,18 +1726,12 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
             );
             if (rejectMatch) {
               rejectToPhase = rejectMatch[1] as LisaPhase;
-              console.log(
-                `[Lisa] ${getPhaseDisplayName(currentPhase)} rejected, returning to ${getPhaseDisplayName(rejectToPhase)}`
-              );
               shouldContinue = true;
             }
           } else if (hasPhaseComplete && !isReviewPhase) {
             // Non-review phase complete - move to its review phase
             nextPhase = getNextPhase(currentPhase);
             if (nextPhase) {
-              console.log(
-                `[Lisa] ${getPhaseDisplayName(currentPhase)} complete, moving to ${getPhaseDisplayName(nextPhase)}`
-              );
               shouldContinue = true;
             }
           } else if (!hasPhaseComplete && !hasReviewApprove && !hasReviewReject) {
@@ -1729,8 +1743,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
             const targetPhase = rejectToPhase || nextPhase || currentPhase;
             const isNewPhase = targetPhase !== currentPhase;
             const targetVisitCount = isNewPhase ? 1 : currentVisitCount + 1;
-
-            console.log(`[Lisa] ${getPhaseDisplayName(targetPhase)} - Visit #${targetVisitCount}`);
 
             // Build phase-specific continuation prompt
             const continuationPrompt = buildLisaPhasePrompt(
@@ -1773,9 +1785,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
             });
           } else {
             // Lisa loop complete - close settings
-            console.log(
-              `[Lisa] Loop complete. Phase: ${currentPhase}, Reason: ${hasReviewApprove ? 'final review approved' : 'no continuation needed'}`
-            );
             setShowRalphSettings(false);
             setShowLisaSettings(false);
           }
@@ -1839,21 +1848,25 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
 
         return prev.map((tab) => {
           if (tab.id !== sessionId) return tab;
-          // Capture tools into the last assistant message before clearing
+          // Capture tools and subagents into the last assistant message before clearing
           const toolsSnapshot = [...tab.activeTools];
+          const subagentsSnapshot = [...(tab.activeSubagents || [])];
           const filteredMessages = tab.messages.filter(
             (msg) => msg.content.trim() || msg.role === 'user'
           );
-          // Find the last assistant message to attach tools
+          // Find the last assistant message to attach tools and subagents
           const lastAssistantIdx = filteredMessages.reduce(
             (lastIdx, msg, idx) => (msg.role === 'assistant' ? idx : lastIdx),
             -1
           );
           const updatedMessages = filteredMessages.map((msg, idx) => {
             const withoutStreaming = msg.isStreaming ? { ...msg, isStreaming: false } : msg;
-            // Attach tools to the last assistant message
-            if (idx === lastAssistantIdx && toolsSnapshot.length > 0) {
-              return { ...withoutStreaming, tools: toolsSnapshot };
+            // Attach tools and subagents to the last assistant message
+            if (idx === lastAssistantIdx) {
+              const updates: Partial<typeof msg> = {};
+              if (toolsSnapshot.length > 0) updates.tools = toolsSnapshot;
+              if (subagentsSnapshot.length > 0) updates.subagents = subagentsSnapshot;
+              return { ...withoutStreaming, ...updates };
             }
             return withoutStreaming;
           });
@@ -1861,6 +1874,7 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
             ...tab,
             isProcessing: false,
             activeTools: [],
+            activeSubagents: [],
             currentIntent: null,
             currentIntentTimestamp: null,
             // Deactivate Ralph if it was active
@@ -1896,8 +1910,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       const name = toolName || 'unknown';
       const id = toolCallId || generateId();
 
-      console.log(`[Tool Start] ${name}: toolCallId=${toolCallId}, id=${id}, input=`, input);
-
       // Capture intent from report_intent tool
       if (name === 'report_intent') {
         const intent = input?.intent as string | undefined;
@@ -1916,6 +1928,39 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       // Skip other internal tools
       if (name === 'update_todo') return;
 
+      // Detect task tool invocations as subagent calls
+      if (name === 'task' && input) {
+        const agentType = input.agent_type as string | undefined;
+        const description = input.description as string | undefined;
+
+        if (agentType) {
+          // Add as a subagent, not a regular tool
+          setTabs((prev) =>
+            prev.map((tab) => {
+              if (tab.id !== sessionId) return tab;
+
+              return {
+                ...tab,
+                activeSubagents: [
+                  ...(tab.activeSubagents || []),
+                  {
+                    toolCallId: id,
+                    agentName: agentType,
+                    agentDisplayName: agentType
+                      .replace(/-/g, ' ')
+                      .replace(/\b\w/g, (l) => l.toUpperCase()),
+                    agentDescription: description,
+                    status: 'running',
+                    startTime: Date.now(),
+                  },
+                ],
+              };
+            })
+          );
+          return; // Don't add to activeTools
+        }
+      }
+
       // Track edited/created files at start time (we have reliable input here)
       const isFileOperation = name === 'edit' || name === 'create';
 
@@ -1929,7 +1974,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
             const path = input.path as string | undefined;
             if (path && !tab.editedFiles.includes(path)) {
               newEditedFiles = [...tab.editedFiles, path];
-              console.log(`[Tool Start] Added to editedFiles:`, newEditedFiles);
             }
           }
 
@@ -1949,14 +1993,53 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       const { sessionId, toolCallId, toolName, input, output } = data;
       const name = toolName || 'unknown';
 
-      console.log(`[Tool End] ${name}:`, {
-        toolCallId,
-        input,
-        hasInput: !!input,
-      });
-
       // Skip internal tools
       if (name === 'report_intent' || name === 'update_todo') return;
+
+      // Handle task tool completion as subagent completion
+      if (name === 'task') {
+        setTabs((prev) =>
+          prev.map((tab) => {
+            if (tab.id !== sessionId) return tab;
+
+            // Check if this task was tracked as a subagent
+            const subagent = (tab.activeSubagents || []).find((s) => s.toolCallId === toolCallId);
+            if (subagent) {
+              return {
+                ...tab,
+                activeSubagents: (tab.activeSubagents || []).map((s) =>
+                  s.toolCallId === toolCallId
+                    ? {
+                        ...s,
+                        status: 'completed' as const,
+                        endTime: Date.now(),
+                      }
+                    : s
+                ),
+              };
+            }
+
+            // If not a subagent, treat as regular tool
+            const activeTool = tab.activeTools.find((t) => t.toolCallId === toolCallId);
+            const toolInput = input || activeTool?.input;
+
+            return {
+              ...tab,
+              activeTools: tab.activeTools.map((t) =>
+                t.toolCallId === toolCallId
+                  ? {
+                      ...t,
+                      status: 'done' as const,
+                      input: toolInput || t.input,
+                      output,
+                    }
+                  : t
+              ),
+            };
+          })
+        );
+        return;
+      }
 
       setTabs((prev) =>
         prev.map((tab) => {
@@ -1983,9 +2066,81 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       );
     });
 
+    // Listen for subagent events
+    const unsubscribeSubagentStarted = window.electronAPI.copilot.onSubagentStarted((data) => {
+      const { sessionId, toolCallId, agentName, agentDisplayName, agentDescription } = data;
+
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== sessionId) return tab;
+
+          return {
+            ...tab,
+            activeSubagents: [
+              ...(tab.activeSubagents || []),
+              {
+                toolCallId,
+                agentName,
+                agentDisplayName,
+                agentDescription,
+                status: 'running',
+                startTime: Date.now(),
+              },
+            ],
+          };
+        })
+      );
+    });
+
+    const unsubscribeSubagentCompleted = window.electronAPI.copilot.onSubagentCompleted((data) => {
+      const { sessionId, toolCallId, agentName } = data;
+
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== sessionId) return tab;
+
+          return {
+            ...tab,
+            activeSubagents: (tab.activeSubagents || []).map((s) =>
+              s.toolCallId === toolCallId
+                ? {
+                    ...s,
+                    status: 'completed' as const,
+                    endTime: Date.now(),
+                  }
+                : s
+            ),
+          };
+        })
+      );
+    });
+
+    const unsubscribeSubagentFailed = window.electronAPI.copilot.onSubagentFailed((data) => {
+      const { sessionId, toolCallId, agentName, error } = data;
+
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== sessionId) return tab;
+
+          return {
+            ...tab,
+            activeSubagents: (tab.activeSubagents || []).map((s) =>
+              s.toolCallId === toolCallId
+                ? {
+                    ...s,
+                    status: 'failed' as const,
+                    error,
+                    endTime: Date.now(),
+                  }
+                : s
+            ),
+          };
+        })
+      );
+    });
+
     // Listen for permission requests
     const unsubscribePermission = window.electronAPI.copilot.onPermission((data) => {
-      console.log('Permission requested (full data):', JSON.stringify(data, null, 2));
       const sessionId = data.sessionId as string;
       const requestPath = data.path as string | undefined;
 
@@ -1993,7 +2148,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       if (requestPath && (data.kind === 'read' || data.kind === 'file-read')) {
         const sessionPaths = userAttachedPathsRef.current.get(sessionId);
         if (sessionPaths?.has(requestPath)) {
-          console.log('Auto-approving read for user-attached file:', requestPath);
           window.electronAPI.copilot.respondPermission({
             requestId: data.requestId,
             decision: 'approved',
@@ -2064,7 +2218,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
 
     // Listen for verified models update (async verification after startup)
     const unsubscribeModelsVerified = window.electronAPI.copilot.onModelsVerified((data) => {
-      console.log('Models verified:', data.models.length, 'available');
       setAvailableModels(data.models);
     });
 
@@ -2153,6 +2306,9 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeIdle();
       unsubscribeToolStart();
       unsubscribeToolEnd();
+      unsubscribeSubagentStarted();
+      unsubscribeSubagentCompleted();
+      unsubscribeSubagentFailed();
       unsubscribePermission();
       unsubscribeError();
       unsubscribeSessionResumed();
@@ -2283,15 +2439,11 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
         !currentMessage.includes(RALPH_COMPLETION_SIGNAL.toLowerCase());
 
       if (isNewTask) {
-        console.log(
-          '[Ralph] 👻 Ghost protection triggered - new task detected, cancelling Ralph loop'
-        );
         // Cancel the Ralph loop
         updateTab(activeTab.id, {
           ralphConfig: { ...activeTab.ralphConfig, active: false },
         });
         // Show notification (toast would be better, but for now just log)
-        console.log('[Ralph] Loop cancelled - you started a new task');
         // Don't return - let the new message be sent normally
       }
     }
@@ -2351,7 +2503,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
 
       // Send with enqueue mode to inject into agent's processing queue
       try {
-        console.log(`[Injection] Sending enqueued message to session ${activeTab.id}`);
         await window.electronAPI.copilot.send(
           activeTab.id,
           messageContent,
@@ -2656,16 +2807,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
   // Handle image file selection
   const handleImageSelect = useCallback(async (files: FileList | null) => {
-    console.log('handleImageSelect called with files:', files?.length);
     if (!files || files.length === 0) return;
 
     const newAttachments: ImageAttachment[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      console.log('Processing file:', file.name, 'type:', file.type);
       if (!file.type.startsWith('image/')) {
-        console.log('Skipping non-image file:', file.name, file.type);
         continue;
       }
 
@@ -2675,12 +2823,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         reader.onload = (e) => resolve(e.target?.result as string);
         reader.readAsDataURL(file);
       });
-      console.log('Read dataUrl, length:', dataUrl.length);
 
       // Save to temp file for SDK
       const filename = `image-${Date.now()}-${i}${file.name.substring(file.name.lastIndexOf('.'))}`;
       const result = await window.electronAPI.copilot.saveImageToTemp(dataUrl, filename);
-      console.log('saveImageToTemp result:', result);
 
       if (result.success && result.path) {
         newAttachments.push({
@@ -2694,7 +2840,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       }
     }
 
-    console.log('newAttachments:', newAttachments.length);
     if (newAttachments.length > 0) {
       setImageAttachments((prev) => [...prev, ...newAttachments]);
       inputRef.current?.focus();
@@ -2708,21 +2853,18 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
   // Handle file selection (non-image files)
   const handleFileSelect = useCallback(async (files: FileList | null) => {
-    console.log('handleFileSelect called with files:', files?.length);
     if (!files || files.length === 0) return;
 
     const newAttachments: FileAttachment[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      console.log('Processing file:', file.name, 'type:', file.type);
       // Note: We allow all files including images - users can attach images as files if they prefer
 
       // In Electron, File objects from file picker have a path property
       // Use it directly to avoid copying and trust issues
       const electronFile = file as File & { path?: string };
       if (electronFile.path) {
-        console.log('Using original file path:', electronFile.path);
         newAttachments.push({
           id: generateId(),
           path: electronFile.path,
@@ -2739,14 +2881,12 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         reader.onload = (e) => resolve(e.target?.result as string);
         reader.readAsDataURL(file);
       });
-      console.log('Read dataUrl, length:', dataUrl.length);
 
       // Save to temp file for SDK
       const ext = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
       const filename = `file-${Date.now()}-${i}${ext}`;
       const mimeType = file.type || 'application/octet-stream';
       const result = await window.electronAPI.copilot.saveFileToTemp(dataUrl, filename, mimeType);
-      console.log('saveFileToTemp result:', result);
 
       if (result.success && result.path) {
         newAttachments.push({
@@ -2759,7 +2899,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       }
     }
 
-    console.log('newAttachments:', newAttachments.length);
     if (newAttachments.length > 0) {
       setFileAttachments((prev) => [...prev, ...newAttachments]);
       inputRef.current?.focus();
@@ -2851,7 +2990,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
       // Try to get files from dataTransfer.files first - separate images and other files
       if (files.length > 0) {
-        console.log('Drop event - using files:', files.length);
         const imageFiles: File[] = [];
         const otherFiles: File[] = [];
         for (let i = 0; i < files.length; i++) {
@@ -2885,10 +3023,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         const otherFiles: File[] = [];
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
-          console.log('Item:', item.kind, item.type);
           if (item.kind === 'file') {
             const file = item.getAsFile();
-            console.log('File from item:', file?.name, file?.type, file?.size);
             if (file) {
               if (
                 file.type.startsWith('image/') ||
@@ -2918,7 +3054,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
       // Try getting file paths from URI list
       const uriList = e.dataTransfer.getData('text/uri-list');
-      console.log('URI list:', uriList);
       if (uriList) {
         const urls = uriList.split('\n').filter((uri) => uri.trim());
 
@@ -2927,12 +3062,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
           (uri) => uri.startsWith('http://') || uri.startsWith('https://')
         );
         if (httpUrls.length > 0) {
-          console.log('Fetching images from URLs:', httpUrls);
           const newAttachments: ImageAttachment[] = [];
           for (const url of httpUrls) {
             try {
               const result = await window.electronAPI.copilot.fetchImageFromUrl(url);
-              console.log('fetchImageFromUrl result:', result);
               if (result.success && result.path && result.dataUrl) {
                 newAttachments.push({
                   id: generateId(),
@@ -2958,7 +3091,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         const filePaths = urls
           .filter((uri) => uri.startsWith('file://'))
           .map((uri) => decodeURIComponent(uri.replace('file://', '')));
-        console.log('File paths from URI:', filePaths);
       }
     },
     [handleImageSelect, handleFileSelect]
@@ -3225,7 +3357,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       command: isLocal ? (server as MCPLocalServerConfig).command : '',
       args: isLocal ? (server as MCPLocalServerConfig).args.join(' ') : '',
       url: !isLocal ? (server as MCPRemoteServerConfig).url : '',
-      tools: server.tools[0] === '*' ? '*' : server.tools.join(', '),
+      tools: server.tools?.[0] === '*' ? '*' : (server.tools || []).join(', '),
     });
     setShowMcpModal(true);
   };
@@ -3292,7 +3424,6 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     try {
       const config = await window.electronAPI.mcp.getConfig();
       setMcpServers(config.mcpServers || {});
-      console.log('Refreshed MCP servers:', Object.keys(config.mcpServers || {}));
     } catch (error) {
       console.error('Failed to refresh MCP servers:', error);
     }
@@ -3992,18 +4123,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         window.electronAPI.copilot.loadMessageAttachments(result.sessionId),
       ]);
 
-      console.log(
-        'Resume session - loaded messages:',
-        messagesResult.length,
-        'attachments:',
-        attachmentsResult.attachments.length
-      );
-
       if (messagesResult.length > 0) {
         const attachmentMap = new Map(
           attachmentsResult.attachments.map((a) => [a.messageIndex, a])
         );
-        console.log('Attachment map entries:', Array.from(attachmentMap.entries()));
 
         setTabs((prev) =>
           prev.map((tab) =>
@@ -4444,7 +4567,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                           const isLocal =
                             !server.type || server.type === 'local' || server.type === 'stdio';
                           const toolCount =
-                            server.tools[0] === '*' ? 'all' : `${server.tools.length}`;
+                            server.tools?.[0] === '*' ? 'all' : `${server.tools?.length ?? 0}`;
                           return (
                             <div key={name} className="flex items-center gap-2 text-xs">
                               {isLocal ? (
@@ -4511,7 +4634,9 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         {flatInstructions.map((instruction) => (
                           <button
                             key={instruction.path}
-                            onClick={(event) => handleOpenEnvironment('instructions', event, instruction.path)}
+                            onClick={(event) =>
+                              handleOpenEnvironment('instructions', event, instruction.path)
+                            }
                             className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
                           >
                             <FileIcon size={12} className="shrink-0 text-copilot-accent" />
@@ -4542,19 +4667,28 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 {showSkills && (
                   <div>
                     {flatSkills.length === 0 ? (
-                      <div className="px-4 py-2 text-xs text-copilot-text-muted">No skills found</div>
+                      <div className="px-4 py-2 text-xs text-copilot-text-muted">
+                        No skills found
+                      </div>
                     ) : (
                       <div className="divide-y divide-copilot-border">
                         {flatSkills.map((skill) => {
                           // Find the SKILL.md file in the skill's files array
-                          const skillMdPath = skill.files.find(f => 
-                            f.toLowerCase().endsWith('skill.md') || f.toLowerCase().endsWith('skill.markdown')
-                          ) || skill.files[0] || skill.path;
-                          
+                          const skillMdPath =
+                            skill.files.find(
+                              (f) =>
+                                f.toLowerCase().endsWith('skill.md') ||
+                                f.toLowerCase().endsWith('skill.markdown')
+                            ) ||
+                            skill.files[0] ||
+                            skill.path;
+
                           return (
                             <button
                               key={skill.path}
-                              onClick={(event) => handleOpenEnvironment('skills', event, skillMdPath)}
+                              onClick={(event) =>
+                                handleOpenEnvironment('skills', event, skillMdPath)
+                              }
                               className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
                             >
                               <BookIcon size={12} className="shrink-0 text-copilot-accent" />
@@ -4586,7 +4720,9 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 {showSubagents && (
                   <div>
                     {flatAgents.length === 0 ? (
-                      <div className="px-4 py-2 text-xs text-copilot-text-muted">No subagents found</div>
+                      <div className="px-4 py-2 text-xs text-copilot-text-muted">
+                        No subagents found
+                      </div>
                     ) : (
                       <div className="divide-y divide-copilot-border">
                         {flatAgents.map((agent) => (
@@ -5178,9 +5314,20 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               // For completed messages, show stored tools
                               const isLive = message.isStreaming && message.content;
                               const toolsToShow = isLive ? activeTab?.activeTools : message.tools;
+                              const subagentsToShow = isLive
+                                ? activeTab?.activeSubagents
+                                : message.subagents;
                               if (toolsToShow && toolsToShow.length > 0) {
                                 return (
                                   <ToolActivitySection tools={toolsToShow} isLive={!!isLive} />
+                                );
+                              }
+                              if (subagentsToShow && subagentsToShow.length > 0) {
+                                return (
+                                  <SubagentActivitySection
+                                    subagents={subagentsToShow}
+                                    isLive={!!isLive}
+                                  />
                                 );
                               }
                               return null;
@@ -5341,9 +5488,15 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 !activeTab?.messages.some((m) => m.isStreaming && m.content) && (
                   <div className="flex flex-col items-start">
                     <div className="bg-copilot-surface text-copilot-text rounded-lg px-4 py-2.5">
-                      {/* Show live tools in the thinking bubble */}
+                      {/* Show live tools and subagents in the thinking bubble */}
                       {activeTab?.activeTools && activeTab.activeTools.length > 0 && (
                         <ToolActivitySection tools={activeTab.activeTools} isLive={true} />
+                      )}
+                      {activeTab?.activeSubagents && activeTab.activeSubagents.length > 0 && (
+                        <SubagentActivitySection
+                          subagents={activeTab.activeSubagents}
+                          isLive={true}
+                        />
                       )}
                       <div className="flex items-center gap-2 text-sm">
                         <Spinner size="sm" />
@@ -7010,7 +7163,9 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               {flatInstructions.map((instruction) => (
                                 <button
                                   key={instruction.path}
-                                  onClick={(event) => handleOpenEnvironment('instructions', event, instruction.path)}
+                                  onClick={(event) =>
+                                    handleOpenEnvironment('instructions', event, instruction.path)
+                                  }
                                   className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
                                 >
                                   <FileIcon size={12} className="shrink-0 text-copilot-accent" />
@@ -7051,14 +7206,21 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                             <div className="divide-y divide-copilot-border">
                               {flatSkills.map((skill) => {
                                 // Find the SKILL.md file in the skill's files array
-                                const skillMdPath = skill.files.find(f => 
-                                  f.toLowerCase().endsWith('skill.md') || f.toLowerCase().endsWith('skill.markdown')
-                                ) || skill.files[0] || skill.path;
-                                
+                                const skillMdPath =
+                                  skill.files.find(
+                                    (f) =>
+                                      f.toLowerCase().endsWith('skill.md') ||
+                                      f.toLowerCase().endsWith('skill.markdown')
+                                  ) ||
+                                  skill.files[0] ||
+                                  skill.path;
+
                                 return (
                                   <button
                                     key={skill.path}
-                                    onClick={(event) => handleOpenEnvironment('skills', event, skillMdPath)}
+                                    onClick={(event) =>
+                                      handleOpenEnvironment('skills', event, skillMdPath)
+                                    }
                                     className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left text-copilot-text hover:bg-copilot-surface transition-colors"
                                   >
                                     <BookIcon size={12} className="shrink-0 text-copilot-accent" />

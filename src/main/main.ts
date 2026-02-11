@@ -691,6 +691,36 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
         agentName: event.data.agentName,
         agentDisplayName: event.data.agentDisplayName,
       });
+    } else if (event.type === 'subagent.started') {
+      console.log(
+        `[${sessionId}] 🤖 Subagent started: ${event.data.agentDisplayName} (${event.data.toolCallId})`
+      );
+      mainWindow.webContents.send('copilot:subagent-started', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+        agentDisplayName: event.data.agentDisplayName,
+        agentDescription: event.data.agentDescription,
+      });
+    } else if (event.type === 'subagent.completed') {
+      console.log(
+        `[${sessionId}] ✓ Subagent completed: ${event.data.agentName} (${event.data.toolCallId})`
+      );
+      mainWindow.webContents.send('copilot:subagent-completed', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+      });
+    } else if (event.type === 'subagent.failed') {
+      console.log(
+        `✗ [${sessionId}] Subagent failed: ${event.data.agentName} (${event.data.toolCallId}): ${event.data.error}`
+      );
+      mainWindow.webContents.send('copilot:subagent-failed', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+        error: event.data.error,
+      });
     } else if (event.type === 'session.compaction_start') {
       console.log(`[${sessionId}] Compaction started`);
       mainWindow.webContents.send('copilot:compactionStart', { sessionId });
@@ -942,6 +972,36 @@ async function startEarlySessionResumption(): Promise<void> {
               sessionId,
               agentName: event.data.agentName,
               agentDisplayName: event.data.agentDisplayName,
+            });
+          } else if (event.type === 'subagent.started') {
+            console.log(
+              `[${sessionId}] 🤖 Subagent started: ${event.data.agentDisplayName} (${event.data.toolCallId})`
+            );
+            mainWindow.webContents.send('copilot:subagent-started', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+              agentDisplayName: event.data.agentDisplayName,
+              agentDescription: event.data.agentDescription,
+            });
+          } else if (event.type === 'subagent.completed') {
+            console.log(
+              `[${sessionId}] ✓ Subagent completed: ${event.data.agentName} (${event.data.toolCallId})`
+            );
+            mainWindow.webContents.send('copilot:subagent-completed', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+            });
+          } else if (event.type === 'subagent.failed') {
+            console.log(
+              `✗ [${sessionId}] Subagent failed: ${event.data.agentName} (${event.data.toolCallId}): ${event.data.error}`
+            );
+            mainWindow.webContents.send('copilot:subagent-failed', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+              error: event.data.error,
             });
           }
         });
@@ -1582,6 +1642,10 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     systemMessage: {
       mode: 'append',
       content: `
+## Subagents and Task Delegation
+
+You have access to specialized subagents via the \`task\` tool. **Use subagents proactively** when they're better suited for the task.
+
 ## Web Information Lookup
 
 You have access to the \`web_fetch\` tool. Use it when:
@@ -1904,6 +1968,36 @@ async function initCopilot(): Promise<void> {
               sessionId,
               agentName: event.data.agentName,
               agentDisplayName: event.data.agentDisplayName,
+            });
+          } else if (event.type === 'subagent.started') {
+            console.log(
+              `[${sessionId}] 🤖 Subagent started: ${event.data.agentDisplayName} (${event.data.toolCallId})`
+            );
+            mainWindow.webContents.send('copilot:subagent-started', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+              agentDisplayName: event.data.agentDisplayName,
+              agentDescription: event.data.agentDescription,
+            });
+          } else if (event.type === 'subagent.completed') {
+            console.log(
+              `[${sessionId}] ✓ Subagent completed: ${event.data.agentName} (${event.data.toolCallId})`
+            );
+            mainWindow.webContents.send('copilot:subagent-completed', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+            });
+          } else if (event.type === 'subagent.failed') {
+            console.log(
+              `✗ [${sessionId}] Subagent failed: ${event.data.agentName} (${event.data.toolCallId}): ${event.data.error}`
+            );
+            mainWindow.webContents.send('copilot:subagent-failed', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+              error: event.data.error,
             });
           }
         });
@@ -4397,6 +4491,36 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
         agentName: event.data.agentName,
         agentDisplayName: event.data.agentDisplayName,
       });
+    } else if (event.type === 'subagent.started') {
+      console.log(
+        `[${sessionId}] 🤖 Subagent started: ${event.data.agentDisplayName} (${event.data.toolCallId})`
+      );
+      mainWindow.webContents.send('copilot:subagent-started', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+        agentDisplayName: event.data.agentDisplayName,
+        agentDescription: event.data.agentDescription,
+      });
+    } else if (event.type === 'subagent.completed') {
+      console.log(
+        `[${sessionId}] ✓ Subagent completed: ${event.data.agentName} (${event.data.toolCallId})`
+      );
+      mainWindow.webContents.send('copilot:subagent-completed', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+      });
+    } else if (event.type === 'subagent.failed') {
+      console.log(
+        `✗ [${sessionId}] Subagent failed: ${event.data.agentName} (${event.data.toolCallId}): ${event.data.error}`
+      );
+      mainWindow.webContents.send('copilot:subagent-failed', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+        error: event.data.error,
+      });
     } else if (event.type === 'session.compaction_start') {
       console.log(`[${sessionId}] Compaction started`);
       mainWindow.webContents.send('copilot:compactionStart', { sessionId });
@@ -5153,14 +5277,16 @@ interface GitHubRelease {
   body: string;
   html_url: string;
   published_at: string;
+  prerelease: boolean;
   assets: Array<{ name: string; browser_download_url: string }>;
 }
 
 // Check for updates from GitHub releases
 ipcMain.handle('updates:checkForUpdate', async () => {
   try {
+    // Fetch release list so we can skip non-semver tags (e.g. the "assets" release)
     const response = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases/latest`,
+      `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases?per_page=10`,
       {
         headers: {
           Accept: 'application/vnd.github.v3+json',
@@ -5176,7 +5302,15 @@ ipcMain.handle('updates:checkForUpdate', async () => {
       throw new Error(`GitHub API error: ${response.status}`);
     }
 
-    const release = (await response.json()) as GitHubRelease;
+    const releases = (await response.json()) as GitHubRelease[];
+    // Find the first non-prerelease release with a semver tag
+    const semverRegex = /^v?\d+\.\d+\.\d+$/;
+    const release = releases.find((r) => !r.prerelease && semverRegex.test(r.tag_name));
+
+    if (!release) {
+      return { hasUpdate: false, error: 'No semver releases found' };
+    }
+
     const latestVersion = release.tag_name.replace(/^v/, '');
 
     // Get current version from package.json
@@ -5203,15 +5337,19 @@ ipcMain.handle('updates:checkForUpdate', async () => {
     // Compare versions (simple comparison, assumes semver)
     const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
 
+    // Pick a platform-appropriate download asset
+    const isWindows = process.platform === 'win32';
+    const installerAsset = release.assets.find((a) =>
+      isWindows ? a.name.endsWith('.exe') : a.name.endsWith('.dmg')
+    );
+
     return {
       hasUpdate: hasUpdate && latestVersion !== (store.get('dismissedUpdateVersion', '') as string),
       currentVersion,
       latestVersion,
       releaseNotes: release.body || '',
       releaseUrl: release.html_url,
-      downloadUrl:
-        release.assets.find((a) => a.name.endsWith('.dmg'))?.browser_download_url ||
-        release.html_url,
+      downloadUrl: installerAsset?.browser_download_url || release.html_url,
     };
   } catch (error) {
     console.error('Failed to check for updates:', error);
