@@ -99,8 +99,7 @@
       "allowToChangeInstallationDirectory": true,
       "artifactName": "${productName}-${version}-win-${arch}-Setup.${ext}",
       "installerHeader": "build/icon.ico"
-    },
-    "publisherName": "Cooper Labs"
+    }
   },
   "dependencies": {
     "@github/copilot-sdk": "0.1.23",
