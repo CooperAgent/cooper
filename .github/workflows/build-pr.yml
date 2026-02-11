@@ -85,3 +85,31 @@ jobs:
       - name: Package distributables (Windows, unsigned)
         if: runner.os == 'Windows'
         run: npx electron-builder --win --publish never
+
+      # --- Upload artifacts for reviewers to test ---
+      - name: Upload DMG (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cooper-DMG
+          path: release/*.dmg
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload Installer (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cooper-Setup
+          path: release/*-Setup.exe
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload Portable (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cooper-Portable
+          path: release/*-Portable.exe
+          if-no-files-found: error
+          retention-days: 3

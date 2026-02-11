@@ -28,15 +28,15 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ### How it works
 
-The release workflow (`.github/workflows/release.yml`) runs automatically on push to `main` or `staging`, and can be triggered manually on any branch via `workflow_dispatch`.
+The release workflow (`.github/workflows/release.yml`) runs automatically on push to `main` or `staging`, and can be triggered manually via `workflow_dispatch` (restricted to `main`/`staging` — other branches are rejected).
 
 It has 3 jobs:
 
 1. **Validate** — reads the version from `package.json`, checks that `RELEASE_NOTES.md` has content, and ensures the git tag doesn't already exist.
-2. **Build** — runs in parallel on macOS (arm64) and Windows (x64). macOS builds are code-signed. Produces 3 artifacts: DMG, Setup installer, and Portable exe.
+2. **Build** — runs in parallel on macOS (arm64) and Windows (x64). macOS builds are code-signed but **not notarized** (users must right-click → Open on first launch). Produces 3 artifacts: DMG, Setup installer, and Portable exe.
 3. **Release** — creates a GitHub Release with all artifacts attached.
 
-### Version source
+### Versioning
 
 The version comes from `package.json`. Bump it with:
 
@@ -46,11 +46,10 @@ node scripts/bump-version.js [major|minor|patch]
 
 ### Release types
 
-| Branch                     | Tag                      | Type                              |
-| -------------------------- | ------------------------ | --------------------------------- |
-| `main`                     | `v1.0.0`                 | Full release (marked as `latest`) |
-| `staging`                  | `v1.0.0-rc.<run_number>` | Release candidate (prerelease)    |
-| Any other (manual trigger) | `v1.0.0-rc.<run_number>` | Release candidate (prerelease)    |
+| Branch    | Tag                      | Type                              |
+| --------- | ------------------------ | --------------------------------- |
+| `main`    | `v1.0.0`                 | Full release (marked as `latest`) |
+| `staging` | `v1.0.0-rc.<run_number>` | Release candidate (prerelease)    |
 
 ### Artifacts
 
@@ -67,9 +66,27 @@ node scripts/bump-version.js [major|minor|patch]
 3. Merge to `staging` for an RC, or to `main` for a full release
 4. The workflow runs automatically and creates the GitHub Release
 
-### Testing a release from a feature branch
+### Testing from a feature branch
 
-Trigger the workflow manually from the Actions UI — select your branch from the dropdown. It will produce RC artifacts without affecting the official release.
+Open a PR to `staging`. The **Build Check** workflow will build and package the app on macOS and Windows (unsigned), and upload the artifacts. Download them from the PR's workflow run in the Actions tab — they're kept for 3 days.
+
+## CI
+
+### Pull request checks
+
+Every PR to `main` or `staging` runs the **Build Check** workflow (`.github/workflows/build-pr.yml`). It builds and packages the app on macOS and Windows — the same platforms as the release — but without code signing. Unsigned artifacts (DMG, Setup, Portable) are uploaded and kept for 3 days so reviewers can test the build. Doc-only changes (`*.md`, `docs/**`) are skipped.
+
+### Release workflow
+
+See the [Release](#release) section below for the full release CI pipeline.
+
+### Workflows overview
+
+| Workflow     | File                       | Trigger                                   |
+| ------------ | -------------------------- | ----------------------------------------- |
+| Build Check  | `build-pr.yml`             | PRs to `main`/`staging`                   |
+| Release      | `release.yml`              | Push to `main`/`staging`, manual dispatch |
+| Bump Version | `bump-version-staging.yml` | Manual dispatch (staging only)            |
 
 ## Reporting Issues
 

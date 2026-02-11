@@ -36,6 +36,14 @@ jobs:
       - name: Check release notes exist
         id: check
         run: |
+          # Only allow releases from main or staging
+          branch="${{ github.ref_name }}"
+          if [ "$branch" != "main" ] && [ "$branch" != "staging" ]; then
+            echo "::warning::Releases are only created from main or staging (got '$branch')"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           if [ ! -f "RELEASE_NOTES.md" ]; then
             echo "should_release=false" >> $GITHUB_OUTPUT
             exit 0
