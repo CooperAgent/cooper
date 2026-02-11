@@ -713,6 +713,26 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  // Debug helper: run window.showUpdateModal() in DevTools console to test the modal
+  useEffect(() => {
+    (window as any).showUpdateModal = (info?: {
+      currentVersion?: string;
+      latestVersion?: string;
+      downloadUrl?: string;
+    }) => {
+      const defaults = {
+        currentVersion: buildInfo.baseVersion,
+        latestVersion: '99.0.0',
+        downloadUrl: 'https://github.com/CooperAgent/cooper/releases',
+      };
+      setUpdateInfo({ ...defaults, ...info });
+      setShowUpdateModal(true);
+    };
+    return () => {
+      delete (window as any).showUpdateModal;
+    };
+  }, []);
+
   // Check if user has seen welcome wizard on startup
   useEffect(() => {
     const checkWelcomeWizard = async () => {
