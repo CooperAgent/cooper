@@ -59,6 +59,7 @@ import {
 import { GitBranchWidget, CommitModal, useCommitModal } from './features/git';
 import { CreateWorktreeSession } from './features/sessions';
 import { ToolActivitySection } from './features/chat';
+import { SubagentActivitySection } from './features/chat/SubagentActivitySection';
 import { buildLisaPhasePrompt } from './features/agent-loops';
 import { enrichSessionsWithWorktreeData } from './features/sessions';
 import { getCleanEditedFiles } from './features/git';
@@ -648,6 +649,7 @@ const App: React.FC = () => {
                   cwd: '/tmp/test',
                   isProcessing: false,
                   activeTools: [],
+                  activeSubagents: [],
                   hasUnreadCompletion: false,
                   pendingConfirmations: [],
                   needsTitle: false,
@@ -1169,6 +1171,7 @@ const App: React.FC = () => {
             cwd: result.cwd,
             isProcessing: false,
             activeTools: [],
+            activeSubagents: [],
             hasUnreadCompletion: false,
             pendingConfirmations: [],
             needsTitle: true,
@@ -1214,6 +1217,7 @@ const App: React.FC = () => {
               cwd: s.cwd,
               isProcessing: false,
               activeTools: [],
+              activeSubagents: [],
               hasUnreadCompletion: false,
               pendingConfirmations: [],
               needsTitle: !s.name, // Only need title if no name provided
@@ -1293,6 +1297,7 @@ const App: React.FC = () => {
             cwd: s.cwd,
             isProcessing: false,
             activeTools: [],
+            activeSubagents: [],
             hasUnreadCompletion: false,
             pendingConfirmations: [],
             needsTitle: !s.name && preloadedMessages.length === 0,
@@ -1839,21 +1844,25 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
 
         return prev.map((tab) => {
           if (tab.id !== sessionId) return tab;
-          // Capture tools into the last assistant message before clearing
+          // Capture tools and subagents into the last assistant message before clearing
           const toolsSnapshot = [...tab.activeTools];
+          const subagentsSnapshot = [...(tab.activeSubagents || [])];
           const filteredMessages = tab.messages.filter(
             (msg) => msg.content.trim() || msg.role === 'user'
           );
-          // Find the last assistant message to attach tools
+          // Find the last assistant message to attach tools and subagents
           const lastAssistantIdx = filteredMessages.reduce(
             (lastIdx, msg, idx) => (msg.role === 'assistant' ? idx : lastIdx),
             -1
           );
           const updatedMessages = filteredMessages.map((msg, idx) => {
             const withoutStreaming = msg.isStreaming ? { ...msg, isStreaming: false } : msg;
-            // Attach tools to the last assistant message
-            if (idx === lastAssistantIdx && toolsSnapshot.length > 0) {
-              return { ...withoutStreaming, tools: toolsSnapshot };
+            // Attach tools and subagents to the last assistant message
+            if (idx === lastAssistantIdx) {
+              const updates: Partial<typeof msg> = {};
+              if (toolsSnapshot.length > 0) updates.tools = toolsSnapshot;
+              if (subagentsSnapshot.length > 0) updates.subagents = subagentsSnapshot;
+              return { ...withoutStreaming, ...updates };
             }
             return withoutStreaming;
           });
@@ -1861,6 +1870,7 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
             ...tab,
             isProcessing: false,
             activeTools: [],
+            activeSubagents: [],
             currentIntent: null,
             currentIntentTimestamp: null,
             // Deactivate Ralph if it was active
@@ -1916,6 +1926,39 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       // Skip other internal tools
       if (name === 'update_todo') return;
 
+      // Detect task tool invocations as subagent calls
+      if (name === 'task' && input) {
+        const agentType = input.agent_type as string | undefined;
+        const description = input.description as string | undefined;
+        
+        if (agentType) {
+          console.log(`[Task Tool → Subagent] ${agentType}: ${description || 'No description'}`);
+          
+          // Add as a subagent, not a regular tool
+          setTabs((prev) =>
+            prev.map((tab) => {
+              if (tab.id !== sessionId) return tab;
+              
+              return {
+                ...tab,
+                activeSubagents: [
+                  ...(tab.activeSubagents || []),
+                  {
+                    toolCallId: id,
+                    agentName: agentType,
+                    agentDisplayName: agentType.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                    agentDescription: description,
+                    status: 'running',
+                    startTime: Date.now(),
+                  },
+                ],
+              };
+            })
+          );
+          return; // Don't add to activeTools
+        }
+      }
+
       // Track edited/created files at start time (we have reliable input here)
       const isFileOperation = name === 'edit' || name === 'create';
 
@@ -1958,6 +2001,52 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       // Skip internal tools
       if (name === 'report_intent' || name === 'update_todo') return;
 
+      // Handle task tool completion as subagent completion
+      if (name === 'task') {
+        setTabs((prev) =>
+          prev.map((tab) => {
+            if (tab.id !== sessionId) return tab;
+
+            // Check if this task was tracked as a subagent
+            const subagent = (tab.activeSubagents || []).find((s) => s.toolCallId === toolCallId);
+            if (subagent) {
+              console.log(`[Task Tool → Subagent Completed] ${subagent.agentName}`);
+              return {
+                ...tab,
+                activeSubagents: (tab.activeSubagents || []).map((s) =>
+                  s.toolCallId === toolCallId
+                    ? {
+                        ...s,
+                        status: 'completed' as const,
+                        endTime: Date.now(),
+                      }
+                    : s
+                ),
+              };
+            }
+
+            // If not a subagent, treat as regular tool
+            const activeTool = tab.activeTools.find((t) => t.toolCallId === toolCallId);
+            const toolInput = input || activeTool?.input;
+
+            return {
+              ...tab,
+              activeTools: tab.activeTools.map((t) =>
+                t.toolCallId === toolCallId
+                  ? {
+                      ...t,
+                      status: 'done' as const,
+                      input: toolInput || t.input,
+                      output,
+                    }
+                  : t
+              ),
+            };
+          })
+        );
+        return;
+      }
+
       setTabs((prev) =>
         prev.map((tab) => {
           if (tab.id !== sessionId) return tab;
@@ -1977,6 +2066,82 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
                     output,
                   }
                 : t
+            ),
+          };
+        })
+      );
+    });
+
+    // Listen for subagent events
+    const unsubscribeSubagentStarted = window.electronAPI.copilot.onSubagentStarted((data) => {
+      const { sessionId, toolCallId, agentName, agentDisplayName, agentDescription } = data;
+      console.log(`[Subagent Started] ${agentDisplayName}:`, { toolCallId, agentName });
+
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== sessionId) return tab;
+
+          return {
+            ...tab,
+            activeSubagents: [
+              ...(tab.activeSubagents || []),
+              {
+                toolCallId,
+                agentName,
+                agentDisplayName,
+                agentDescription,
+                status: 'running',
+                startTime: Date.now(),
+              },
+            ],
+          };
+        })
+      );
+    });
+
+    const unsubscribeSubagentCompleted = window.electronAPI.copilot.onSubagentCompleted((data) => {
+      const { sessionId, toolCallId, agentName } = data;
+      console.log(`[Subagent Completed] ${agentName}:`, { toolCallId });
+
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== sessionId) return tab;
+
+          return {
+            ...tab,
+            activeSubagents: (tab.activeSubagents || []).map((s) =>
+              s.toolCallId === toolCallId
+                ? {
+                    ...s,
+                    status: 'completed' as const,
+                    endTime: Date.now(),
+                  }
+                : s
+            ),
+          };
+        })
+      );
+    });
+
+    const unsubscribeSubagentFailed = window.electronAPI.copilot.onSubagentFailed((data) => {
+      const { sessionId, toolCallId, agentName, error } = data;
+      console.log(`[Subagent Failed] ${agentName}:`, { toolCallId, error });
+
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== sessionId) return tab;
+
+          return {
+            ...tab,
+            activeSubagents: (tab.activeSubagents || []).map((s) =>
+              s.toolCallId === toolCallId
+                ? {
+                    ...s,
+                    status: 'failed' as const,
+                    error,
+                    endTime: Date.now(),
+                  }
+                : s
             ),
           };
         })
@@ -2153,6 +2318,9 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeIdle();
       unsubscribeToolStart();
       unsubscribeToolEnd();
+      unsubscribeSubagentStarted();
+      unsubscribeSubagentCompleted();
+      unsubscribeSubagentFailed();
       unsubscribePermission();
       unsubscribeError();
       unsubscribeSessionResumed();
@@ -5178,9 +5346,15 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               // For completed messages, show stored tools
                               const isLive = message.isStreaming && message.content;
                               const toolsToShow = isLive ? activeTab?.activeTools : message.tools;
+                              const subagentsToShow = isLive ? activeTab?.activeSubagents : message.subagents;
                               if (toolsToShow && toolsToShow.length > 0) {
                                 return (
                                   <ToolActivitySection tools={toolsToShow} isLive={!!isLive} />
+                                );
+                              }
+                              if (subagentsToShow && subagentsToShow.length > 0) {
+                                return (
+                                  <SubagentActivitySection subagents={subagentsToShow} isLive={!!isLive} />
                                 );
                               }
                               return null;
@@ -5341,9 +5515,12 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 !activeTab?.messages.some((m) => m.isStreaming && m.content) && (
                   <div className="flex flex-col items-start">
                     <div className="bg-copilot-surface text-copilot-text rounded-lg px-4 py-2.5">
-                      {/* Show live tools in the thinking bubble */}
+                      {/* Show live tools and subagents in the thinking bubble */}
                       {activeTab?.activeTools && activeTab.activeTools.length > 0 && (
                         <ToolActivitySection tools={activeTab.activeTools} isLive={true} />
+                      )}
+                      {activeTab?.activeSubagents && activeTab.activeSubagents.length > 0 && (
+                        <SubagentActivitySection subagents={activeTab.activeSubagents} isLive={true} />
                       )}
                       <div className="flex items-center gap-2 text-sm">
                         <Spinner size="sm" />

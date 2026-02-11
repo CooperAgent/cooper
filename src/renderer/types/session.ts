@@ -12,6 +12,7 @@ export interface Message {
   imageAttachments?: ImageAttachment[]; // Images attached to this message
   fileAttachments?: FileAttachment[]; // Files attached to this message
   tools?: ActiveTool[]; // Tools executed during this message turn (for assistant messages)
+  subagents?: ActiveSubagent[]; // Subagents invoked during this message turn (for assistant messages)
 }
 
 export interface ActiveTool {
@@ -20,6 +21,17 @@ export interface ActiveTool {
   status: 'running' | 'done';
   input?: Record<string, unknown>; // Tool input (path, old_str, new_str, etc.)
   output?: unknown; // Tool output
+}
+
+export interface ActiveSubagent {
+  toolCallId: string;
+  agentName: string;
+  agentDisplayName: string;
+  agentDescription?: string;
+  status: 'running' | 'completed' | 'failed';
+  error?: string;
+  startTime: number; // Unix timestamp in milliseconds
+  endTime?: number; // Unix timestamp in milliseconds (when completed/failed)
 }
 
 export interface ModelCapabilities {
@@ -188,6 +200,7 @@ export interface TabState {
   cwd: string; // Current working directory for this session
   isProcessing: boolean;
   activeTools: ActiveTool[];
+  activeSubagents: ActiveSubagent[];
   hasUnreadCompletion: boolean;
   pendingConfirmations: PendingConfirmation[]; // Queue of pending permission requests
   needsTitle: boolean; // True if we should generate AI title on next idle

@@ -661,6 +661,30 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
         agentName: event.data.agentName,
         agentDisplayName: event.data.agentDisplayName,
       });
+    } else if (event.type === 'subagent.started') {
+      console.log(`[${sessionId}] 🤖 Subagent started: ${event.data.agentDisplayName} (${event.data.toolCallId})`);
+      mainWindow.webContents.send('copilot:subagent-started', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+        agentDisplayName: event.data.agentDisplayName,
+        agentDescription: event.data.agentDescription,
+      });
+    } else if (event.type === 'subagent.completed') {
+      console.log(`[${sessionId}] ✓ Subagent completed: ${event.data.agentName} (${event.data.toolCallId})`);
+      mainWindow.webContents.send('copilot:subagent-completed', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+      });
+    } else if (event.type === 'subagent.failed') {
+      console.log(`✗ [${sessionId}] Subagent failed: ${event.data.agentName} (${event.data.toolCallId}): ${event.data.error}`);
+      mainWindow.webContents.send('copilot:subagent-failed', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+        error: event.data.error,
+      });
     } else if (event.type === 'session.compaction_start') {
       console.log(`[${sessionId}] Compaction started`);
       mainWindow.webContents.send('copilot:compactionStart', { sessionId });
@@ -912,6 +936,30 @@ async function startEarlySessionResumption(): Promise<void> {
               sessionId,
               agentName: event.data.agentName,
               agentDisplayName: event.data.agentDisplayName,
+            });
+          } else if (event.type === 'subagent.started') {
+            console.log(`[${sessionId}] 🤖 Subagent started: ${event.data.agentDisplayName} (${event.data.toolCallId})`);
+            mainWindow.webContents.send('copilot:subagent-started', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+              agentDisplayName: event.data.agentDisplayName,
+              agentDescription: event.data.agentDescription,
+            });
+          } else if (event.type === 'subagent.completed') {
+            console.log(`[${sessionId}] ✓ Subagent completed: ${event.data.agentName} (${event.data.toolCallId})`);
+            mainWindow.webContents.send('copilot:subagent-completed', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+            });
+          } else if (event.type === 'subagent.failed') {
+            console.log(`✗ [${sessionId}] Subagent failed: ${event.data.agentName} (${event.data.toolCallId}): ${event.data.error}`);
+            mainWindow.webContents.send('copilot:subagent-failed', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+              error: event.data.error,
             });
           }
         });
@@ -1552,6 +1600,26 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     systemMessage: {
       mode: 'append',
       content: `
+## Subagents and Task Delegation
+
+You have access to specialized subagents via the \`task\` tool. **Use subagents proactively** when they're better suited for the task:
+
+**Available subagents:**
+- \`explore\` - Fast codebase exploration, answering questions about code, finding files/patterns
+- \`task\` - Executing commands with verbose output (tests, builds, lints, installs)
+- \`general-purpose\` - Complex multi-step tasks requiring full toolset
+- \`code-review\` - Reviewing code changes (staged/unstaged/branch diffs) with high signal-to-noise
+- Custom agents (if configured): \`cooper-coordinator\`, \`cooper-debugger\`, \`copilot-sdk-specialist\`, \`electron-main-developer\`, \`renderer-ui-developer\`, etc.
+
+**When to delegate to subagents:**
+- Break complex tasks into focused sub-tasks that specialized agents handle better
+- For codebase questions, use \`explore\` instead of grepping yourself (faster, cleaner)
+- For running tests/builds, use \`task\` to keep your context clean
+- For code reviews, use \`code-review\` instead of manually analyzing diffs
+- For architecture decisions, consult \`cooper-coordinator\` or relevant specialists
+
+**Subagent visibility:** The user can see which subagents you invoke - they show with a 🤖 indicator in the chat.
+
 ## Web Information Lookup
 
 You have access to the \`web_fetch\` tool. Use it when:
@@ -1874,6 +1942,30 @@ async function initCopilot(): Promise<void> {
               sessionId,
               agentName: event.data.agentName,
               agentDisplayName: event.data.agentDisplayName,
+            });
+          } else if (event.type === 'subagent.started') {
+            console.log(`[${sessionId}] 🤖 Subagent started: ${event.data.agentDisplayName} (${event.data.toolCallId})`);
+            mainWindow.webContents.send('copilot:subagent-started', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+              agentDisplayName: event.data.agentDisplayName,
+              agentDescription: event.data.agentDescription,
+            });
+          } else if (event.type === 'subagent.completed') {
+            console.log(`[${sessionId}] ✓ Subagent completed: ${event.data.agentName} (${event.data.toolCallId})`);
+            mainWindow.webContents.send('copilot:subagent-completed', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+            });
+          } else if (event.type === 'subagent.failed') {
+            console.log(`✗ [${sessionId}] Subagent failed: ${event.data.agentName} (${event.data.toolCallId}): ${event.data.error}`);
+            mainWindow.webContents.send('copilot:subagent-failed', {
+              sessionId,
+              toolCallId: event.data.toolCallId,
+              agentName: event.data.agentName,
+              error: event.data.error,
             });
           }
         });
@@ -4370,6 +4462,30 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
         sessionId,
         agentName: event.data.agentName,
         agentDisplayName: event.data.agentDisplayName,
+      });
+    } else if (event.type === 'subagent.started') {
+      console.log(`[${sessionId}] 🤖 Subagent started: ${event.data.agentDisplayName} (${event.data.toolCallId})`);
+      mainWindow.webContents.send('copilot:subagent-started', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+        agentDisplayName: event.data.agentDisplayName,
+        agentDescription: event.data.agentDescription,
+      });
+    } else if (event.type === 'subagent.completed') {
+      console.log(`[${sessionId}] ✓ Subagent completed: ${event.data.agentName} (${event.data.toolCallId})`);
+      mainWindow.webContents.send('copilot:subagent-completed', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+      });
+    } else if (event.type === 'subagent.failed') {
+      console.log(`✗ [${sessionId}] Subagent failed: ${event.data.agentName} (${event.data.toolCallId}): ${event.data.error}`);
+      mainWindow.webContents.send('copilot:subagent-failed', {
+        sessionId,
+        toolCallId: event.data.toolCallId,
+        agentName: event.data.agentName,
+        error: event.data.error,
       });
     } else if (event.type === 'session.compaction_start') {
       console.log(`[${sessionId}] Compaction started`);

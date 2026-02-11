@@ -259,6 +259,66 @@ const electronAPI = {
       ipcRenderer.on('copilot:agentSelected', handler);
       return () => ipcRenderer.removeListener('copilot:agentSelected', handler);
     },
+    onSubagentStarted: (
+      callback: (data: {
+        sessionId: string;
+        toolCallId: string;
+        agentName: string;
+        agentDisplayName: string;
+        agentDescription?: string;
+      }) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionId: string;
+          toolCallId: string;
+          agentName: string;
+          agentDisplayName: string;
+          agentDescription?: string;
+        }
+      ): void => callback(data);
+      ipcRenderer.on('copilot:subagent-started', handler);
+      return () => ipcRenderer.removeListener('copilot:subagent-started', handler);
+    },
+    onSubagentCompleted: (
+      callback: (data: {
+        sessionId: string;
+        toolCallId: string;
+        agentName: string;
+      }) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionId: string;
+          toolCallId: string;
+          agentName: string;
+        }
+      ): void => callback(data);
+      ipcRenderer.on('copilot:subagent-completed', handler);
+      return () => ipcRenderer.removeListener('copilot:subagent-completed', handler);
+    },
+    onSubagentFailed: (
+      callback: (data: {
+        sessionId: string;
+        toolCallId: string;
+        agentName: string;
+        error: string;
+      }) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionId: string;
+          toolCallId: string;
+          agentName: string;
+          error: string;
+        }
+      ): void => callback(data);
+      ipcRenderer.on('copilot:subagent-failed', handler);
+      return () => ipcRenderer.removeListener('copilot:subagent-failed', handler);
+    },
     onIdle: (callback: (data: { sessionId: string }) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string }): void =>
         callback(data);
