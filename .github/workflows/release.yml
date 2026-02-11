@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [main, staging, feature/release-binaries]
+    branches: [main, staging]
     paths-ignore:
       - '*.md'
       - 'docs/**'
