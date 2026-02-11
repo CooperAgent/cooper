@@ -5,6 +5,42 @@ All notable changes to Cooper will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.1
+
+### Added
+
+- **Downloadable Executables** — Pre-built macOS `.dmg` and Windows `.exe` installers (Setup + Portable) on every release
+- **Subagent Visibility** — See active subagents in the environment panel with file preview support
+- **YOLO Mode** — Auto-approve all permission requests for uninterrupted agent flow
+- **Drag & Drop Sessions** — Reorder tabs by dragging them
+- **Favorite Models** — Pin your preferred models for quick switching; dynamic model list fetched from API
+- **Copilot Instructions** — `.github/copilot-instructions.md` support with IPC and state management
+- **Environment Panel** — View agent files, skills directories, and Copilot instructions from a dedicated panel
+- **Zoom Controls** — Persistent window zoom in/out via keyboard shortcuts
+- **Copy CWD** — One-click copy of the current working directory with visual feedback
+- **Electron Startup Test** — Automated test verifying the app launches without module errors
+- **Skills Documentation** — Comprehensive skills index and individual skill docs
+
+### Changed
+
+- **Windows Native Title Bar** — Windows builds use native title bar overlay for a platform-native look
+- Dynamic model list from API replaces hardcoded model dropdown
+- Restructured app folder layout — components moved out of monolithic `App.tsx`
+- Sidebar drawer labels updated; top-bar model selector removed in favor of in-session switching
+- Terminal toggle moved to a dedicated button
+- Removed Microsoft Clarity telemetry
+- Removed session keep-alive logic
+- Updated instructions discovery to match Copilot CLI SDK conventions
+
+### Fixed
+
+- Model switching in new sessions no longer resets to default
+- Terminal open state persists correctly when switching tabs
+- Agent names display instead of file paths in the environment panel
+- Markdown files without frontmatter no longer cause agent parsing errors
+- File preview tree view padding alignment
+- Tour highlight targeting for agent modes selector
+
 ## 1.0.0
 
 Cooper is a fresh start — a rebrand and ground-up evolution of what was previously Copilot Skins. This release marks the first official version under the new name.
