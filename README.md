@@ -17,11 +17,10 @@ A native desktop GUI for GitHub Copilot, built on the [Copilot SDK](https://gith
 
 Download the latest release from the **[Releases page](https://github.com/CooperAgent/cooper/releases/latest)**:
 
-| Platform | File | Notes |
-|----------|------|-------|
-| **macOS** (Apple Silicon) | `Cooper-<version>-mac-arm64.dmg` | Signed and notarized |
-| **Windows** (x64) | `Cooper-<version>-win-x64-Setup.exe` | Installer |
-| **Windows** (x64) | `Cooper-<version>-win-x64-Portable.exe` | No install needed — just run it |
+| Platform                  | File                                 | Notes                |
+| ------------------------- | ------------------------------------ | -------------------- |
+| **macOS** (Apple Silicon) | `Cooper-<version>-mac-arm64.dmg`     | Signed and notarized |
+| **Windows** (x64)         | `Cooper-<version>-win-x64-Setup.exe` | Installer            |
 
 <details>
 <summary><b>Build from source</b></summary>
@@ -29,11 +28,13 @@ Download the latest release from the **[Releases page](https://github.com/Cooper
 Requires **Node.js 22+**.
 
 **macOS:**
+
 ```bash
 git clone https://github.com/CooperAgent/cooper.git && cd cooper && npm install && npm run dist
 ```
 
 **Windows:**
+
 ```powershell
 git clone https://github.com/CooperAgent/cooper.git; cd cooper; pwsh -NoProfile -File .\scripts\setup-windows.ps1; npm run dist:win
 ```
