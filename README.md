@@ -8,7 +8,7 @@ A native desktop GUI for GitHub Copilot, built on the [Copilot SDK](https://gith
 
 ![Cooper Demo](https://github.com/user-attachments/assets/72c9d556-4a47-44c0-951e-568df9a9468e)
 
-## Prerequisites
+## Installation
 
 - A **[GitHub Copilot](https://github.com/features/copilot)** subscription
 - **[GitHub CLI](https://cli.github.com/)** installed and authenticated — run `gh auth login` if you haven't already

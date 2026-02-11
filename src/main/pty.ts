@@ -410,6 +410,16 @@ export function createPty(
     cleanEnv.TERM = 'xterm-256color';
     cleanEnv.COLORTERM = 'truecolor';
 
+    // Filter out undefined/null env vars that can cause issues with ConPTY on Windows
+    const cleanEnv: { [key: string]: string } = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined && value !== null) {
+        cleanEnv[key] = value;
+      }
+    }
+    cleanEnv.TERM = 'xterm-256color';
+    cleanEnv.COLORTERM = 'truecolor';
+
     const pty = getPtyModule();
     const ptyProcess = pty.spawn(shell, shellArgs, {
       name: 'xterm-256color',
