@@ -271,7 +271,10 @@ const broadcastZoomFactor = (zoomFactor: number): void => {
   }
 };
 
+// Use separate config file in dev mode to avoid overwriting production settings
+// COOPER_DEV_MODE is set by scripts/dev-env.js when running `npm run dev`
 const store = new Store({
+  name: process.env.COOPER_DEV_MODE === 'true' ? 'config-dev' : 'config',
   defaults: {
     model: 'gpt-5.2',
     openSessions: [] as StoredSession[], // Sessions that were open in our app with their models and cwd
