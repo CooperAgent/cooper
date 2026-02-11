@@ -33,7 +33,7 @@ The release workflow (`.github/workflows/release.yml`) runs automatically on pus
 It has 3 jobs:
 
 1. **Validate** — reads the version from `package.json`, checks that `RELEASE_NOTES.md` has content, and ensures the git tag doesn't already exist.
-2. **Build** — runs in parallel on macOS (arm64) and Windows (x64). macOS builds are code-signed but **not notarized** (users must right-click → Open on first launch). Produces 3 artifacts: DMG, Setup installer, and Portable exe.
+2. **Build** — runs in parallel on macOS (arm64) and Windows (x64). macOS builds are code-signed but **not notarized** (users must right-click → Open on first launch). Produces 2 artifacts: DMG for macOS and Setup installer for Windows.
 3. **Release** — creates a GitHub Release with all artifacts attached.
 
 ### Versioning
@@ -53,11 +53,10 @@ node scripts/bump-version.js [major|minor|patch]
 
 ### Artifacts
 
-| File                                    | Platform              |
-| --------------------------------------- | --------------------- |
-| `Cooper-<version>-mac-arm64.dmg`        | macOS (Apple Silicon) |
-| `Cooper-<version>-win-x64-Setup.exe`    | Windows installer     |
-| `Cooper-<version>-win-x64-Portable.exe` | Windows portable      |
+| File                                 | Platform              |
+| ------------------------------------ | --------------------- |
+| `Cooper-<version>-mac-arm64.dmg`     | macOS (Apple Silicon) |
+| `Cooper-<version>-win-x64-Setup.exe` | Windows installer     |
 
 ### Releasing a new version
 
@@ -74,7 +73,7 @@ Open a PR to `staging`. The **Build Check** workflow will build and package the 
 
 ### Pull request checks
 
-Every PR to `main` or `staging` runs the **Build Check** workflow (`.github/workflows/build-pr.yml`). It builds and packages the app on macOS and Windows — the same platforms as the release — but without code signing. Unsigned artifacts (DMG, Setup, Portable) are uploaded and kept for 3 days so reviewers can test the build. Doc-only changes (`*.md`, `docs/**`) are skipped.
+Every PR to `main` or `staging` runs the **Build Check** workflow (`.github/workflows/build-pr.yml`). It builds and packages the app on macOS and Windows — the same platforms as the release — but without code signing. Unsigned artifacts (DMG, Setup installer) are uploaded and kept for 3 days so reviewers can test the build. Doc-only changes (`*.md`, `docs/**`) are skipped.
 
 ### Release workflow
 

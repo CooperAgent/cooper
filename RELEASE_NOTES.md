@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Downloadable Executables** — Pre-built macOS `.dmg` and Windows `.exe` installers (Setup + Portable) on every release
+- **Downloadable Executables** — Pre-built macOS `.dmg` and Windows `.exe` installer on every release
 - **Subagent Visibility** — See active subagents in the environment panel with file preview support
 - **YOLO Mode** — Auto-approve all permission requests for uninterrupted agent flow
 - **Drag & Drop Sessions** — Reorder tabs by dragging them

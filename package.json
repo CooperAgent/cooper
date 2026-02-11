@@ -3,7 +3,7 @@
   "version": "1.0.1",
   "description": "A beautiful native desktop GUI for GitHub Copilot",
   "main": "./out/main/index.js",
-  "author": "Ido Frizler",
+  "author": "Cooper Labs",
   "license": "MIT",
   "scripts": {
     "dev": "npm run prebuild-info && electron-vite dev",
@@ -31,7 +31,7 @@
     "*.{js,jsx,ts,tsx,json,css,md,html}": "prettier --write"
   },
   "build": {
-    "appId": "com.idofrizler.cooper",
+    "appId": "com.cooperlabs.cooper",
     "productName": "Cooper",
     "directories": {
       "output": "release"
@@ -90,12 +90,6 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ],
       "icon": "build/icon.ico"
@@ -103,10 +97,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "${productName}-${version}-win-${arch}-Setup.${ext}"
-    },
-    "portable": {
-      "artifactName": "${productName}-${version}-win-${arch}-Portable.${ext}"
+      "artifactName": "${productName}-${version}-win-${arch}-Setup.${ext}",
+      "installerHeader": "build/icon.ico"
     }
   },
   "dependencies": {
