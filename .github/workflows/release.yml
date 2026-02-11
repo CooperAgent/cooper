@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [main, staging]
+    branches: [main, staging, feature/release-binaries]
     paths-ignore:
       - '*.md'
       - 'docs/**'
@@ -131,6 +131,26 @@ jobs:
           node node_modules/ffmpeg-static/install.js
           node node_modules/vosk-koffi/scripts/postinstall.js
 
+      # --- macOS code signing ---
+      - name: Import code signing certificate
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MAC_CERTS }}
+          p12-password: ${{ secrets.MAC_CERTS_PASSWORD }}
+
+      - name: Extract signing identity
+        if: runner.os == 'macOS'
+        id: signing
+        run: |
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1)
+          HASH=$(echo "$IDENTITY" | awk '{print $2}')
+          echo "Signing identity: $IDENTITY"
+          if [ -z "$HASH" ]; then
+            echo "::warning::No Developer ID Application certificate found — building unsigned"
+          fi
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+
       # --- Common steps ---
       - name: Run tests
         run: npm test
@@ -138,62 +158,12 @@ jobs:
       - name: Build application
         run: npm run prebuild-info && npx electron-vite build
 
-      - name: Set up macOS keychain
-        if: runner.os == 'macOS'
-        env:
-          CSC_LINK: ${{ secrets.MAC_CERTS }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
-        run: |
-          if [ -z "$CSC_LINK" ]; then
-            echo "No signing certificate provided, skipping keychain setup"
-            exit 0
-          fi
-
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
-          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
-          # Create and configure temporary keychain (6-hour lock timeout)
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Import certificate
-          echo "$CSC_LINK" | base64 --decode > $RUNNER_TEMP/cert.p12
-          security import $RUNNER_TEMP/cert.p12 -k "$KEYCHAIN_PATH" \
-            -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild -T /usr/bin/security
-          rm $RUNNER_TEMP/cert.p12
-
-          # Allow codesign to access keychain without UI prompt
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Set as default keychain AND add to search list
-          security default-keychain -s "$KEYCHAIN_PATH"
-          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-
-          # Extract signing identity hash for the custom sign script
-          IDENTITY_HASH=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application" | head -1 | awk '{print $2}')
-          echo "--- Signing identity ---"
-          echo "Hash: $IDENTITY_HASH"
-
-          # Persist for build step
-          echo "CSC_KEYCHAIN=$KEYCHAIN_PATH" >> $GITHUB_ENV
-          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> $GITHUB_ENV
-          echo "CSC_NAME=$IDENTITY_HASH" >> $GITHUB_ENV
-
       - name: Build distributables (macOS)
         if: runner.os == 'macOS'
-        run: |
-          # Re-unlock keychain right before signing
-          if [ -n "$CSC_KEYCHAIN" ]; then
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$CSC_KEYCHAIN"
-          fi
-          npx electron-builder --mac --publish never
-        timeout-minutes: 30
+        run: npx electron-builder --mac --publish never
+        timeout-minutes: 15
         env:
-          # Custom sign script (build/sign.js) reads CSC_KEYCHAIN and CSC_NAME directly.
-          # Do NOT pass CSC_LINK — it triggers electron-builder's own keychain management.
-          CSC_KEYCHAIN: ${{ env.CSC_KEYCHAIN }}
-          CSC_NAME: ${{ env.CSC_NAME }}
+          CSC_NAME: ${{ steps.signing.outputs.hash }}
           CSC_ENTITLEMENTS: build/entitlements.mac.plist
 
       - name: Build distributables (Windows)
@@ -208,8 +178,7 @@ jobs:
           AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
           AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
 
-      # Upload pre-notarization artifacts so we have the signed DMG even if notarization fails
-      - name: Upload artifacts (pre-notarization)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
@@ -218,69 +187,6 @@ jobs:
             release/*.exe
             !release/*.blockmap
           if-no-files-found: error
-          retention-days: 5
-
-      # Apple best practice: submit .app as zip (faster than DMG), staple .app, recreate DMG.
-      # See: "Creating Distribution-Signed Code for Mac" — Apple DTS
-      - name: Notarize macOS app
-        if: runner.os == 'macOS' && env.CSC_KEYCHAIN != ''
-        timeout-minutes: 75
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: |
-          APP_PATH="release/mac-arm64/Cooper.app"
-          echo "::group::Zip .app for notarization"
-          ditto -c -k --keepParent "$APP_PATH" release/Cooper.app.zip
-          echo "Zip size: $(du -h release/Cooper.app.zip | cut -f1)"
-          echo "::endgroup::"
-
-          echo "::group::Submit to Apple notary service"
-          xcrun notarytool submit release/Cooper.app.zip \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --wait --timeout 60m \
-            --verbose
-          echo "::endgroup::"
-
-          echo "::group::Staple notarization ticket"
-          xcrun stapler staple "$APP_PATH"
-          echo "::endgroup::"
-
-          echo "::group::Verify signature"
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-          echo "::endgroup::"
-
-          echo "::group::Recreate DMG with stapled app"
-          VERSION=$(node -p "require('./package.json').version")
-          DMG_NAME="Cooper-${VERSION}-arm64.dmg"
-          rm -f "release/${DMG_NAME}"
-
-          # Create DMG staging with .app and Applications symlink
-          STAGING=$(mktemp -d)
-          cp -R "$APP_PATH" "$STAGING/"
-          ln -s /Applications "$STAGING/Applications"
-          hdiutil create -volname "Cooper" \
-            -srcfolder "$STAGING" \
-            -ov -format UDZO \
-            "release/${DMG_NAME}"
-          rm -rf "$STAGING"
-
-          echo "Final DMG: $(du -h "release/${DMG_NAME}" | cut -f1)"
-          echo "::endgroup::"
-
-      # Re-upload macOS artifact with notarized+stapled DMG (overwrites pre-notarization)
-      - name: Upload artifacts (notarized)
-        if: runner.os == 'macOS' && env.CSC_KEYCHAIN != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: |
-            release/*.dmg
-            !release/*.blockmap
-          overwrite: true
           retention-days: 5
 
   # ---------------------------------------------------------------------------
