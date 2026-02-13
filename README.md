@@ -43,19 +43,11 @@ git clone https://github.com/CooperAgent/cooper.git && cd cooper && npm install 
 git clone https://github.com/CooperAgent/cooper.git; cd cooper; pwsh -NoProfile -File .\scripts\setup-windows.ps1; npm run dist:win
 ```
 
-**Linux (Debian/Ubuntu):**
+**Linux:**
 
 ```bash
 git clone https://github.com/CooperAgent/cooper.git && cd cooper
-sudo ./scripts/install-linux-deps.sh
-npm install && npm run dist:linux
-```
-
-**Linux (Fedora/RHEL):**
-
-```bash
-git clone https://github.com/CooperAgent/cooper.git && cd cooper
-sudo ./scripts/install-linux-deps-fedora.sh
+sudo ./scripts/install-linux-deps.sh  # auto-detects distro
 npm install && npm run dist:linux
 ```
 
