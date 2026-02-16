@@ -5589,20 +5589,46 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
                     {/* Context Usage Tracker */}
                     {activeTab?.contextUsage && (
-                      <div className="ml-auto flex items-center gap-2 px-3 h-[39px] text-[10px] text-copilot-text-muted">
-                        <span>
-                          {(
-                            (activeTab.contextUsage.currentTokens /
-                              activeTab.contextUsage.tokenLimit) *
-                            100
-                          ).toFixed(0)}
-                          %
-                        </span>
-                        <span>
-                          {(activeTab.contextUsage.currentTokens / 1000).toFixed(1)}K /{' '}
-                          {(activeTab.contextUsage.tokenLimit / 1000).toFixed(0)}K
-                        </span>
-                        <span>({activeTab.contextUsage.messagesLength} msgs)</span>
+                      <div className="ml-auto flex items-center gap-2 px-3 h-[39px] text-[10px]">
+                        {activeTab.compactionStatus === 'compacting' ? (
+                          <>
+                            <span className="text-copilot-warning animate-pulse">
+                              Compacting...
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span
+                              className={
+                                (activeTab.contextUsage.currentTokens /
+                                  activeTab.contextUsage.tokenLimit) *
+                                  100 >=
+                                90
+                                  ? 'text-copilot-error font-medium'
+                                  : (activeTab.contextUsage.currentTokens /
+                                        activeTab.contextUsage.tokenLimit) *
+                                        100 >=
+                                      70
+                                    ? 'text-copilot-warning'
+                                    : 'text-copilot-text-muted'
+                              }
+                            >
+                              {(
+                                (activeTab.contextUsage.currentTokens /
+                                  activeTab.contextUsage.tokenLimit) *
+                                100
+                              ).toFixed(0)}
+                              %
+                            </span>
+                            <span className="text-copilot-text-muted">
+                              {(activeTab.contextUsage.currentTokens / 1000).toFixed(1)}K /{' '}
+                              {(activeTab.contextUsage.tokenLimit / 1000).toFixed(0)}K
+                            </span>
+                            <span className="text-copilot-text-muted">
+                              ({activeTab.contextUsage.messagesLength} msgs)
+                            </span>
+                          </>
+                        )}
                       </div>
                     )}
 
