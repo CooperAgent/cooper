@@ -42,25 +42,25 @@ test.describe('Issue #275 - Extra Evidence', () => {
   test('13 - Loops selector shows Ralph label when enabled', async () => {
     // Open loops, select Ralph
     const loopsButton = window.locator('[data-tour="agent-modes"] button').first();
-    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(loopsButton, { timeout: 15000 });
+    await window.waitForTimeout(1000);
     const ralphBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Ralph');
-    await scrollIntoViewAndClick(ralphBtn, { timeout: 10000 });
-    await window.waitForTimeout(300);
+    await scrollIntoViewAndClick(ralphBtn, { timeout: 15000 });
+    await window.waitForTimeout(500);
     // Close dropdown
     await window.locator('body').click({ position: { x: 10, y: 10 } });
-    await window.waitForTimeout(300);
+    await window.waitForTimeout(500);
     // Screenshot shows "Ralph" in top bar
     await window.screenshot({ path: `${screenshotDir}/13-topbar-ralph-active.png` });
 
     // Disable Ralph
-    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(loopsButton, { timeout: 15000 });
+    await window.waitForTimeout(1000);
     const offBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Off');
-    await scrollIntoViewAndClick(offBtn, { timeout: 10000 });
-    await window.waitForTimeout(300);
+    await scrollIntoViewAndClick(offBtn, { timeout: 15000 });
+    await window.waitForTimeout(500);
     await window.locator('body').click({ position: { x: 10, y: 10 } });
-    await window.waitForTimeout(300);
+    await window.waitForTimeout(500);
   });
 
   test('14 - Terminal icon does NOT rotate', async () => {

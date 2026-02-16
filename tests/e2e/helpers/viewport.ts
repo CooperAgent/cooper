@@ -110,3 +110,21 @@ export async function closeModal(window: Page, options?: { timeout?: number }) {
     await modal.waitFor({ state: 'hidden', timeout });
   }
 }
+
+/**
+ * Ensures the left sidebar is expanded
+ * Fixes issues where sidebar buttons are not visible when panel is collapsed
+ */
+export async function ensureSidebarExpanded(window: Page, options?: { timeout?: number }) {
+  const timeout = options?.timeout || 5000;
+
+  // Check if there's a "Show sessions panel" button (appears when collapsed)
+  const expandButton = window.locator('button[title="Show sessions panel"]');
+  const isCollapsed = await expandButton.isVisible().catch(() => false);
+
+  if (isCollapsed) {
+    await scrollIntoViewAndClick(expandButton, { timeout });
+    // Wait for sidebar to expand
+    await window.waitForTimeout(300);
+  }
+}

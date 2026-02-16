@@ -1,6 +1,11 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
-import { scrollIntoViewAndClick, waitForModal, closeModal } from './helpers/viewport';
+import {
+  scrollIntoViewAndClick,
+  waitForModal,
+  closeModal,
+  ensureSidebarExpanded,
+} from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -31,6 +36,9 @@ async function openSessionHistoryModal() {
   const isVisible = await modalTitle.isVisible().catch(() => false);
 
   if (!isVisible) {
+    // Ensure sidebar is expanded first
+    await ensureSidebarExpanded(window);
+
     const historyButton = window.locator('button', { hasText: 'Session History' });
     await scrollIntoViewAndClick(historyButton, { timeout: 15000 });
     await waitForModal(window, 'Session History', { timeout: 20000 });

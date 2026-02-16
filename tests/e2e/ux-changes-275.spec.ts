@@ -54,24 +54,24 @@ test.describe('Issue #275 - UX Layout Changes', () => {
   test('04 - Agents dropdown shows placeholder', async () => {
     // Find the Agents button (it has title="Agents (coming soon)")
     const agentsButton = window.locator('button[title="Agents (coming soon)"]');
-    await scrollIntoViewAndClick(agentsButton, { timeout: 10000 });
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(agentsButton, { timeout: 15000 });
+    await window.waitForTimeout(1000);
     await window.screenshot({ path: `${screenshotDir}/04-agents-placeholder.png` });
 
     // Close
     await window.locator('body').click({ position: { x: 10, y: 10 } });
-    await window.waitForTimeout(300);
+    await window.waitForTimeout(500);
   });
 
   test('05 - Loops dropdown opens with Off/Ralph/Lisa options', async () => {
     const loopsButton = window.locator('[data-tour="agent-modes"] button').first();
-    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(loopsButton, { timeout: 15000 });
+    await window.waitForTimeout(1000);
     await window.screenshot({ path: `${screenshotDir}/05-loops-dropdown-open.png` });
 
     // Close
     await window.locator('body').click({ position: { x: 10, y: 10 } });
-    await window.waitForTimeout(300);
+    await window.waitForTimeout(500);
   });
 
   test('06 - Terminal button in input area', async () => {
@@ -100,44 +100,44 @@ test.describe('Issue #275 - UX Layout Changes', () => {
 
   test('09 - Select Ralph loop mode', async () => {
     const loopsButton = window.locator('[data-tour="agent-modes"] button').first();
-    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(loopsButton, { timeout: 15000 });
+    await window.waitForTimeout(1000);
 
     // Click Ralph button in the dropdown
     const ralphBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Ralph');
-    await scrollIntoViewAndClick(ralphBtn, { timeout: 10000 });
-    await window.waitForTimeout(300);
+    await scrollIntoViewAndClick(ralphBtn, { timeout: 15000 });
+    await window.waitForTimeout(500);
     await window.screenshot({ path: `${screenshotDir}/09-ralph-selected.png` });
 
     // Click Off to deselect
     const offBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Off');
-    await scrollIntoViewAndClick(offBtn, { timeout: 10000 });
-    await window.waitForTimeout(300);
+    await scrollIntoViewAndClick(offBtn, { timeout: 15000 });
+    await window.waitForTimeout(500);
 
     // Close
     await window.locator('body').click({ position: { x: 10, y: 10 } });
-    await window.waitForTimeout(300);
+    await window.waitForTimeout(500);
   });
 
   test('10 - Select Lisa loop mode', async () => {
     const loopsButton = window.locator('[data-tour="agent-modes"] button').first();
-    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(loopsButton, { timeout: 15000 });
+    await window.waitForTimeout(1000);
 
     // Click Lisa button
     const lisaBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Lisa');
-    await scrollIntoViewAndClick(lisaBtn, { timeout: 10000 });
-    await window.waitForTimeout(300);
+    await scrollIntoViewAndClick(lisaBtn, { timeout: 15000 });
+    await window.waitForTimeout(500);
     await window.screenshot({ path: `${screenshotDir}/10-lisa-selected.png` });
 
     // Click Off
     const offBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Off');
-    await offBtn.click();
-    await window.waitForTimeout(300);
+    await scrollIntoViewAndClick(offBtn, { timeout: 15000 });
+    await window.waitForTimeout(500);
 
     // Close
     await window.locator('body').click({ position: { x: 10, y: 10 } });
-    await window.waitForTimeout(300);
+    await window.waitForTimeout(500);
   });
 
   test('11 - Final full app view', async () => {

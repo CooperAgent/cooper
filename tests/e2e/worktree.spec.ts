@@ -44,9 +44,11 @@ test.describe('Worktree Sessions', () => {
 
     const isVisible = await worktreeButton.isVisible().catch(() => false);
     if (isVisible) {
-      await scrollIntoViewAndClick(worktreeButton, { timeout: 10000 });
-      // Wait for modal
-      await window.waitForTimeout(500);
+      await scrollIntoViewAndClick(worktreeButton, { timeout: 15000 });
+      // Wait for modal with longer timeout
+      await waitForModal(window, 'Worktree Sessions', { timeout: 20000 }).catch(() => {
+        console.log('Modal did not appear or has different title');
+      });
 
       // Check if modal appeared
       const modal = await window

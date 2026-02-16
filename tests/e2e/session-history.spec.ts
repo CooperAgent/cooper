@@ -1,6 +1,11 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
-import { scrollIntoViewAndClick, waitForModal, closeModal } from './helpers/viewport';
+import {
+  scrollIntoViewAndClick,
+  waitForModal,
+  closeModal,
+  ensureSidebarExpanded,
+} from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -49,6 +54,9 @@ async function openSessionHistoryModal() {
   const isVisible = await modalTitle.isVisible().catch(() => false);
 
   if (!isVisible) {
+    // Ensure sidebar is expanded first
+    await ensureSidebarExpanded(window);
+
     const historyButton = window.locator('button', { hasText: 'Session History' });
     await scrollIntoViewAndClick(historyButton, { timeout: 15000 });
     await waitForModal(window, 'Session History', { timeout: 20000 });
@@ -85,6 +93,9 @@ async function getSessionCount(): Promise<{ total: number; filtered?: number }> 
 
 test.describe('Session History - Basic UI', () => {
   test('should have Session History button in sidebar', async () => {
+    // Ensure sidebar is expanded
+    await ensureSidebarExpanded(window);
+
     const historyButton = window.locator('button', { hasText: 'Session History' });
     await expect(historyButton).toBeVisible({ timeout: 10000 });
 

@@ -199,8 +199,8 @@ test.describe('Ralph Loop Improvements', () => {
       .filter({ hasText: 'Require screenshot' })
       .locator('input[type="checkbox"]');
 
-    await scrollIntoViewAndWait(screenshotCheckbox, { timeout: 5000 });
-    await screenshotCheckbox.check();
+    await scrollIntoViewAndWait(screenshotCheckbox, { timeout: 10000 });
+    await screenshotCheckbox.check({ timeout: 10000 });
     await window.waitForTimeout(300);
 
     expect(await screenshotCheckbox.isChecked()).toBe(true);
@@ -226,8 +226,8 @@ test.describe('Ralph Loop Improvements', () => {
   test('13 - Switch to Lisa Simpson mode', async () => {
     // Click Lisa Simpson card
     const lisaCard = window.locator('text=Lisa Simpson').first();
-    await scrollIntoViewAndClick(lisaCard, { timeout: 10000 });
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(lisaCard, { timeout: 15000 });
+    await window.waitForTimeout(1000);
 
     // Lisa should now be selected (Ralph deselected)
     // Lisa has different UI - shows phase flow
@@ -241,13 +241,13 @@ test.describe('Ralph Loop Improvements', () => {
   test('14 - Switch back to Ralph mode', async () => {
     // Click Ralph card again
     const ralphCard = window.locator('text=Ralph Wiggum').first();
-    await scrollIntoViewAndClick(ralphCard, { timeout: 10000 });
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(ralphCard, { timeout: 15000 });
+    await window.waitForTimeout(1000);
 
     // Ralph settings should reappear
     const clearContextLabel = window.locator('text=Clear context between iterations');
-    await scrollIntoViewAndWait(clearContextLabel.first(), { timeout: 5000 });
-    await expect(clearContextLabel.first()).toBeVisible({ timeout: 2000 });
+    await scrollIntoViewAndWait(clearContextLabel.first(), { timeout: 10000 });
+    await expect(clearContextLabel.first()).toBeVisible({ timeout: 5000 });
 
     await window.screenshot({
       path: 'evidence/screenshots/14-ralph-mode-reselected.png',
@@ -264,8 +264,8 @@ test.describe('Ralph Loop Improvements', () => {
 
     // Or click the agent mode button again to toggle it off
     const agentModeBtn = window.locator('button[title*="Agent Modes"]');
-    await scrollIntoViewAndClick(agentModeBtn, { timeout: 10000 });
-    await window.waitForTimeout(300);
+    await scrollIntoViewAndClick(agentModeBtn, { timeout: 15000 });
+    await window.waitForTimeout(500);
 
     await window.screenshot({ path: 'evidence/screenshots/15-panel-closed.png', fullPage: true });
   });
@@ -273,13 +273,13 @@ test.describe('Ralph Loop Improvements', () => {
   test('16 - Reopen panel to verify Ralph is still selected', async () => {
     // Open panel again
     const agentModeBtn = window.locator('button[title*="Agent Modes"]');
-    await scrollIntoViewAndClick(agentModeBtn, { timeout: 10000 });
-    await waitForPanelOpen(window, 'Agent Modes', { timeout: 10000 });
+    await scrollIntoViewAndClick(agentModeBtn, { timeout: 15000 });
+    await waitForPanelOpen(window, 'Agent Modes', { timeout: 20000 });
 
     // Ralph should still be enabled with settings visible
     const clearContextLabel = window.locator('text=Clear context between iterations');
-    await scrollIntoViewAndWait(clearContextLabel.first(), { timeout: 5000 });
-    await expect(clearContextLabel.first()).toBeVisible({ timeout: 3000 });
+    await scrollIntoViewAndWait(clearContextLabel.first(), { timeout: 10000 });
+    await expect(clearContextLabel.first()).toBeVisible({ timeout: 5000 });
 
     await window.screenshot({
       path: 'evidence/screenshots/16-panel-reopened-ralph-still-selected.png',

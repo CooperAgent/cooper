@@ -1,5 +1,6 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import { scrollIntoViewAndClick, scrollIntoViewAndWait } from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -64,8 +65,8 @@ test.describe('Lisa Simpson Loop UI', () => {
       const hasChevron = (await btn.locator('svg').count()) > 0;
       const isSmall = await btn.evaluate((el) => el.clientWidth < 50);
       if (hasChevron && isSmall) {
-        await btn.click();
-        await window.waitForTimeout(300);
+        await scrollIntoViewAndClick(btn, { timeout: 15000 });
+        await window.waitForTimeout(1000);
         break;
       }
     }

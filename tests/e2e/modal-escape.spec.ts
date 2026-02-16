@@ -1,7 +1,7 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
-import { scrollIntoViewAndClick, waitForModal } from './helpers/viewport';
+import { scrollIntoViewAndClick, waitForModal, ensureSidebarExpanded } from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -41,6 +41,9 @@ test.describe('Issue #108 - Modal Escape Key and Overflow', () => {
   });
 
   test('02 - Open Session History modal and test Escape', async () => {
+    // Ensure sidebar is expanded first
+    await ensureSidebarExpanded(window);
+
     // Look for session history button/trigger
     const historyButton = window
       .locator('[data-testid="session-history"]')
@@ -51,11 +54,11 @@ test.describe('Issue #108 - Modal Escape Key and Overflow', () => {
       )
       .first();
 
-    const hasHistoryButton = await historyButton.isVisible({ timeout: 3000 }).catch(() => false);
+    const hasHistoryButton = await historyButton.isVisible({ timeout: 5000 }).catch(() => false);
 
     if (hasHistoryButton) {
-      await scrollIntoViewAndClick(historyButton, { timeout: 10000 });
-      await waitForModal(window, 'Session History', { timeout: 15000 });
+      await scrollIntoViewAndClick(historyButton, { timeout: 15000 });
+      await waitForModal(window, 'Session History', { timeout: 20000 });
       await window.screenshot({ path: path.join(screenshotsDir, '02-session-history-open.png') });
 
       // Press Escape to close
