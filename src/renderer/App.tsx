@@ -5283,7 +5283,13 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         />
                       </button>
                       {openTopBarSelector === 'models' && (
-                        <div className="absolute bottom-full left-0 z-50 mb-0.5 w-60 max-h-80 overflow-y-auto bg-copilot-surface border border-copilot-border rounded-lg shadow-lg">
+                        <div
+                          className="absolute bottom-full left-0 z-50 mb-0.5 w-60 max-h-80 overflow-y-auto bg-copilot-surface border border-copilot-border rounded-lg"
+                          style={{
+                            boxShadow:
+                              '0 -4px 6px -1px rgb(0 0 0 / 0.1), 0 -2px 4px -2px rgb(0 0 0 / 0.1)',
+                          }}
+                        >
                           {sortedModels.map((m, idx) => {
                             const isFav = favoriteModels.includes(m.id);
                             return (
@@ -5406,7 +5412,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                       </button>
                       {openTopBarSelector === 'loops' && (
                         <div
-                          className={`absolute bottom-full z-50 mb-0.5 w-80 max-w-[calc(100vw-2rem)] bg-copilot-surface border border-copilot-border rounded-lg shadow-lg p-3 ${isMobile ? 'right-0' : 'left-0'}`}
+                          className={`absolute bottom-full z-50 mb-0.5 w-80 max-w-[calc(100vw-2rem)] bg-copilot-surface border border-copilot-border rounded-lg p-3 ${isMobile ? 'right-0' : 'left-0'}`}
+                          style={{
+                            boxShadow:
+                              '0 -4px 6px -1px rgb(0 0 0 / 0.1), 0 -2px 4px -2px rgb(0 0 0 / 0.1)',
+                          }}
                           data-tour="agent-modes-panel"
                         >
                           <div className="flex items-center gap-2 mb-3">
