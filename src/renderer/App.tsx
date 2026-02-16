@@ -5263,7 +5263,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         onClick={() =>
                           setOpenTopBarSelector(openTopBarSelector === 'models' ? null : 'models')
                         }
-                        className={`flex items-center gap-1.5 px-3 h-[40px] text-xs transition-colors rounded-bl-lg ${
+                        className={`flex items-center gap-1.5 px-3 h-[39px] text-xs transition-colors rounded-bl-lg ${
                           openTopBarSelector === 'models'
                             ? 'text-copilot-accent bg-copilot-surface-hover'
                             : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover'
@@ -5385,7 +5385,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                             setShowLisaSettings(false);
                           }
                         }}
-                        className={`flex items-center gap-1.5 px-3 h-[40px] text-xs transition-colors ${
+                        className={`flex items-center gap-1.5 px-3 h-[39px] text-xs transition-colors ${
                           ralphEnabled || lisaEnabled
                             ? 'text-copilot-warning'
                             : openTopBarSelector === 'loops'
