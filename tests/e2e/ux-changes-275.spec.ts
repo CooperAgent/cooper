@@ -1,5 +1,6 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import { scrollIntoViewAndClick, openDropdown } from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -53,7 +54,7 @@ test.describe('Issue #275 - UX Layout Changes', () => {
   test('04 - Agents dropdown shows placeholder', async () => {
     // Find the Agents button (it has title="Agents (coming soon)")
     const agentsButton = window.locator('button[title="Agents (coming soon)"]');
-    await agentsButton.click();
+    await scrollIntoViewAndClick(agentsButton, { timeout: 10000 });
     await window.waitForTimeout(500);
     await window.screenshot({ path: `${screenshotDir}/04-agents-placeholder.png` });
 
@@ -64,7 +65,7 @@ test.describe('Issue #275 - UX Layout Changes', () => {
 
   test('05 - Loops dropdown opens with Off/Ralph/Lisa options', async () => {
     const loopsButton = window.locator('[data-tour="agent-modes"] button').first();
-    await loopsButton.click();
+    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
     await window.waitForTimeout(500);
     await window.screenshot({ path: `${screenshotDir}/05-loops-dropdown-open.png` });
 
@@ -99,18 +100,18 @@ test.describe('Issue #275 - UX Layout Changes', () => {
 
   test('09 - Select Ralph loop mode', async () => {
     const loopsButton = window.locator('[data-tour="agent-modes"] button').first();
-    await loopsButton.click();
+    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
     await window.waitForTimeout(500);
 
     // Click Ralph button in the dropdown
     const ralphBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Ralph');
-    await ralphBtn.click();
+    await scrollIntoViewAndClick(ralphBtn, { timeout: 10000 });
     await window.waitForTimeout(300);
     await window.screenshot({ path: `${screenshotDir}/09-ralph-selected.png` });
 
     // Click Off to deselect
     const offBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Off');
-    await offBtn.click();
+    await scrollIntoViewAndClick(offBtn, { timeout: 10000 });
     await window.waitForTimeout(300);
 
     // Close
@@ -120,12 +121,12 @@ test.describe('Issue #275 - UX Layout Changes', () => {
 
   test('10 - Select Lisa loop mode', async () => {
     const loopsButton = window.locator('[data-tour="agent-modes"] button').first();
-    await loopsButton.click();
+    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
     await window.waitForTimeout(500);
 
     // Click Lisa button
     const lisaBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Lisa');
-    await lisaBtn.click();
+    await scrollIntoViewAndClick(lisaBtn, { timeout: 10000 });
     await window.waitForTimeout(300);
     await window.screenshot({ path: `${screenshotDir}/10-lisa-selected.png` });
 

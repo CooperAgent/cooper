@@ -1,6 +1,7 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import { scrollIntoViewAndClick, waitForModal } from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -53,8 +54,8 @@ test.describe('Issue #108 - Modal Escape Key and Overflow', () => {
     const hasHistoryButton = await historyButton.isVisible({ timeout: 3000 }).catch(() => false);
 
     if (hasHistoryButton) {
-      await historyButton.click();
-      await window.waitForTimeout(500);
+      await scrollIntoViewAndClick(historyButton, { timeout: 10000 });
+      await waitForModal(window, 'Session History', { timeout: 15000 });
       await window.screenshot({ path: path.join(screenshotsDir, '02-session-history-open.png') });
 
       // Press Escape to close

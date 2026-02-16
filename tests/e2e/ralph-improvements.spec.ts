@@ -1,5 +1,10 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import {
+  scrollIntoViewAndClick,
+  waitForPanelOpen,
+  scrollIntoViewAndWait,
+} from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -38,12 +43,12 @@ test.describe('Ralph Loop Improvements', () => {
   test('02 - Open Agent Modes panel by clicking chevron button', async () => {
     // Click the agent modes toggle button (the one with chevron icon)
     const agentModeBtn = window.locator('button[title*="Agent Modes"]');
-    await agentModeBtn.click();
-    await window.waitForTimeout(500); // Wait for panel to open
+    await scrollIntoViewAndClick(agentModeBtn, { timeout: 15000 });
+    await waitForPanelOpen(window, 'Agent Modes', { timeout: 20000 });
 
     // Verify the Agent Modes panel is now visible
     const agentModesText = window.locator('text=Agent Modes');
-    await expect(agentModesText.first()).toBeVisible({ timeout: 3000 });
+    await expect(agentModesText.first()).toBeVisible({ timeout: 5000 });
 
     await window.screenshot({
       path: 'evidence/screenshots/02-agent-modes-panel-open.png',
@@ -68,12 +73,13 @@ test.describe('Ralph Loop Improvements', () => {
   test('04 - Click Ralph Wiggum card to enable', async () => {
     // Click the Ralph Wiggum card to enable it
     const ralphCard = window.locator('text=Ralph Wiggum').first();
-    await ralphCard.click();
-    await window.waitForTimeout(500); // Wait for settings to appear
+    await scrollIntoViewAndClick(ralphCard, { timeout: 15000 });
+    await window.waitForTimeout(1000); // Wait for settings to appear
 
     // Verify Ralph is now enabled - the settings panel should show
     const maxIterationsLabel = window.locator('text=Max iterations');
-    await expect(maxIterationsLabel.first()).toBeVisible({ timeout: 3000 });
+    await scrollIntoViewAndWait(maxIterationsLabel.first(), { timeout: 10000 });
+    await expect(maxIterationsLabel.first()).toBeVisible({ timeout: 5000 });
 
     await window.screenshot({
       path: 'evidence/screenshots/04-ralph-enabled-settings-visible.png',
@@ -84,7 +90,8 @@ test.describe('Ralph Loop Improvements', () => {
   test('05 - Verify Max iterations input is visible with default value 5', async () => {
     // Find the max iterations input
     const maxIterInput = window.locator('input[type="number"]').first();
-    await expect(maxIterInput).toBeVisible();
+    await scrollIntoViewAndWait(maxIterInput, { timeout: 10000 });
+    await expect(maxIterInput).toBeVisible({ timeout: 5000 });
 
     const value = await maxIterInput.inputValue();
     expect(value).toBe('5');
@@ -98,7 +105,8 @@ test.describe('Ralph Loop Improvements', () => {
   test('06 - Verify Require screenshot checkbox is visible', async () => {
     // Look for "Require screenshot" text
     const screenshotLabel = window.locator('text=Require screenshot');
-    await expect(screenshotLabel.first()).toBeVisible();
+    await scrollIntoViewAndWait(screenshotLabel.first(), { timeout: 10000 });
+    await expect(screenshotLabel.first()).toBeVisible({ timeout: 5000 });
 
     await window.screenshot({
       path: 'evidence/screenshots/06-require-screenshot-checkbox.png',
@@ -109,11 +117,12 @@ test.describe('Ralph Loop Improvements', () => {
   test('07 - Verify Clear context checkbox is visible and checked by default', async () => {
     // Look for "Clear context between iterations" text - THE NEW FEATURE
     const clearContextLabel = window.locator('text=Clear context between iterations');
-    await expect(clearContextLabel.first()).toBeVisible({ timeout: 3000 });
+    await scrollIntoViewAndWait(clearContextLabel.first(), { timeout: 10000 });
+    await expect(clearContextLabel.first()).toBeVisible({ timeout: 5000 });
 
     // Verify "(recommended)" label is also visible
     const recommendedLabel = window.locator('text=recommended');
-    await expect(recommendedLabel.first()).toBeVisible({ timeout: 2000 });
+    await expect(recommendedLabel.first()).toBeVisible({ timeout: 3000 });
 
     await window.screenshot({
       path: 'evidence/screenshots/07-clear-context-checkbox-default-checked.png',
@@ -128,8 +137,11 @@ test.describe('Ralph Loop Improvements', () => {
       .filter({ hasText: 'Clear context between iterations' })
       .locator('input[type="checkbox"]');
 
+    // Scroll into view first
+    await scrollIntoViewAndWait(clearContextCheckbox, { timeout: 10000 });
+
     // It should be checked by default, so uncheck it
-    await clearContextCheckbox.uncheck();
+    await clearContextCheckbox.uncheck({ timeout: 10000 });
     await window.waitForTimeout(300);
 
     // Verify it's unchecked
@@ -148,7 +160,10 @@ test.describe('Ralph Loop Improvements', () => {
       .filter({ hasText: 'Clear context between iterations' })
       .locator('input[type="checkbox"]');
 
-    await clearContextCheckbox.check();
+    // Scroll into view first
+    await scrollIntoViewAndWait(clearContextCheckbox, { timeout: 10000 });
+
+    await clearContextCheckbox.check({ timeout: 10000 });
     await window.waitForTimeout(300);
 
     // Verify it's checked
@@ -163,6 +178,7 @@ test.describe('Ralph Loop Improvements', () => {
   test('10 - Change max iterations to 10', async () => {
     // Change max iterations from 5 to 10
     const maxIterInput = window.locator('input[type="number"]').first();
+    await scrollIntoViewAndWait(maxIterInput, { timeout: 10000 });
     await maxIterInput.fill('10');
     await window.waitForTimeout(300);
 
@@ -183,6 +199,7 @@ test.describe('Ralph Loop Improvements', () => {
       .filter({ hasText: 'Require screenshot' })
       .locator('input[type="checkbox"]');
 
+    await scrollIntoViewAndWait(screenshotCheckbox, { timeout: 5000 });
     await screenshotCheckbox.check();
     await window.waitForTimeout(300);
 
@@ -209,7 +226,7 @@ test.describe('Ralph Loop Improvements', () => {
   test('13 - Switch to Lisa Simpson mode', async () => {
     // Click Lisa Simpson card
     const lisaCard = window.locator('text=Lisa Simpson').first();
-    await lisaCard.click();
+    await scrollIntoViewAndClick(lisaCard, { timeout: 10000 });
     await window.waitForTimeout(500);
 
     // Lisa should now be selected (Ralph deselected)
@@ -224,11 +241,12 @@ test.describe('Ralph Loop Improvements', () => {
   test('14 - Switch back to Ralph mode', async () => {
     // Click Ralph card again
     const ralphCard = window.locator('text=Ralph Wiggum').first();
-    await ralphCard.click();
+    await scrollIntoViewAndClick(ralphCard, { timeout: 10000 });
     await window.waitForTimeout(500);
 
     // Ralph settings should reappear
     const clearContextLabel = window.locator('text=Clear context between iterations');
+    await scrollIntoViewAndWait(clearContextLabel.first(), { timeout: 5000 });
     await expect(clearContextLabel.first()).toBeVisible({ timeout: 2000 });
 
     await window.screenshot({
@@ -246,7 +264,7 @@ test.describe('Ralph Loop Improvements', () => {
 
     // Or click the agent mode button again to toggle it off
     const agentModeBtn = window.locator('button[title*="Agent Modes"]');
-    await agentModeBtn.click();
+    await scrollIntoViewAndClick(agentModeBtn, { timeout: 10000 });
     await window.waitForTimeout(300);
 
     await window.screenshot({ path: 'evidence/screenshots/15-panel-closed.png', fullPage: true });
@@ -255,11 +273,12 @@ test.describe('Ralph Loop Improvements', () => {
   test('16 - Reopen panel to verify Ralph is still selected', async () => {
     // Open panel again
     const agentModeBtn = window.locator('button[title*="Agent Modes"]');
-    await agentModeBtn.click();
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(agentModeBtn, { timeout: 10000 });
+    await waitForPanelOpen(window, 'Agent Modes', { timeout: 10000 });
 
     // Ralph should still be enabled with settings visible
     const clearContextLabel = window.locator('text=Clear context between iterations');
+    await scrollIntoViewAndWait(clearContextLabel.first(), { timeout: 5000 });
     await expect(clearContextLabel.first()).toBeVisible({ timeout: 3000 });
 
     await window.screenshot({

@@ -1,5 +1,6 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import { scrollIntoViewAndClick, waitForModal, closeModal } from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -49,19 +50,14 @@ async function openSessionHistoryModal() {
 
   if (!isVisible) {
     const historyButton = window.locator('button', { hasText: 'Session History' });
-    await historyButton.click();
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(historyButton, { timeout: 15000 });
+    await waitForModal(window, 'Session History', { timeout: 20000 });
   }
 }
 
 // Helper to close the modal
 async function closeSessionHistoryModal() {
-  const closeButton = window.locator('[aria-label="Close modal"]');
-  const isVisible = await closeButton.isVisible().catch(() => false);
-  if (isVisible) {
-    await closeButton.click();
-    await window.waitForTimeout(300);
-  }
+  await closeModal(window, { timeout: 10000 });
 }
 
 // Helper to get session count from footer (works with any data)
@@ -127,7 +123,7 @@ test.describe('Session History - Basic UI', () => {
     await openSessionHistoryModal();
 
     const closeButton = window.locator('[aria-label="Close modal"]');
-    await closeButton.click();
+    await scrollIntoViewAndClick(closeButton);
     await window.waitForTimeout(300);
 
     const modalTitle = window.locator('h3', { hasText: 'Session History' });
@@ -287,7 +283,7 @@ test.describe('Session History - Session Resumption', () => {
     });
 
     await expect(sessionButton).toBeVisible({ timeout: 15000 });
-    await sessionButton.click({ timeout: 15000 });
+    await scrollIntoViewAndClick(sessionButton, { timeout: 15000 });
 
     // Wait for action to complete
     await window.waitForTimeout(3000);

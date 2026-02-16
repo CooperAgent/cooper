@@ -1,5 +1,6 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import { scrollIntoViewAndClick } from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -41,10 +42,10 @@ test.describe('Issue #275 - Extra Evidence', () => {
   test('13 - Loops selector shows Ralph label when enabled', async () => {
     // Open loops, select Ralph
     const loopsButton = window.locator('[data-tour="agent-modes"] button').first();
-    await loopsButton.click();
+    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
     await window.waitForTimeout(500);
     const ralphBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Ralph');
-    await ralphBtn.click();
+    await scrollIntoViewAndClick(ralphBtn, { timeout: 10000 });
     await window.waitForTimeout(300);
     // Close dropdown
     await window.locator('body').click({ position: { x: 10, y: 10 } });
@@ -53,10 +54,10 @@ test.describe('Issue #275 - Extra Evidence', () => {
     await window.screenshot({ path: `${screenshotDir}/13-topbar-ralph-active.png` });
 
     // Disable Ralph
-    await loopsButton.click();
+    await scrollIntoViewAndClick(loopsButton, { timeout: 10000 });
     await window.waitForTimeout(500);
     const offBtn = window.locator('[data-tour="agent-modes-panel"]').getByText('Off');
-    await offBtn.click();
+    await scrollIntoViewAndClick(offBtn, { timeout: 10000 });
     await window.waitForTimeout(300);
     await window.locator('body').click({ position: { x: 10, y: 10 } });
     await window.waitForTimeout(300);

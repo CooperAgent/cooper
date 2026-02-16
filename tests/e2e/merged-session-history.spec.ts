@@ -1,5 +1,6 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import { scrollIntoViewAndClick, waitForModal, closeModal } from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -31,18 +32,13 @@ async function openSessionHistoryModal() {
 
   if (!isVisible) {
     const historyButton = window.locator('button', { hasText: 'Session History' });
-    await historyButton.click();
-    await window.waitForTimeout(500);
+    await scrollIntoViewAndClick(historyButton, { timeout: 15000 });
+    await waitForModal(window, 'Session History', { timeout: 20000 });
   }
 }
 
 async function closeSessionHistoryModal() {
-  const closeButton = window.locator('[aria-label="Close modal"]');
-  const isVisible = await closeButton.isVisible().catch(() => false);
-  if (isVisible) {
-    await closeButton.click();
-    await window.waitForTimeout(300);
-  }
+  await closeModal(window, { timeout: 10000 });
 }
 
 test.describe('Issue #91 - Merged Worktree List into Session History', () => {

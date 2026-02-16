@@ -1,5 +1,6 @@
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import { scrollIntoViewAndClick, waitForModal } from './helpers/viewport';
 
 let electronApp: ElectronApplication;
 let window: Page;
@@ -43,7 +44,7 @@ test.describe('Worktree Sessions', () => {
 
     const isVisible = await worktreeButton.isVisible().catch(() => false);
     if (isVisible) {
-      await worktreeButton.click();
+      await scrollIntoViewAndClick(worktreeButton, { timeout: 10000 });
       // Wait for modal
       await window.waitForTimeout(500);
 
