@@ -37,6 +37,9 @@ test.beforeAll(async () => {
   // Wait for the first window
   window = await electronApp.firstWindow();
 
+  // Set desktop viewport size (tests should run in desktop mode, not mobile)
+  await window.setViewportSize({ width: 1280, height: 800 });
+
   // Wait for app to be ready
   await window.waitForLoadState('domcontentloaded');
 
@@ -57,9 +60,11 @@ async function openSessionHistoryModal() {
     // Ensure sidebar is expanded first
     await ensureSidebarExpanded(window);
 
-    // Find the LAST Session History button (the bottom one in sidebar, not the one in left drawer)
-    // We use .last() to get the bottom button since the left drawer button comes first in DOM
+    // Use .last() to get the desktop sidebar button (not the mobile drawer button)
+    // Button 0 is in the mobile drawer (x=-280, offscreen)
+    // Button 1 is in the desktop sidebar (x=0, visible)
     const historyButton = window.locator('button:has-text("Session History")').last();
+
     await scrollIntoViewAndClick(historyButton, { timeout: 15000 });
     await waitForModal(window, 'Session History', { timeout: 20000 });
   }

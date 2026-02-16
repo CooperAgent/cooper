@@ -35,8 +35,8 @@ export async function waitForModal(
 ) {
   const timeout = options?.timeout || 20000; // Increased from 10000
 
-  // Wait for dialog role element
-  const modal = window.locator('[role="dialog"]');
+  // Wait for the specific modal by its title (not just any dialog)
+  const modal = window.locator(`[role="dialog"]:has(h3:has-text("${modalTitle}"))`);
   await modal.waitFor({ state: 'visible', timeout });
 
   // Wait for the modal title
@@ -129,6 +129,6 @@ export async function ensureSidebarExpanded(window: Page, options?: { timeout?: 
   if (isCollapsed) {
     await scrollIntoViewAndClick(expandButton, { timeout });
     // Wait for sidebar to expand
-    await window.waitForTimeout(300);
+    await window.waitForTimeout(500); // Increased from 300
   }
 }
