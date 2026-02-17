@@ -1600,6 +1600,23 @@ async function handlePermissionRequest(
   return permissionPromise;
 }
 
+// Build subagent prompting section to encourage delegation
+function buildSubagentPrompt(): string {
+  return `## Subagents and Task Delegation
+
+You have access to specialized subagents via the \`task\` tool. **Prefer using subagents** instead of doing work yourself when they're better suited for the task.
+
+**Delegation Mindset**:
+* When subagents are available, your role is to manage and coordinate, not to implement everything directly.
+* Instruct subagents to complete tasks themselves - don't just ask for advice.
+* If a custom agent and built-in agent both fit, prefer the custom agent (specialized knowledge).
+
+**After Delegation**:
+* Trust successful results, but spot-check critical changes.
+* If a subagent fails, refine your instructions and try again.
+* Only do the work yourself if repeated subagent attempts fail.`;
+}
+
 // Create a new session and return its ID
 async function createNewSession(model?: string, cwd?: string): Promise<string> {
   const sessionModel = model || (store.get('model') as string);
@@ -1644,6 +1661,9 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     browserTools.map((t) => t.name)
   );
 
+  // Build subagent prompting section
+  const subagentPrompt = buildSubagentPrompt();
+
   const newSession = await client.createSession({
     sessionId: generatedSessionId,
     model: sessionModel,
@@ -1655,9 +1675,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     systemMessage: {
       mode: 'append',
       content: `
-## Subagents and Task Delegation
-
-You have access to specialized subagents via the \`task\` tool. **Use subagents proactively** when they're better suited for the task.
+${subagentPrompt}
 
 ## Web Information Lookup
 
