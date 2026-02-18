@@ -20,7 +20,7 @@ import {
   statSync,
   unlinkSync,
 } from 'fs';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { createServer, Server } from 'http';
@@ -108,17 +108,47 @@ interface MCPConfigFile {
   mcpServers: Record<string, MCPServerConfig>;
 }
 
+// XDG Base Directory helpers - respect standard env vars for config/state isolation
+// See: https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
+
+// Get .copilot config base path - respects XDG_CONFIG_HOME
+const getCopilotConfigPath = (): string => {
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+  if (xdgConfigHome) {
+    return join(xdgConfigHome, '.copilot');
+  }
+  return join(app.getPath('home'), '.copilot');
+};
+
+// Get .copilot state base path - respects XDG_STATE_HOME
+const getCopilotStatePath = (): string => {
+  const xdgStateHome = process.env.XDG_STATE_HOME;
+  if (xdgStateHome) {
+    return join(xdgStateHome, '.copilot');
+  }
+  return join(app.getPath('home'), '.copilot');
+};
+
+// Get worktree sessions directory - respects COPILOT_SESSIONS_HOME
+const getWorktreeSessionsPath = (): string => {
+  const sessionsHome = process.env.COPILOT_SESSIONS_HOME;
+  if (sessionsHome) {
+    return sessionsHome;
+  }
+  return join(app.getPath('home'), '.copilot-sessions');
+};
+
 // Path to MCP config file
-const getMcpConfigPath = (): string => join(app.getPath('home'), '.copilot', 'mcp-config.json');
+const getMcpConfigPath = (): string => join(getCopilotConfigPath(), 'mcp-config.json');
 
 // Copilot folders that are safe to read from without permission (Issue #87)
 // These contain session state data (plans, configs) and are low-risk for read-only access
 const getSafeCopilotReadPaths = (): string[] => {
   const home = app.getPath('home');
   return [
-    join(home, '.copilot-sessions'), // Worktree sessions directory
-    join(home, '.copilot', 'session-state'), // Session state (plan.md files)
-    join(home, '.copilot', 'skills'), // Personal skills directory
+    getWorktreeSessionsPath(), // Worktree sessions directory
+    join(getCopilotStatePath(), 'session-state'), // Session state (plan.md files)
+    join(getCopilotConfigPath(), 'skills'), // Personal skills directory
     join(home, '.claude', 'skills'), // Personal Claude skills
     join(home, '.claude', 'commands'), // Legacy Claude commands
     join(home, '.agents', 'skills'), // Personal .agents skills
@@ -135,6 +165,15 @@ async function readMcpConfig(): Promise<MCPConfigFile> {
     }
     const content = await readFile(configPath, 'utf-8');
     const parsed = JSON.parse(content) as MCPConfigFile;
+
+    // Default tools to ["*"] for servers that don't specify it (matches copilot-cli behavior)
+    for (const serverName in parsed.mcpServers) {
+      const server = parsed.mcpServers[serverName];
+      if (!server.tools) {
+        server.tools = ['*'];
+      }
+    }
+
     return parsed;
   } catch (error) {
     console.error('Failed to read MCP config:', error);
@@ -145,7 +184,7 @@ async function readMcpConfig(): Promise<MCPConfigFile> {
 // Write MCP config to file
 async function writeMcpConfig(config: MCPConfigFile): Promise<void> {
   const configPath = getMcpConfigPath();
-  const configDir = join(app.getPath('home'), '.copilot');
+  const configDir = getCopilotConfigPath();
 
   // Ensure directory exists
   if (!existsSync(configDir)) {
@@ -219,6 +258,7 @@ interface StoredSession {
   fileViewMode?: 'flat' | 'tree';
   yoloMode?: boolean;
   activeAgentName?: string;
+  sourceIssue?: { url: string; number: number; owner: string; repo: string };
 }
 
 const DEFAULT_ZOOM_FACTOR = 1;
@@ -239,7 +279,10 @@ const broadcastZoomFactor = (zoomFactor: number): void => {
   }
 };
 
+// Use separate config file in dev mode to avoid overwriting production settings
+// COOPER_DEV_MODE is set by scripts/dev-env.js when running `npm run dev`
 const store = new Store({
+  name: process.env.COOPER_DEV_MODE === 'true' ? 'config-dev' : 'config',
   defaults: {
     model: 'gpt-5.2',
     openSessions: [] as StoredSession[], // Sessions that were open in our app with their models and cwd
@@ -465,12 +508,63 @@ async function getClientForCwd(cwd: string): Promise<CopilotClient> {
   }
 }
 
+// Check CLI installation and authentication status
+async function checkCliStatus(): Promise<{
+  cliInstalled: boolean;
+  authenticated: boolean;
+  npmAvailable: boolean;
+  error?: string;
+}> {
+  try {
+    // Check if CLI binary exists
+    const cliPath = getCliPath();
+    const cliInstalled = existsSync(cliPath);
+
+    // Check if npm is available (for potential installation)
+    let npmAvailable = false;
+    try {
+      await execAsync('npm --version', { env: getAugmentedEnv() });
+      npmAvailable = true;
+    } catch {
+      npmAvailable = false;
+    }
+
+    // If CLI not installed, can't check auth
+    if (!cliInstalled) {
+      return { cliInstalled: false, authenticated: false, npmAvailable };
+    }
+
+    // Check authentication status by looking for copilot CLI config
+    let authenticated = false;
+    try {
+      const configDir = join(process.env.HOME || process.env.USERPROFILE || '', '.copilot');
+      const configPath = join(configDir, 'config.json');
+      if (existsSync(configPath)) {
+        const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+        // The copilot CLI stores last_logged_in_user after successful login
+        authenticated = !!config.last_logged_in_user?.login;
+      }
+    } catch (error) {
+      log.warn('Failed to check copilot auth status:', error);
+    }
+
+    return { cliInstalled, authenticated, npmAvailable };
+  } catch (error) {
+    log.error('Error checking CLI status:', error);
+    return {
+      cliInstalled: false,
+      authenticated: false,
+      npmAvailable: false,
+      error: String(error),
+    };
+  }
+}
+
 // Repair corrupted session events (duplicate tool_result bug)
 // This can happen when a session is resumed while a tool is executing
 // The bug inserts a session.resume event between tool.execution_start and tool.execution_complete
 async function repairDuplicateToolResults(sessionId: string): Promise<boolean> {
-  const homedir = process.env.HOME || process.env.USERPROFILE || '';
-  const eventsPath = join(homedir, '.copilot', 'session-state', sessionId, 'events.jsonl');
+  const eventsPath = join(getCopilotStatePath(), 'session-state', sessionId, 'events.jsonl');
 
   try {
     if (!existsSync(eventsPath)) {
@@ -800,6 +894,11 @@ const inFlightPermissions = new Map<string, Promise<PermissionRequestResult>>();
 
 let defaultClient: CopilotClient | null = null;
 
+// Helper to get the default client
+function getDefaultClient(): CopilotClient | null {
+  return defaultClient;
+}
+
 // Early client initialization promise - starts before window load completes
 // This saves ~500ms by running client.start() in parallel with window rendering
 let earlyClientPromise: Promise<CopilotClient> | null = null;
@@ -817,6 +916,7 @@ interface EarlyResumedSession {
   fileViewMode?: 'flat' | 'tree';
   yoloMode?: boolean;
   messages?: { role: 'user' | 'assistant'; content: string }[]; // Pre-loaded messages
+  sourceIssue?: { url: string; number: number; owner: string; repo: string };
 }
 let earlyResumedSessions: EarlyResumedSession[] = [];
 let earlyResumptionComplete = false;
@@ -860,6 +960,7 @@ async function startEarlySessionResumption(): Promise<void> {
         untrackedFiles,
         fileViewMode,
         yoloMode,
+        sourceIssue,
       } = storedSession;
       const sessionCwd = cwd || (app.isPackaged ? app.getPath('home') : process.cwd());
       const sessionModel = model || (store.get('model') as string) || 'gpt-5.2';
@@ -1016,6 +1117,7 @@ async function startEarlySessionResumption(): Promise<void> {
           fileViewMode: fileViewMode || 'flat',
           yoloMode: yoloMode || false,
           messages,
+          sourceIssue,
         };
         earlyResumedSessions.push(resumed);
 
@@ -1050,101 +1152,164 @@ interface ModelInfo {
   id: string;
   name: string;
   multiplier: number;
-  source?: 'api' | 'fallback'; // 'api' = from listModels(), 'fallback' = hardcoded (not in API yet)
 }
 
-// Baseline models for initial render before API loads
-// These provide immediate UI while waiting for the API response
-const BASELINE_MODELS: ModelInfo[] = [
-  { id: 'gpt-4.1', name: 'GPT-4.1', multiplier: 0, source: 'api' },
-  { id: 'gpt-5-mini', name: 'GPT-5 mini', multiplier: 0, source: 'api' },
-  { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', multiplier: 0.33, source: 'api' },
-  { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1-Codex-Mini', multiplier: 0.33, source: 'api' },
-  { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', multiplier: 1, source: 'api' },
-  { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', multiplier: 1, source: 'api' },
-  { id: 'gpt-5.2-codex', name: 'GPT-5.2-Codex', multiplier: 1, source: 'api' },
-  { id: 'gpt-5.1-codex-max', name: 'GPT-5.1-Codex-Max', multiplier: 1, source: 'api' },
-  { id: 'gpt-5.1-codex', name: 'GPT-5.1-Codex', multiplier: 1, source: 'api' },
-  { id: 'gpt-5.2', name: 'GPT-5.2', multiplier: 1, source: 'api' },
-  { id: 'gpt-5.1', name: 'GPT-5.1', multiplier: 1, source: 'api' },
-  { id: 'gpt-5', name: 'GPT-5', multiplier: 1, source: 'api' },
-  { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', multiplier: 1, source: 'api' },
-  { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', multiplier: 3, source: 'api' },
-];
-
-// Fallback models that work but aren't returned by listModels() API yet
-// These should be removed once the API returns them
-// Note: multiplier is estimated, actual cost may differ
-const FALLBACK_MODELS: ModelInfo[] = [
-  { id: 'claude-opus-4.6', name: 'Claude Opus 4.6', multiplier: 3, source: 'fallback' },
-  { id: 'claude-opus-4.6-fast', name: 'Claude Opus 4.6 (fast)', multiplier: 3, source: 'fallback' },
-];
-
-// Cache for verified models (models confirmed available for current user)
-interface VerifiedModelsCache {
+// Cache for models from API (persisted to survive restarts)
+interface ModelsCache {
   models: ModelInfo[];
   timestamp: number;
+  version: number; // Cache version for invalidation
 }
-let verifiedModelsCache: VerifiedModelsCache | null = null;
-const MODEL_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+let modelsCache: ModelsCache | null = null;
+const MODEL_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours (models don't change frequently)
+const MODEL_CACHE_VERSION = 3; // Increment when model schema or fetch logic changes (bumped to 3 to refresh all caches with latest 17 models)
 
-// Returns verified models, using cache if valid
-function getVerifiedModels(): ModelInfo[] {
-  if (verifiedModelsCache && Date.now() - verifiedModelsCache.timestamp < MODEL_CACHE_TTL) {
-    return verifiedModelsCache.models;
+// Returns cached models if valid, otherwise empty array
+function getCachedModels(): ModelInfo[] {
+  // Check in-memory cache first
+  if (
+    modelsCache &&
+    Date.now() - modelsCache.timestamp < MODEL_CACHE_TTL &&
+    modelsCache.version === MODEL_CACHE_VERSION
+  ) {
+    console.log(`Returning ${modelsCache.models.length} models from in-memory cache`);
+    return modelsCache.models;
   }
-  // If no cache, return baseline + fallback models (API models load async)
-  return [...BASELINE_MODELS, ...FALLBACK_MODELS];
+
+  // Check persistent storage (electron-store)
+  try {
+    const storedCache = store.get('modelsCache') as ModelsCache | undefined;
+    if (storedCache) {
+      const age = Date.now() - storedCache.timestamp;
+      const isExpired = age >= MODEL_CACHE_TTL;
+      const wrongVersion = storedCache.version !== MODEL_CACHE_VERSION;
+
+      console.log(
+        `Stored cache: ${storedCache.models?.length || 0} models, ` +
+          `age: ${Math.round(age / 1000 / 60)} min, ` +
+          `version: ${storedCache.version} (expected ${MODEL_CACHE_VERSION}), ` +
+          `expired: ${isExpired}, wrongVersion: ${wrongVersion}`
+      );
+
+      if (!isExpired && !wrongVersion) {
+        modelsCache = storedCache; // Hydrate in-memory cache
+        return storedCache.models;
+      }
+    } else {
+      console.log('No stored models cache found');
+    }
+  } catch (err) {
+    console.warn('Failed to load stored models cache:', err);
+  }
+
+  // No valid cache
+  console.log('Returning empty models array (no valid cache)');
+  return [];
 }
 
-// Fetch models from API and merge with fallback models
-// API models are source of truth; fallback models added if not already in API response
-async function verifyAvailableModels(client: CopilotClient): Promise<ModelInfo[]> {
-  console.log('Fetching models from API...');
+// Fetch models from Copilot SDK API (single source of truth)
+async function fetchModelsFromAPI(client: CopilotClient): Promise<ModelInfo[]> {
+  console.log('[fetchModelsFromAPI] Fetching models from Copilot SDK...');
+  console.log('[fetchModelsFromAPI] Environment:', {
+    isDev: process.env.NODE_ENV === 'development',
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    cliPath: getCliPath(),
+  });
+
+  // Check which gh account is being used
+  try {
+    const { execSync } = require('child_process');
+    const ghStatus = execSync('gh auth status', {
+      encoding: 'utf-8',
+      env: getAugmentedEnv(),
+      stdio: 'pipe',
+    }).toString();
+    console.log('[fetchModelsFromAPI] gh auth status:', ghStatus);
+  } catch (err: any) {
+    console.log(
+      '[fetchModelsFromAPI] gh auth status (stderr):',
+      err.stderr?.toString() || err.message
+    );
+  }
 
   try {
+    console.log('[fetchModelsFromAPI] Calling client.listModels()...');
     const apiModels = await client.listModels();
+    console.log(`[fetchModelsFromAPI] SDK returned ${apiModels.length} models`);
 
-    console.log(`API returned ${apiModels.length} models`);
+    // Log all model IDs for debugging
+    console.log('[fetchModelsFromAPI] Model IDs from SDK:', apiModels.map((m) => m.id).join(', '));
+
+    // Log full model data to see everything
+    console.log('[fetchModelsFromAPI] Full API response:', JSON.stringify(apiModels, null, 2));
+
+    // Log any models with disabled policy state
+    const disabledModels = apiModels.filter((m) => m.policy?.state === 'disabled');
+    if (disabledModels.length > 0) {
+      console.log(
+        `Warning: ${disabledModels.length} models have disabled policy:`,
+        disabledModels.map((m) => m.id).join(', ')
+      );
+    }
+
+    if (apiModels.length === 0) {
+      console.warn('SDK returned empty model list');
+      return [];
+    }
 
     // Convert API response to ModelInfo, sorted by multiplier (low to high)
     const models: ModelInfo[] = apiModels
       .map((m) => {
-        // Extract billing multiplier with runtime check
+        // Extract billing multiplier from API response
         const billing = (m as { billing?: { multiplier?: number } }).billing;
         const multiplier = typeof billing?.multiplier === 'number' ? billing.multiplier : 1;
+
         return {
           id: m.id,
           name: m.name || m.id,
           multiplier,
-          source: 'api' as const,
         };
       })
-      .sort((a, b) => a.multiplier - b.multiplier);
+      .sort((a, b) => {
+        // First sort by multiplier (cost tier)
+        if (a.multiplier !== b.multiplier) {
+          return a.multiplier - b.multiplier;
+        }
+        // Within same cost tier, sort alphabetically by name
+        return a.name.localeCompare(b.name);
+      });
 
-    // Add fallback models that aren't in API response
-    const apiIds = new Set(models.map((m) => m.id));
-    for (const fallback of FALLBACK_MODELS) {
-      if (!apiIds.has(fallback.id)) {
-        console.log(`Adding fallback model: ${fallback.id} (not in API response)`);
-        models.push(fallback);
-      }
+    // Cache both in-memory and persistent storage
+    modelsCache = { models, timestamp: Date.now(), version: MODEL_CACHE_VERSION };
+    try {
+      store.set('modelsCache', modelsCache);
+    } catch (err) {
+      console.warn('Failed to persist models cache:', err);
     }
 
-    // Re-sort after adding fallbacks
-    models.sort((a, b) => a.multiplier - b.multiplier);
-
-    verifiedModelsCache = { models, timestamp: Date.now() };
-    console.log(
-      `Model list complete: ${models.length} models (${apiModels.length} from API, ${models.length - apiModels.length} fallback)`
-    );
+    console.log(`Model list loaded: ${models.length} models from SDK`);
     return models;
   } catch (error) {
-    console.error('Failed to fetch models from API:', error);
-    // On error, use baseline + fallback models
-    const fallbackList = [...BASELINE_MODELS, ...FALLBACK_MODELS];
-    verifiedModelsCache = { models: fallbackList, timestamp: Date.now() };
-    return fallbackList;
+    console.error('Failed to fetch models from SDK:', error);
+
+    // Try to use previously cached models from storage (even if expired - better than nothing)
+    try {
+      const storedCache = store.get('modelsCache') as ModelsCache | undefined;
+      if (storedCache && storedCache.models.length > 0) {
+        console.log(
+          `Using stale models cache from ${new Date(storedCache.timestamp).toLocaleString()} (${storedCache.models.length} models)`
+        );
+        modelsCache = storedCache;
+        return storedCache.models;
+      }
+    } catch (err) {
+      console.warn('Failed to load stored models cache:', err);
+    }
+
+    // No cache available - return empty array
+    console.error('No cached models available, returning empty list');
+    return [];
   }
 }
 
@@ -1555,6 +1720,23 @@ async function handlePermissionRequest(
   return permissionPromise;
 }
 
+// Build subagent prompting section to encourage delegation
+function buildSubagentPrompt(): string {
+  return `## Subagents and Task Delegation
+
+You have access to specialized subagents via the \`task\` tool. **Prefer using subagents** instead of doing work yourself when they're better suited for the task.
+
+**Delegation Mindset**:
+* When subagents are available, your role is to manage and coordinate, not to implement everything directly.
+* Instruct subagents to complete tasks themselves - don't just ask for advice.
+* If a custom agent and built-in agent both fit, prefer the custom agent (specialized knowledge).
+
+**After Delegation**:
+* Trust successful results, but spot-check critical changes.
+* If a subagent fails, refine your instructions and try again.
+* Only do the work yourself if repeated subagent attempts fail.`;
+}
+
 // Create a new session and return its ID
 async function createNewSession(model?: string, cwd?: string): Promise<string> {
   const sessionModel = model || (store.get('model') as string);
@@ -1599,6 +1781,9 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     browserTools.map((t) => t.name)
   );
 
+  // Build subagent prompting section
+  const subagentPrompt = buildSubagentPrompt();
+
   const newSession = await client.createSession({
     sessionId: generatedSessionId,
     model: sessionModel,
@@ -1610,9 +1795,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     systemMessage: {
       mode: 'append',
       content: `
-## Subagents and Task Delegation
-
-You have access to specialized subagents via the \`task\` tool. **Use subagents proactively** when they're better suited for the task.
+${subagentPrompt}
 
 ## Web Information Lookup
 
@@ -2044,7 +2227,7 @@ async function initCopilot(): Promise<void> {
       mainWindow.webContents.send('copilot:ready', {
         sessions: pendingSessions,
         previousSessions,
-        models: getVerifiedModels(),
+        models: getCachedModels(), // Send cached models if available, empty otherwise
       });
 
       // Notify about sessions that were already resumed early (window wasn't ready when they completed)
@@ -2053,18 +2236,7 @@ async function initCopilot(): Promise<void> {
       }
     }
 
-    // Verify available models in background (non-blocking)
-    if (defaultClient) {
-      verifyAvailableModels(defaultClient)
-        .then((verifiedModels) => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('copilot:modelsVerified', { models: verifiedModels });
-          }
-        })
-        .catch((err) => {
-          console.error('Model verification failed:', err);
-        });
-    }
+    // Models will be fetched on-demand when user opens model selector (via copilot:getModels IPC)
 
     // Start keep-alive timer to prevent session timeouts
     startKeepAlive();
@@ -2104,6 +2276,7 @@ function createWindow(): void {
         symbolColor: '#e6edf3',
         height: 38,
       },
+      roundedCorners: false, // Sharp corners on Windows (standard for Windows apps)
     }),
     hasShadow: true,
     webPreferences: {
@@ -2672,7 +2845,7 @@ ipcMain.handle(
         sessionState.model = data.model;
         return { sessionId: data.sessionId, model: data.model, cwd: sessionState.cwd };
       }
-      const validModels = getVerifiedModels().map((m) => m.id);
+      const validModels = getCachedModels().map((m) => m.id);
       if (!validModels.includes(data.model)) {
         throw new Error(`Invalid model: ${data.model}`);
       }
@@ -2690,6 +2863,9 @@ ipcMain.handle(
           `[${data.sessionId}] Creating new session with model ${data.model} (empty session)`
         );
 
+        // Capture yoloMode before destroying old session
+        const preserveYoloMode = sessionState.yoloMode;
+
         // Destroy the old session
         await sessionState.session.destroy();
         sessions.delete(data.sessionId);
@@ -2697,6 +2873,9 @@ ipcMain.handle(
         // Create a brand new session with the desired model
         const newSessionId = await createNewSession(data.model, cwd);
         const newSessionState = sessions.get(newSessionId)!;
+
+        // Preserve yoloMode in the new session
+        newSessionState.yoloMode = preserveYoloMode;
 
         log.info(
           `[${newSessionId}] New session created for model switch: ${previousModel} → ${data.model}`
@@ -2758,6 +2937,7 @@ ipcMain.handle(
         alwaysAllowed: new Set(sessionState.alwaysAllowed),
         allowedPaths: new Set(sessionState.allowedPaths),
         isProcessing: false,
+        yoloMode: sessionState.yoloMode,
       });
       activeSessionId = resumedSessionId;
 
@@ -2808,12 +2988,19 @@ ipcMain.handle(
     if (!data.hasMessages) {
       console.log(`Creating new session with agent ${data.agentName || 'none'} (empty session)`);
 
+      // Capture yoloMode before destroying old session
+      const preserveYoloMode = sessionState.yoloMode;
+
       // Destroy the old session
       await sessionState.session.destroy();
       sessions.delete(data.sessionId);
 
       // Create a brand new session with the same model
       const newSessionId = await createNewSession(model, cwd);
+      const newSessionState = sessions.get(newSessionId)!;
+
+      // Preserve yoloMode in the new session
+      newSessionState.yoloMode = preserveYoloMode;
 
       return {
         sessionId: newSessionId,
@@ -2871,6 +3058,7 @@ ipcMain.handle(
       alwaysAllowed: new Set(sessionState.alwaysAllowed),
       allowedPaths: new Set(sessionState.allowedPaths),
       isProcessing: false,
+      yoloMode: sessionState.yoloMode,
     });
     activeSessionId = resumedSessionId;
 
@@ -2880,8 +3068,34 @@ ipcMain.handle(
 );
 
 ipcMain.handle('copilot:getModels', async () => {
+  console.log('[copilot:getModels] IPC handler called');
   const currentModel = store.get('model') as string;
-  return { models: getVerifiedModels(), current: currentModel };
+  const cachedModels = getCachedModels();
+
+  // If cache is valid, return it immediately
+  if (cachedModels.length > 0) {
+    console.log(`[copilot:getModels] Returning ${cachedModels.length} cached models`);
+    return { models: cachedModels, current: currentModel };
+  }
+
+  // No valid cache - fetch fresh from API
+  console.log('[copilot:getModels] No cache, fetching from API...');
+  const client = getDefaultClient();
+  if (!client) {
+    console.warn('No Copilot client available for fetching models');
+    return { models: [], current: currentModel };
+  }
+
+  try {
+    console.log('[copilot:getModels] About to call fetchModelsFromAPI...');
+    const models = await fetchModelsFromAPI(client);
+    console.log(`[copilot:getModels] Fetched ${models.length} models from API`);
+    console.log(`[copilot:getModels] Returning model IDs:`, models.map((m) => m.id).join(', '));
+    return { models, current: currentModel };
+  } catch (err) {
+    console.error('Failed to fetch models on-demand:', err);
+    return { models: [], current: currentModel };
+  }
 });
 
 // Get model capabilities including vision support
@@ -2916,7 +3130,7 @@ ipcMain.handle(
   'copilot:saveImageToTemp',
   async (_event, data: { dataUrl: string; filename: string }) => {
     try {
-      const imageDir = join(app.getPath('home'), '.copilot', 'images');
+      const imageDir = join(getCopilotStatePath(), 'images');
       if (!existsSync(imageDir)) {
         mkdirSync(imageDir, { recursive: true });
       }
@@ -3000,7 +3214,7 @@ ipcMain.handle('copilot:fetchImageFromUrl', async (_event, url: string) => {
     const extension = contentType.split('/')[1]?.split(';')[0] || 'png';
     const filename = `image-${Date.now()}.${extension}`;
 
-    const imageDir = join(app.getPath('home'), '.copilot', 'images');
+    const imageDir = join(getCopilotStatePath(), 'images');
     if (!existsSync(imageDir)) {
       mkdirSync(imageDir, { recursive: true });
     }
@@ -3031,7 +3245,7 @@ ipcMain.handle(
   'copilot:saveFileToTemp',
   async (_event, data: { dataUrl: string; filename: string; mimeType: string }) => {
     try {
-      const filesDir = join(app.getPath('home'), '.copilot', 'files');
+      const filesDir = join(getCopilotStatePath(), 'files');
       if (!existsSync(filesDir)) {
         mkdirSync(filesDir, { recursive: true });
       }
@@ -3154,7 +3368,7 @@ ipcMain.handle('copilot:deleteSessionFromHistory', async (_event, sessionId: str
     await client.deleteSession(sessionId);
 
     // Also clean up the session-state folder if it exists
-    const sessionStateDir = join(app.getPath('home'), '.copilot', 'session-state', sessionId);
+    const sessionStateDir = join(getCopilotStatePath(), 'session-state', sessionId);
     if (existsSync(sessionStateDir)) {
       const { rm } = await import('fs/promises');
       await rm(sessionStateDir, { recursive: true, force: true });
@@ -4241,6 +4455,7 @@ ipcMain.handle(
       draft?: boolean;
       targetBranch: string;
       untrackedFiles?: string[];
+      sourceIssue?: { url: string; number: number; owner: string; repo: string };
     }
   ) => {
     try {
@@ -4349,7 +4564,26 @@ ipcMain.handle(
       // Construct PR creation URL - GitHub will auto-fill the form
       const title = data.title || currentBranch.replace(/[-_]/g, ' ');
       const encodedTitle = encodeURIComponent(title);
-      const prUrl = `https://github.com/${repoPath}/compare/${targetBranch}...${currentBranch}?quick_pull=1&title=${encodedTitle}`;
+
+      // Build PR URL with optional body that links to source issue
+      let prUrl = `https://github.com/${repoPath}/compare/${targetBranch}...${currentBranch}?quick_pull=1&title=${encodedTitle}`;
+
+      // If this session was created from a GitHub issue, add body to link PR to issue
+      if (data.sourceIssue) {
+        // Use "Closes" keyword to auto-close the issue when PR is merged
+        // Check if PR is in the same repo as the issue
+        const [prOwner, prRepo] = repoPath.split('/');
+        const isSameRepo =
+          prOwner.toLowerCase() === data.sourceIssue.owner.toLowerCase() &&
+          prRepo.toLowerCase() === data.sourceIssue.repo.toLowerCase();
+
+        const issueRef = isSameRepo
+          ? `#${data.sourceIssue.number}` // Same repo: use short reference
+          : `${data.sourceIssue.owner}/${data.sourceIssue.repo}#${data.sourceIssue.number}`; // Different repo: use full reference
+
+        const body = `Closes ${issueRef}`;
+        prUrl += `&body=${encodeURIComponent(body)}`;
+      }
 
       return { success: true, prUrl, branch: currentBranch, targetBranch };
     } catch (error) {
@@ -4520,6 +4754,108 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
 
   console.log(`Resumed previous session ${sessionId} in ${sessionCwd}`);
   return { sessionId, model: sessionModel, cwd: sessionCwd, alreadyOpen: false };
+});
+
+// CLI Setup & Authentication
+ipcMain.handle('copilot:checkCliStatus', async () => {
+  return await checkCliStatus();
+});
+
+ipcMain.handle('copilot:installCli', async () => {
+  try {
+    // Check if npm is available
+    const { npmAvailable } = await checkCliStatus();
+    if (!npmAvailable) {
+      return { success: false, error: 'npm is not available' };
+    }
+
+    // Return success - caller will run the command in terminal
+    // (We don't actually run it here, the UI will use the terminal)
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+});
+
+let authLoginInProgress = false;
+
+ipcMain.handle('copilot:authLogin', async () => {
+  if (authLoginInProgress) {
+    return { success: false, error: 'Authentication already in progress' };
+  }
+
+  authLoginInProgress = true;
+  try {
+    const cliPath = getCliPath();
+    if (!existsSync(cliPath)) {
+      return { success: false, error: 'Copilot CLI not found' };
+    }
+
+    return new Promise<{ success: boolean; error?: string; url?: string; code?: string }>(
+      (resolve) => {
+        const child = spawn(cliPath, ['login'], {
+          env: getAugmentedEnv(),
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        let stdout = '';
+        let stderr = '';
+        let deviceUrl = '';
+        let deviceCode = '';
+        let deviceFlowSent = false;
+
+        const parseDeviceFlow = (data: string) => {
+          // Parse: "visit https://github.com/login/device and enter code XXXX-XXXX"
+          const urlMatch = data.match(/(https:\/\/github\.com\/login\/device)/);
+          const codeMatch = data.match(/enter code\s+([A-Z0-9]{4}-[A-Z0-9]{4})/);
+          if (urlMatch) deviceUrl = urlMatch[1];
+          if (codeMatch) deviceCode = codeMatch[1];
+
+          // Send device flow info to renderer once
+          if (deviceUrl && deviceCode && mainWindow && !deviceFlowSent) {
+            deviceFlowSent = true;
+            mainWindow.webContents.send('copilot:authDeviceFlow', {
+              url: deviceUrl,
+              code: deviceCode,
+            });
+          }
+        };
+
+        child.stdout?.on('data', (data: Buffer) => {
+          const text = data.toString();
+          stdout += text;
+          parseDeviceFlow(stdout);
+        });
+
+        child.stderr?.on('data', (data: Buffer) => {
+          const text = data.toString();
+          stderr += text;
+          parseDeviceFlow(stderr);
+        });
+
+        child.on('close', (exitCode) => {
+          authLoginInProgress = false;
+          if (exitCode === 0) {
+            resolve({ success: true, url: deviceUrl, code: deviceCode });
+          } else {
+            resolve({
+              success: false,
+              error: stderr || stdout || `Login failed with exit code ${exitCode}`,
+            });
+          }
+        });
+
+        child.on('error', (err) => {
+          authLoginInProgress = false;
+          child.kill();
+          resolve({ success: false, error: String(err) });
+        });
+      }
+    );
+  } catch (error) {
+    authLoginInProgress = false;
+    return { success: false, error: String(error) };
+  }
 });
 
 // MCP Server Management
@@ -4822,8 +5158,11 @@ if (!gotTheLock) {
     // This saves several seconds since session resumption involves network calls
     earlyResumptionPromise = startEarlySessionResumption();
 
+    const cachedModels = getCachedModels();
     console.log(
-      `Initial models: ${BASELINE_MODELS.length} baseline + ${FALLBACK_MODELS.length} fallback`
+      cachedModels.length > 0
+        ? `Loaded ${cachedModels.length} models from cache`
+        : 'No cached models, will fetch from SDK'
     );
 
     // Set up custom application menu
@@ -4886,9 +5225,7 @@ if (!gotTheLock) {
         submenu: [
           { role: 'minimize' as const },
           { role: 'zoom' as const },
-          ...(isMac
-            ? [{ type: 'separator' as const }, { role: 'front' as const }]
-            : [{ role: 'close' as const }]),
+          ...(isMac ? [{ type: 'separator' as const }, { role: 'front' as const }] : []),
         ],
       },
     ];
@@ -4896,7 +5233,7 @@ if (!gotTheLock) {
     Menu.setApplicationMenu(menu);
 
     // Clean up old cached images async (non-blocking to improve startup time)
-    const imageDir = join(app.getPath('home'), '.copilot', 'images');
+    const imageDir = join(getCopilotStatePath(), 'images');
     setImmediate(() => {
       if (existsSync(imageDir)) {
         const now = Date.now();
