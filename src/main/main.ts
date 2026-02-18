@@ -3012,6 +3012,16 @@ ipcMain.handle(
 );
 
 ipcMain.handle('copilot:getModels', async () => {
+  // If model verification is in progress, wait for it to complete
+  if (modelsVerificationPromise) {
+    try {
+      await modelsVerificationPromise;
+    } catch (err) {
+      // Verification failed, but we'll return cached/fallback models below
+      console.warn('Model verification failed while waiting:', err);
+    }
+  }
+
   const currentModel = store.get('model') as string;
   return { models: getCachedModels(), current: currentModel };
 });
