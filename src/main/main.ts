@@ -19,6 +19,7 @@ import {
   copyFileSync,
   statSync,
   unlinkSync,
+  writeFileSync,
 } from 'fs';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
@@ -5574,6 +5575,33 @@ ipcMain.handle('file:openFile', async (_event, filePath: string) => {
     return { success: false, error: String(error) };
   }
 });
+
+// File operations - write/save file content
+ipcMain.handle(
+  'file:writeContent',
+  async (_event, { filePath, content }: { filePath: string; content: string }) => {
+    try {
+      // Validate file path to prevent directory traversal
+      const normalizedPath = path.normalize(filePath);
+      if (normalizedPath.includes('..')) {
+        return { success: false, error: 'Invalid file path: directory traversal not allowed' };
+      }
+
+      // Ensure parent directory exists
+      const dir = path.dirname(normalizedPath);
+      if (!existsSync(dir)) {
+        return { success: false, error: 'Parent directory does not exist' };
+      }
+
+      // Write file content
+      writeFileSync(normalizedPath, content, 'utf-8');
+      return { success: true, filePath: normalizedPath };
+    } catch (error) {
+      console.error('Failed to write file:', error);
+      return { success: false, error: String(error) };
+    }
+  }
+);
 
 // Crash diagnostics
 ipcMain.handle('diagnostics:getPaths', async () => {
