@@ -3332,6 +3332,42 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     }
   };
 
+  // Create a new session in a specific folder (no folder picker)
+  const handleNewTabInFolder = async (folderPath: string) => {
+    try {
+      setStatus('connecting');
+      const result = await window.electronAPI.copilot.createSession({
+        cwd: folderPath,
+      });
+      const newTab: TabState = {
+        id: result.sessionId,
+        name: generateTabName(),
+        messages: [],
+        model: result.model,
+        cwd: result.cwd,
+        isProcessing: false,
+        activeTools: [],
+        hasUnreadCompletion: false,
+        pendingConfirmations: [],
+        needsTitle: true,
+        alwaysAllowed: [],
+        editedFiles: [],
+        untrackedFiles: [],
+        fileViewMode: 'flat',
+        currentIntent: null,
+        currentIntentTimestamp: null,
+        gitBranchRefresh: 0,
+        activeAgentName: undefined,
+      };
+      setTabs((prev) => [...prev, newTab]);
+      setActiveTabId(result.sessionId);
+      setStatus('connected');
+    } catch (error) {
+      console.error('Failed to create new tab in folder:', error);
+      setStatus('connected');
+    }
+  };
+
   // Handle starting a new worktree session
   const handleNewWorktreeSession = async () => {
     try {
@@ -4868,17 +4904,40 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   // Render grouped tabs
                   return folderGroups.map(({ folder, displayName, fullPath, tabs: folderTabs }) => (
                     <div key={folder || 'no-folder'}>
-                      {/* Folder header - only show if there's more than one folder */}
-                      {tabsByFolder.size > 1 && (
-                        <div className="px-3 py-2 border-t border-copilot-border bg-copilot-bg sticky top-0 z-10">
-                          <div
-                            className="text-[10px] text-copilot-text-muted uppercase tracking-wide"
-                            title={fullPath}
-                          >
-                            {displayName}
-                          </div>
+                      {/* Folder header */}
+                      <div className="px-3 py-2 border-t border-copilot-border bg-copilot-bg sticky top-0 z-10 flex items-center justify-between group/folder">
+                        <div
+                          className="text-[10px] text-copilot-text-muted uppercase tracking-wide"
+                          title={fullPath}
+                        >
+                          {displayName}
                         </div>
-                      )}
+                        {folder && !folder.startsWith('worktree:') && (
+                          <div className="flex items-center gap-0.5 opacity-0 group-hover/folder:opacity-100 transition-opacity">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setWorktreeRepoPath(folder);
+                                setShowCreateWorktree(true);
+                              }}
+                              className="p-0.5 text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover rounded"
+                              title={`New worktree in ${displayName}`}
+                            >
+                              <GitBranchIcon size={12} strokeWidth={2} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleNewTabInFolder(folder);
+                              }}
+                              className="p-0.5 text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover rounded"
+                              title={`New session in ${displayName}`}
+                            >
+                              <PlusIcon size={12} strokeWidth={2} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
 
                       {/* Tabs in this folder */}
                       {folderTabs.map((tab) => (
