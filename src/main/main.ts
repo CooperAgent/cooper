@@ -3717,7 +3717,9 @@ ipcMain.handle(
 
       if (data.includeAll) {
         // Get ALL changed files (staged, unstaged, and untracked)
-        const { stdout: status } = await execAsync('git status --porcelain', { cwd: data.cwd });
+        const { stdout: status } = await execAsync('git status --porcelain --untracked-files=all', {
+          cwd: data.cwd,
+        });
         for (const line of status.split('\n')) {
           if (line.trim()) {
             // Status format: XY filename (where XY is 2-char status)
