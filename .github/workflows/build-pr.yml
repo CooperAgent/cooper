@@ -70,7 +70,7 @@ jobs:
 
       # --- Build & package (no signing) ---
       - name: Run tests
-        run: npm run test:integration:mcp
+        run: npm test
 
       - name: Build application
         run: npm run prebuild-info && npx electron-vite build
