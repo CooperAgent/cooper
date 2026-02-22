@@ -1294,6 +1294,7 @@ interface ModelsCache {
 let modelsCache: ModelsCache | null = null;
 let modelsWarmupPromise: Promise<void> | null = null;
 const MODEL_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours (models don't change frequently)
+const MODEL_REFRESH_MIN_INTERVAL = 15 * 60 * 1000; // Avoid re-fetching too frequently
 const MODEL_CACHE_VERSION = 3; // Increment when model schema or fetch logic changes (bumped to 3 to refresh all caches with latest 17 models)
 
 // Returns cached models if valid, otherwise empty array
@@ -1443,6 +1444,11 @@ async function fetchModelsFromAPI(client: CopilotClient): Promise<ModelInfo[]> {
     console.error('No cached models available, returning empty list');
     return [];
   }
+}
+
+function shouldRefreshModelsFromCacheAge(): boolean {
+  if (!modelsCache) return true;
+  return Date.now() - modelsCache.timestamp >= MODEL_REFRESH_MIN_INTERVAL;
 }
 
 function warmModelsCacheInBackground(forceRefresh = false): void {
@@ -3242,8 +3248,10 @@ ipcMain.handle('copilot:getModels', async () => {
 
   // If cache is valid, return it immediately
   if (cachedModels.length > 0) {
-    // Also refresh in background so newly released models appear without waiting for cache TTL.
-    warmModelsCacheInBackground(true);
+    // Refresh in background only when cache is older than the freshness window.
+    if (shouldRefreshModelsFromCacheAge()) {
+      warmModelsCacheInBackground(true);
+    }
     console.log(`[copilot:getModels] Returning ${cachedModels.length} cached models`);
     return { models: cachedModels, current: currentModel };
   }
