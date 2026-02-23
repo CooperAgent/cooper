@@ -497,6 +497,11 @@ async function getClientForCwd(cwd: string): Promise<CopilotClient> {
 
     // Use augmented PATH so CLI can find gh for authentication
     const env = getAugmentedEnv();
+    // Copilot CLI exits in headless mode when XDG overrides point to the isolated dev home on Windows.
+    // Keep XDG overrides for Cooper internals, but do not pass them to the CLI subprocess.
+    delete env.XDG_CONFIG_HOME;
+    delete env.XDG_STATE_HOME;
+    delete env.COPILOT_SESSIONS_HOME;
     if (app.isPackaged) {
       log.info('Using augmented PATH for packaged app');
     }
