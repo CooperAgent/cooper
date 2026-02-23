@@ -88,6 +88,7 @@ interface MCPServerConfigBase {
   tools: string[];
   type?: string;
   timeout?: number;
+  builtIn?: boolean;
 }
 
 interface MCPLocalServerConfig extends MCPServerConfigBase {
@@ -5136,8 +5137,17 @@ ipcMain.handle('copilot:authLogin', async () => {
 
 // MCP Server Management
 ipcMain.handle('mcp:getConfig', async () => {
-  const config = await readMcpConfig();
-  return config;
+  let projectRoot: string | undefined;
+  const currentSessionId = activeSessionId;
+  if (currentSessionId) {
+    const sessionState = sessions.get(currentSessionId);
+    if (sessionState) {
+      projectRoot = await getProjectRootForCwd(sessionState.cwd);
+    }
+  }
+
+  const discovery = await discoverMcpServers({ projectRoot });
+  return { mcpServers: discovery.effectiveServers };
 });
 
 ipcMain.handle('mcp:saveConfig', async (_event, config: MCPConfigFile) => {

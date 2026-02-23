@@ -105,6 +105,102 @@ describe('MCP Discovery System (Issue #456)', () => {
       expect(result.allMetadata[0].launchMethod).toBe('command');
     });
 
+    it('loads built-in MCP servers from config.json plugin metadata', async () => {
+      const copilotConfig = {
+        installed_plugins: [
+          {
+            name: 'nexus-meridian',
+            enabled: true,
+            cache_path: '/tmp/test-home/.copilot/installed-plugins/nexus-meridian',
+          },
+        ],
+      };
+      const pluginMcpConfig = {
+        mcpServers: {
+          'nexus-meridian': {
+            command: 'python',
+            args: ['server.py'],
+            tools: ['*'],
+          },
+        },
+      };
+
+      mocks.existsSync.mockImplementation((path: string) => {
+        const normalized = normalizePath(path);
+        return normalized.endsWith('/.copilot/config.json') || normalized.endsWith('.mcp.json');
+      });
+      mocks.readFile.mockImplementation((path: string) => {
+        const normalized = normalizePath(path);
+        if (normalized.endsWith('/.copilot/config.json')) {
+          return Promise.resolve(JSON.stringify(copilotConfig));
+        }
+        return Promise.resolve(JSON.stringify(pluginMcpConfig));
+      });
+
+      const result = await discoverMcpServers({});
+
+      expect(result.effectiveServers['nexus-meridian']).toBeDefined();
+      expect(result.effectiveServers['nexus-meridian'].builtIn).toBe(true);
+      expect(result.sources.default).toBe('copilot-built-in-plugins');
+    });
+
+    it('allows user-level config to override built-in plugin server', async () => {
+      const copilotConfig = {
+        installed_plugins: [
+          {
+            name: 'nexus-meridian',
+            enabled: true,
+            cache_path: '/tmp/test-home/.copilot/installed-plugins/nexus-meridian',
+          },
+        ],
+      };
+      const pluginMcpConfig = {
+        mcpServers: {
+          'nexus-meridian': {
+            command: 'python',
+            args: ['built-in.py'],
+            tools: ['*'],
+          },
+        },
+      };
+      const userConfig = {
+        mcpServers: {
+          'nexus-meridian': {
+            command: 'python3',
+            args: ['user.py'],
+            tools: ['*'],
+          },
+        },
+      };
+
+      mocks.existsSync.mockImplementation((path: string) => {
+        const normalized = normalizePath(path);
+        return (
+          normalized.endsWith('/.copilot/config.json') ||
+          normalized.endsWith('/.copilot/mcp-config.json') ||
+          normalized.endsWith('.mcp.json')
+        );
+      });
+      mocks.readFile.mockImplementation((path: string) => {
+        const normalized = normalizePath(path);
+        if (normalized.endsWith('/.copilot/config.json')) {
+          return Promise.resolve(JSON.stringify(copilotConfig));
+        }
+        if (normalized.endsWith('/.copilot/mcp-config.json')) {
+          return Promise.resolve(JSON.stringify(userConfig));
+        }
+        return Promise.resolve(JSON.stringify(pluginMcpConfig));
+      });
+
+      const result = await discoverMcpServers({});
+
+      expect(result.effectiveServers['nexus-meridian'].command).toBe('python3');
+      const overriddenBuiltIn = result.allMetadata.find(
+        (entry) => entry.serverName === 'nexus-meridian' && !entry.effective && entry.config.builtIn
+      );
+      expect(overriddenBuiltIn).toBeDefined();
+    });
+
     it('session config overrides user config (priority)', async () => {
       const userConfig = {
         mcpServers: {

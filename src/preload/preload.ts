@@ -1275,6 +1275,7 @@ interface MCPServerConfigBase {
   tools: string[];
   type?: string;
   timeout?: number;
+  builtIn?: boolean;
 }
 
 interface MCPLocalServerConfig extends MCPServerConfigBase {

@@ -4584,6 +4584,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         {Object.entries(mcpServers).map(([name, server]) => {
                           const isLocal =
                             !server.type || server.type === 'local' || server.type === 'stdio';
+                          const isBuiltIn = server.builtIn === true;
                           const toolCount =
                             server.tools?.[0] === '*' ? 'all' : `${server.tools?.length ?? 0}`;
                           return (
@@ -4594,29 +4595,40 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                                 <GlobeIcon size={12} className="text-copilot-accent" />
                               )}
                               <div className="flex-1 min-w-0">
-                                <div className="text-copilot-text truncate">{name}</div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-copilot-text truncate">{name}</span>
+                                  {isBuiltIn && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-copilot-accent/20 text-copilot-accent font-medium">
+                                      BUILT-IN
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="text-[10px] text-copilot-text-muted">
                                   {toolCount} tools
                                 </div>
                               </div>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEditMcpModal(name, server);
-                                }}
-                                className="p-1.5 text-copilot-accent hover:bg-copilot-surface rounded"
-                              >
-                                <EditIcon size={14} />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteMcpServer(name);
-                                }}
-                                className="p-1.5 text-copilot-error hover:bg-copilot-surface rounded"
-                              >
-                                <CloseIcon size={14} />
-                              </button>
+                              {!isBuiltIn && (
+                                <>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openEditMcpModal(name, server);
+                                    }}
+                                    className="p-1.5 text-copilot-accent hover:bg-copilot-surface rounded"
+                                  >
+                                    <EditIcon size={14} />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteMcpServer(name);
+                                    }}
+                                    className="p-1.5 text-copilot-error hover:bg-copilot-surface rounded"
+                                  >
+                                    <CloseIcon size={14} />
+                                  </button>
+                                </>
+                              )}
                             </div>
                           );
                         })}

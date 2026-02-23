@@ -23,6 +23,7 @@ export interface MCPServerConfigBase {
   tools: string[];
   type?: string;
   timeout?: number;
+  builtIn?: boolean;
 }
 
 export interface MCPLocalServerConfig extends MCPServerConfigBase {
@@ -108,6 +109,9 @@ async function readMcpConfigFromFile(filePath: string): Promise<MCPConfigFile | 
     }
     const content = await readFile(filePath, 'utf-8');
     const parsed = JSON.parse(content) as MCPConfigFile;
+    if (!parsed.mcpServers || typeof parsed.mcpServers !== 'object') {
+      return null;
+    }
 
     // Default tools to ["*"] for servers that don't specify it
     for (const serverName in parsed.mcpServers) {
@@ -124,6 +128,58 @@ async function readMcpConfigFromFile(filePath: string): Promise<MCPConfigFile | 
   } catch (error) {
     console.error(`Failed to read MCP config from ${filePath}:`, error);
     return null;
+  }
+}
+
+async function readBuiltInPluginServers(): Promise<Record<string, MCPServerConfig>> {
+  const configPath = join(getCopilotConfigPath(), 'config.json');
+  if (!existsSync(configPath)) {
+    console.log(`[MCP Discovery] Built-in plugins config not found: ${configPath}`);
+    return {};
+  }
+
+  try {
+    const raw = await readFile(configPath, 'utf-8');
+    const parsed = JSON.parse(raw) as { installed_plugins?: unknown };
+    if (!Array.isArray(parsed.installed_plugins)) {
+      return {};
+    }
+
+    const builtInServers: Record<string, MCPServerConfig> = {};
+    for (const plugin of parsed.installed_plugins) {
+      if (!plugin || typeof plugin !== 'object') {
+        continue;
+      }
+
+      const pluginRecord = plugin as Record<string, unknown>;
+      if (pluginRecord.enabled !== true) {
+        continue;
+      }
+      if (typeof pluginRecord.cache_path !== 'string') {
+        continue;
+      }
+
+      const mcpConfigPath = join(pluginRecord.cache_path, '.mcp.json');
+      const pluginMcpConfig = await readMcpConfigFromFile(mcpConfigPath);
+      if (!pluginMcpConfig) {
+        continue;
+      }
+
+      for (const [serverName, serverConfig] of Object.entries(pluginMcpConfig.mcpServers)) {
+        builtInServers[serverName] = {
+          ...serverConfig,
+          builtIn: true,
+        };
+      }
+    }
+
+    console.log(
+      `[MCP Discovery] Loaded ${Object.keys(builtInServers).length} built-in plugin servers from ${configPath}`
+    );
+    return builtInServers;
+  } catch (error) {
+    console.error(`[MCP Discovery] Failed to read built-in plugins from ${configPath}:`, error);
+    return {};
   }
 }
 
@@ -243,6 +299,12 @@ export async function discoverMcpServers(options: {
   }
 
   // 5. Default config (lowest priority)
+  const builtInServers = await readBuiltInPluginServers();
+  if (Object.keys(builtInServers).length > 0) {
+    addServers(builtInServers, 'copilot-built-in-plugins', MCPPriority.DEFAULT, 'default');
+  }
+
+  // 6. Default config (lowest priority)
   if (options.defaultConfig) {
     addServers(options.defaultConfig, 'built-in-defaults', MCPPriority.DEFAULT, 'default');
   }
