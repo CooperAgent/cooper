@@ -34,13 +34,13 @@ Requires **Node.js 22+**.
 **macOS:**
 
 ```bash
-git clone https://github.com/CooperAgent/cooper.git && cd cooper && npm install && npm run dist
+git clone https://github.com/CooperAgent/cooper.git && cd cooper && npm run dist
 ```
 
 **Windows:**
 
 ```powershell
-git clone https://github.com/CooperAgent/cooper.git; cd cooper; pwsh -NoProfile -File .\scripts\setup-windows.ps1; npm run dist:win
+git clone https://github.com/CooperAgent/cooper.git; cd cooper; pwsh -NoProfile -File .\scripts\setup-windows.ps1; npm run dist
 ```
 
 **Linux:**
@@ -48,7 +48,7 @@ git clone https://github.com/CooperAgent/cooper.git; cd cooper; pwsh -NoProfile 
 ```bash
 git clone https://github.com/CooperAgent/cooper.git && cd cooper
 sudo ./scripts/install-linux-deps.sh  # auto-detects distro
-npm install && npm run dist:linux
+npm run dist
 ```
 
 </details>
