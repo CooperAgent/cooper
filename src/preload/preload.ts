@@ -958,6 +958,35 @@ const electronAPI = {
     getConfigPath: (): Promise<{ path: string }> => {
       return ipcRenderer.invoke('mcp:getConfigPath');
     },
+    getDiscoveryMetadata: (options?: {
+      sessionConfig?: Record<string, MCPServerConfig>;
+      projectRoot?: string;
+    }): Promise<{
+      success: boolean;
+      data?: {
+        effectiveServers: Record<string, MCPServerConfig>;
+        allMetadata: Array<{
+          serverName: string;
+          config: MCPServerConfig;
+          source: string;
+          priority: number;
+          effective: boolean;
+          overriddenBy?: string;
+          serverType: string;
+          launchMethod: string;
+        }>;
+        sources: {
+          session?: string;
+          agent?: string;
+          user?: string;
+          repo?: string;
+          default?: string;
+        };
+      };
+      error?: string;
+    }> => {
+      return ipcRenderer.invoke('mcp:getDiscoveryMetadata', options);
+    },
   },
   // Agent Skills Management
   skills: {
@@ -1250,6 +1279,7 @@ interface MCPServerConfigBase {
   tools: string[];
   type?: string;
   timeout?: number;
+  builtIn?: boolean;
 }
 
 interface MCPLocalServerConfig extends MCPServerConfigBase {

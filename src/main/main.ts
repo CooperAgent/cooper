@@ -88,6 +88,7 @@ interface MCPServerConfigBase {
   tools: string[];
   type?: string;
   timeout?: number;
+  builtIn?: boolean;
 }
 
 interface MCPLocalServerConfig extends MCPServerConfigBase {
@@ -201,7 +202,10 @@ async function writeMcpConfig(config: MCPConfigFile): Promise<void> {
 import { getAllSkills, type SkillsResult } from './skills';
 
 // Agent discovery - imported from agents module
-import { getAllAgents, parseAgentFrontmatter, type AgentsResult } from './agents';
+import { AgentMcpServer, getAllAgents, parseAgentFrontmatter, type AgentsResult } from './agents';
+
+// MCP Discovery - imported from mcpDiscovery module
+import { discoverMcpServers, getMcpDiscoveryMetadata } from './mcpDiscovery';
 
 // Copilot Instructions - imported from instructions module
 import { getAllInstructions, getGitRoot, type InstructionsResult } from './instructions';
@@ -981,7 +985,8 @@ async function resumeDisconnectedSession(
   log.info(`[${sessionId}] Attempting to resume disconnected session...`);
 
   const client = await getClientForCwd(sessionState.cwd);
-  const mcpConfig = await readMcpConfig();
+  const projectRoot = await getProjectRootForCwd(sessionState.cwd);
+  const mcpDiscovery = await discoverMcpServers({ projectRoot });
 
   // Create browser tools for resumed session
   const browserTools = createBrowserTools(sessionId);
@@ -991,7 +996,7 @@ async function resumeDisconnectedSession(
   );
 
   const resumedSession = await client.resumeSession(sessionId, {
-    mcpServers: mcpConfig.mcpServers,
+    mcpServers: mcpDiscovery.effectiveServers,
     tools: browserTools,
     onPermissionRequest: (request, invocation) =>
       handlePermissionRequest(request, invocation, sessionId),
@@ -1076,9 +1081,6 @@ async function startEarlySessionResumption(): Promise<void> {
     }
     const client = await earlyClientPromise;
 
-    // Load MCP config
-    const mcpConfig = await readMcpConfig();
-
     // Resume sessions in parallel
     const resumePromises = openSessions.map(async (storedSession) => {
       const {
@@ -1118,8 +1120,10 @@ async function startEarlySessionResumption(): Promise<void> {
             log.warn('Failed to load agent prompt:', agent.path, error);
           }
         }
+        const projectRoot = await getProjectRootForCwd(sessionCwd);
+        const mcpDiscovery = await discoverMcpServers({ projectRoot });
         const session = await sessionClient.resumeSession(sessionId, {
-          mcpServers: mcpConfig.mcpServers,
+          mcpServers: mcpDiscovery.effectiveServers,
           tools: createBrowserTools(sessionId),
           customAgents,
           onPermissionRequest: (request, invocation) =>
@@ -1902,6 +1906,40 @@ You have access to specialized subagents via the \`task\` tool. **Prefer using s
 * Only do the work yourself if repeated subagent attempts fail.`;
 }
 
+function toMcpServerConfig(serverConfig: AgentMcpServer): MCPServerConfig | null {
+  if (serverConfig.command) {
+    return {
+      command: serverConfig.command,
+      args: serverConfig.args || [],
+      type:
+        serverConfig.type === 'local' || serverConfig.type === 'stdio'
+          ? serverConfig.type
+          : 'stdio',
+      env: serverConfig.env,
+      cwd: serverConfig.cwd,
+      timeout: serverConfig.timeout,
+      tools: serverConfig.tools || ['*'],
+    };
+  }
+
+  if (serverConfig.url) {
+    return {
+      type: serverConfig.type === 'sse' ? 'sse' : 'http',
+      url: serverConfig.url,
+      headers: serverConfig.headers,
+      timeout: serverConfig.timeout,
+      tools: serverConfig.tools || ['*'],
+    };
+  }
+
+  return null;
+}
+
+async function getProjectRootForCwd(cwd: string): Promise<string | undefined> {
+  const gitRoot = await getGitRoot(cwd).catch(() => null);
+  return gitRoot || undefined;
+}
+
 // Create a new session and return its ID
 async function createNewSession(model?: string, cwd?: string): Promise<string> {
   const sessionModel = model || (store.get('model') as string);
@@ -1911,11 +1949,15 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
   // Get or create a client for this cwd
   const client = await getClientForCwd(sessionCwd);
 
-  // Load MCP servers config
-  const mcpConfig = await readMcpConfig();
-  const agentResult = await getAllAgents(undefined, sessionCwd);
+  // Get project root for repo-level MCP config discovery
+  const projectRoot = await getProjectRootForCwd(sessionCwd);
+
+  // Load agents and parse their MCP configurations
+  const agentResult = await getAllAgents(projectRoot, sessionCwd);
   const customAgents: CustomAgentConfig[] = [];
   const skippedAgentNames: string[] = [];
+  const agentMcpServers: Record<string, MCPServerConfig> = {};
+
   for (const agent of agentResult.agents) {
     try {
       const content = await readFile(agent.path, 'utf-8');
@@ -1927,6 +1969,18 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
         tools: null,
         prompt: content,
       });
+
+      // Collect agent-level MCP servers (first agent wins if multiple define same server)
+      if (metadata.mcpServers) {
+        for (const [serverName, serverConfig] of Object.entries(metadata.mcpServers)) {
+          if (!agentMcpServers[serverName]) {
+            const convertedConfig = toMcpServerConfig(serverConfig);
+            if (convertedConfig) {
+              agentMcpServers[serverName] = convertedConfig;
+            }
+          }
+        }
+      }
     } catch (error) {
       skippedAgentNames.push(agent.name);
       log.warn('Failed to load agent prompt:', agent.path, error);
@@ -1935,6 +1989,18 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
   if (skippedAgentNames.length > 0) {
     log.warn(`Skipped ${skippedAgentNames.length} custom agents due to read errors.`);
   }
+
+  // Discover MCP servers with priority-aware merge
+  const mcpDiscovery = await discoverMcpServers({
+    agentMcpServers: Object.keys(agentMcpServers).length > 0 ? agentMcpServers : undefined,
+    agentSource: agentResult.agents.length > 0 ? agentResult.agents[0].path : undefined,
+    projectRoot,
+  });
+
+  console.log(
+    `[MCP Discovery] Found ${Object.keys(mcpDiscovery.effectiveServers).length} effective servers from sources:`,
+    Object.keys(mcpDiscovery.sources)
+  );
 
   // Generate session ID upfront so we can pass it to browser tools
   const generatedSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -1952,7 +2018,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
   const newSession = await client.createSession({
     sessionId: generatedSessionId,
     model: sessionModel,
-    mcpServers: mcpConfig.mcpServers,
+    mcpServers: mcpDiscovery.effectiveServers,
     tools: browserTools,
     customAgents,
     onPermissionRequest: (request, invocation) =>
@@ -2197,10 +2263,6 @@ async function initCopilot(): Promise<void> {
     console.log('Already resumed early:', [...alreadyResumedIds]);
     console.log('Sessions still needing resumption:', sessionsNeedingResumption);
 
-    // Load MCP servers config once for resumption (only if we need to resume more sessions)
-    const mcpConfig =
-      sessionsNeedingResumption.length > 0 ? await readMcpConfig() : { mcpServers: {} };
-
     // Resume only sessions that weren't resumed early
     const resumeSession = async (sessionId: string): Promise<void> => {
       const meta = sessionMetaMap.get(sessionId);
@@ -2230,8 +2292,10 @@ async function initCopilot(): Promise<void> {
             log.warn('Failed to load agent prompt:', agent.path, error);
           }
         }
+        const projectRoot = await getProjectRootForCwd(sessionCwd);
+        const mcpDiscovery = await discoverMcpServers({ projectRoot });
         const session = await client.resumeSession(sessionId, {
-          mcpServers: mcpConfig.mcpServers,
+          mcpServers: mcpDiscovery.effectiveServers,
           tools: createBrowserTools(sessionId),
           customAgents,
           onPermissionRequest: (request, invocation) =>
@@ -3071,7 +3135,8 @@ ipcMain.handle(
       await sessionState.session.destroy();
       sessions.delete(data.sessionId);
 
-      const mcpConfig = await readMcpConfig();
+      const projectRoot = await getProjectRootForCwd(cwd);
+      const mcpDiscovery = await discoverMcpServers({ projectRoot });
       const browserTools = createBrowserTools(data.sessionId);
 
       // Resume the same session with the new model — preserves conversation context
@@ -3094,7 +3159,7 @@ ipcMain.handle(
       }
       const resumedSession = await client.resumeSession(data.sessionId, {
         model: data.model,
-        mcpServers: mcpConfig.mcpServers,
+        mcpServers: mcpDiscovery.effectiveServers,
         tools: browserTools,
         customAgents,
         onPermissionRequest: (request, invocation) =>
@@ -3190,7 +3255,8 @@ ipcMain.handle(
     await sessionState.session.destroy();
     sessions.delete(data.sessionId);
 
-    const mcpConfig = await readMcpConfig();
+    const projectRoot = await getProjectRootForCwd(cwd);
+    const mcpDiscovery = await discoverMcpServers({ projectRoot });
     const browserTools = createBrowserTools(data.sessionId);
 
     // Build customAgents list for the session
@@ -3215,7 +3281,7 @@ ipcMain.handle(
     // Resume the same session — preserves conversation context
     const resumedSession = await client.resumeSession(data.sessionId, {
       model,
-      mcpServers: mcpConfig.mcpServers,
+      mcpServers: mcpDiscovery.effectiveServers,
       tools: browserTools,
       customAgents,
       onPermissionRequest: (request, invocation) =>
@@ -4822,10 +4888,11 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
   const client = await getClientForCwd(sessionCwd);
 
   // Load MCP servers config
-  const mcpConfig = await readMcpConfig();
+  const projectRoot = await getProjectRootForCwd(sessionCwd);
+  const mcpDiscovery = await discoverMcpServers({ projectRoot });
 
   const session = await client.resumeSession(sessionId, {
-    mcpServers: mcpConfig.mcpServers,
+    mcpServers: mcpDiscovery.effectiveServers,
     tools: createBrowserTools(sessionId),
     onPermissionRequest: (request, invocation) =>
       handlePermissionRequest(request, invocation, sessionId),
@@ -5071,8 +5138,17 @@ ipcMain.handle('copilot:authLogin', async () => {
 
 // MCP Server Management
 ipcMain.handle('mcp:getConfig', async () => {
-  const config = await readMcpConfig();
-  return config;
+  let projectRoot: string | undefined;
+  const currentSessionId = activeSessionId;
+  if (currentSessionId) {
+    const sessionState = sessions.get(currentSessionId);
+    if (sessionState) {
+      projectRoot = await getProjectRootForCwd(sessionState.cwd);
+    }
+  }
+
+  const discovery = await discoverMcpServers({ projectRoot });
+  return { mcpServers: discovery.effectiveServers };
 });
 
 ipcMain.handle('mcp:saveConfig', async (_event, config: MCPConfigFile) => {
@@ -5113,6 +5189,28 @@ ipcMain.handle('mcp:deleteServer', async (_event, name: string) => {
 ipcMain.handle('mcp:getConfigPath', async () => {
   return { path: getMcpConfigPath() };
 });
+
+// MCP Discovery handlers (Issue #456)
+ipcMain.handle(
+  'mcp:getDiscoveryMetadata',
+  async (
+    _event,
+    options?: {
+      sessionConfig?: Record<string, MCPServerConfig>;
+      projectRoot?: string;
+    }
+  ) => {
+    try {
+      const result = await getMcpDiscoveryMetadata(options || {});
+      return { success: true, data: result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+);
 
 // Agent Skills handlers
 ipcMain.handle('skills:getAll', async (_event, cwd?: string) => {

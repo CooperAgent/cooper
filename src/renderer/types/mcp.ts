@@ -3,6 +3,7 @@ export interface MCPServerConfigBase {
   tools: string[];
   type?: string;
   timeout?: number;
+  builtIn?: boolean;
 }
 
 export interface MCPLocalServerConfig extends MCPServerConfigBase {
