@@ -1,7 +1,6 @@
 import { existsSync, readdirSync } from 'fs';
 import { readFile, stat } from 'fs/promises';
 import { basename, join, normalize } from 'path';
-import { app } from 'electron';
 import { load as parseYaml } from 'js-yaml';
 
 export interface Agent {
@@ -255,6 +254,7 @@ export async function getAllAgents(projectRoot?: string, cwd?: string): Promise<
     errors.push(...result.errors);
   };
 
+  const { app } = await import('electron');
   const homePath = app.getPath('home');
 
   // Get .copilot config path - respects XDG_CONFIG_HOME
