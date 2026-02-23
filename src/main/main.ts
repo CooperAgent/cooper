@@ -2392,6 +2392,7 @@ async function initCopilot(): Promise<void> {
         alwaysAllowed: storedSession?.alwaysAllowed || [],
         untrackedFiles: storedSession?.untrackedFiles || [],
         fileViewMode: storedSession?.fileViewMode || 'flat',
+        yoloMode: storedSession?.yoloMode || false,
         activeAgentName: storedSession?.activeAgentName,
       };
     });

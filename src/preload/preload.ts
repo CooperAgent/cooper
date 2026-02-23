@@ -153,6 +153,7 @@ const electronAPI = {
           name?: string;
           editedFiles?: string[];
           alwaysAllowed?: string[];
+          yoloMode?: boolean;
         }[];
         previousSessions: {
           sessionId: string;
@@ -173,6 +174,7 @@ const electronAPI = {
             name?: string;
             editedFiles?: string[];
             alwaysAllowed?: string[];
+            yoloMode?: boolean;
           }[];
           previousSessions: {
             sessionId: string;
@@ -195,6 +197,7 @@ const electronAPI = {
           name?: string;
           editedFiles?: string[];
           alwaysAllowed?: string[];
+          yoloMode?: boolean;
         };
       }) => void
     ): (() => void) => {
@@ -208,6 +211,7 @@ const electronAPI = {
             name?: string;
             editedFiles?: string[];
             alwaysAllowed?: string[];
+            yoloMode?: boolean;
           };
         }
       ): void => callback(data);
