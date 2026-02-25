@@ -528,6 +528,10 @@ async function checkCliStatus(): Promise<{
   error?: string;
 }> {
   try {
+    if (process.env.COOPER_TEST_FORCE_UNAUTH === 'true') {
+      return { cliInstalled: true, authenticated: false, npmAvailable: true };
+    }
+
     // Check if CLI binary exists
     const cliPath = getCliPath();
     const cliInstalled = existsSync(cliPath);
@@ -684,6 +688,7 @@ interface SessionState {
   yoloMode: boolean; // Auto-approve all permission requests without prompting
 }
 const sessions = new Map<string, SessionState>();
+const sessionSawDelta = new Map<string, boolean>();
 let activeSessionId: string | null = null;
 let sessionCounter = 0;
 const SESSION_CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -814,6 +819,21 @@ async function loadSessionContext(cwd?: string): Promise<{
   return { skills, agents, instructions };
 }
 
+function emitAssistantDelta(sessionId: string, content: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  sessionSawDelta.set(sessionId, true);
+  mainWindow.webContents.send('copilot:delta', { sessionId, content });
+}
+
+function emitAssistantMessage(sessionId: string, content: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!sessionSawDelta.get(sessionId) && content) {
+    mainWindow.webContents.send('copilot:delta', { sessionId, content });
+  }
+  mainWindow.webContents.send('copilot:message', { sessionId, content });
+  sessionSawDelta.set(sessionId, false);
+}
+
 // Registers event forwarding from a CopilotSession to the renderer via IPC.
 // Used after createSession and resumeSession to wire up the session.
 function registerSessionEventForwarding(sessionId: string, session: CopilotSession): void {
@@ -823,10 +843,11 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
     log.debug(`[${sessionId}] Event: ${event.type}`);
 
     if (event.type === 'assistant.message_delta') {
-      mainWindow.webContents.send('copilot:delta', { sessionId, content: event.data.deltaContent });
+      emitAssistantDelta(sessionId, event.data.deltaContent);
     } else if (event.type === 'assistant.message') {
-      mainWindow.webContents.send('copilot:message', { sessionId, content: event.data.content });
+      emitAssistantMessage(sessionId, event.data.content);
     } else if (event.type === 'session.idle') {
+      sessionSawDelta.set(sessionId, false);
       const currentSessionState = sessions.get(sessionId);
       if (currentSessionState) {
         currentSessionState.isProcessing = false;
@@ -1142,16 +1163,11 @@ async function startEarlySessionResumption(): Promise<void> {
           log.debug(`[${sessionId}] Event: ${event.type}`);
 
           if (event.type === 'assistant.message_delta') {
-            mainWindow.webContents.send('copilot:delta', {
-              sessionId,
-              content: event.data.deltaContent,
-            });
+            emitAssistantDelta(sessionId, event.data.deltaContent);
           } else if (event.type === 'assistant.message') {
-            mainWindow.webContents.send('copilot:message', {
-              sessionId,
-              content: event.data.content,
-            });
+            emitAssistantMessage(sessionId, event.data.content);
           } else if (event.type === 'session.idle') {
+            sessionSawDelta.set(sessionId, false);
             const currentSessionState = sessions.get(sessionId);
             if (currentSessionState) currentSessionState.isProcessing = false;
             mainWindow.webContents.send('copilot:idle', { sessionId });
@@ -2314,16 +2330,11 @@ async function initCopilot(): Promise<void> {
           log.debug(`[${sessionId}] Event: ${event.type}`);
 
           if (event.type === 'assistant.message_delta') {
-            mainWindow.webContents.send('copilot:delta', {
-              sessionId,
-              content: event.data.deltaContent,
-            });
+            emitAssistantDelta(sessionId, event.data.deltaContent);
           } else if (event.type === 'assistant.message') {
-            mainWindow.webContents.send('copilot:message', {
-              sessionId,
-              content: event.data.content,
-            });
+            emitAssistantMessage(sessionId, event.data.content);
           } else if (event.type === 'session.idle') {
+            sessionSawDelta.set(sessionId, false);
             const currentSessionState = sessions.get(sessionId);
             if (currentSessionState) currentSessionState.isProcessing = false;
             mainWindow.webContents.send('copilot:idle', { sessionId });
@@ -2486,7 +2497,13 @@ async function initCopilot(): Promise<void> {
     startKeepAlive();
   } catch (err) {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('copilot:error', String(err));
+      log.warn('initCopilot failed, sending fallback ready event:', err);
+      mainWindow.webContents.send('copilot:ready', {
+        sessions: [],
+        previousSessions: [],
+        models: getCachedModels(),
+        clientUnavailable: true,
+      });
     }
   }
 }
@@ -3609,6 +3626,7 @@ ipcMain.handle('copilot:closeSession', async (_event, sessionId: string) => {
   if (sessionState) {
     await sessionState.session.destroy();
     sessions.delete(sessionId);
+    sessionSawDelta.delete(sessionId);
     console.log(`Closed session ${sessionId}`);
   }
 
@@ -4910,10 +4928,11 @@ ipcMain.handle('copilot:resumePreviousSession', async (_event, sessionId: string
     log.debug(`[${sessionId}] Event: ${event.type}`);
 
     if (event.type === 'assistant.message_delta') {
-      mainWindow.webContents.send('copilot:delta', { sessionId, content: event.data.deltaContent });
+      emitAssistantDelta(sessionId, event.data.deltaContent);
     } else if (event.type === 'assistant.message') {
-      mainWindow.webContents.send('copilot:message', { sessionId, content: event.data.content });
+      emitAssistantMessage(sessionId, event.data.content);
     } else if (event.type === 'session.idle') {
+      sessionSawDelta.set(sessionId, false);
       const currentSessionState = sessions.get(sessionId);
       if (currentSessionState) currentSessionState.isProcessing = false;
       mainWindow.webContents.send('copilot:idle', { sessionId });

@@ -603,18 +603,6 @@ const App: React.FC = () => {
     return cleanup;
   }, []);
 
-  // Check if voice model is already loaded on mount
-  useEffect(() => {
-    if (!window.electronAPI?.voiceServer) return;
-    window.electronAPI.voiceServer.checkModel().then((check) => {
-      if (check.exists && check.binaryExists) {
-        window.electronAPI.voice.loadModel().then((result) => {
-          if (result.success) setVoiceModelLoaded(true);
-        });
-      }
-    });
-  }, []);
-
   // Voice initialization handler for settings page
   const handleInitVoice = useCallback(async () => {
     if (!window.electronAPI?.voiceServer) return;
@@ -792,8 +780,24 @@ const App: React.FC = () => {
       setUpdateInfo({ ...defaults, ...info });
       setShowUpdateModal(true);
     };
+    (window as any).showReleaseNotesModal = () => {
+      setShowReleaseNotesModal(true);
+    };
+    (window as any).showSessionHistoryModal = () => {
+      setShowSessionHistory(true);
+    };
+    (window as any).showEnvironmentModal = () => {
+      setShowEnvironmentModal(true);
+    };
+    (window as any).showFilePreviewModal = (filePath?: string) => {
+      setFilePreviewPath(filePath || 'README.md');
+    };
     return () => {
       delete (window as any).showUpdateModal;
+      delete (window as any).showReleaseNotesModal;
+      delete (window as any).showSessionHistoryModal;
+      delete (window as any).showEnvironmentModal;
+      delete (window as any).showFilePreviewModal;
     };
   }, []);
 
@@ -1276,6 +1280,19 @@ const App: React.FC = () => {
 
       // If no sessions exist, we need to create one (with trust check)
       if (data.sessions.length === 0) {
+        if (data.clientUnavailable) {
+          setShowCliSetupModal(true);
+          setDataLoaded(true);
+          return;
+        }
+
+        const cliStatus = await window.electronAPI.copilot.checkCliStatus();
+        if (!cliStatus.cliInstalled || !cliStatus.authenticated) {
+          setShowCliSetupModal(true);
+          setDataLoaded(true);
+          return;
+        }
+
         // Check trust for current directory
         const cwd = await window.electronAPI.copilot.getCwd();
         const trustResult = await window.electronAPI.copilot.checkDirectoryTrust(cwd);
@@ -1314,7 +1331,9 @@ const App: React.FC = () => {
           setDataLoaded(true);
         } catch (error) {
           console.error('Failed to create initial session:', error);
-          setStatus('error');
+          setShowCliSetupModal(true);
+          setDataLoaded(true);
+          setStatus('connected');
         }
         return;
       }

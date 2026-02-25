@@ -21,9 +21,12 @@ interface PtyInstance {
   pty: pty.IPty;
   outputBuffer: string[];
   maxBufferLines: number;
+  batchBuffer: string;
+  batchTimer: NodeJS.Timeout | null;
 }
 
 const ptyInstances = new Map<string, PtyInstance>();
+const PTY_BATCH_INTERVAL_MS = 16;
 
 interface WindowsTerminalProfile {
   guid?: string;
@@ -467,6 +470,19 @@ export function createPty(
       pty: ptyProcess,
       outputBuffer: [],
       maxBufferLines: 1000,
+      batchBuffer: '',
+      batchTimer: null,
+    };
+
+    const flushBatchedData = () => {
+      if (instance.batchTimer) {
+        clearTimeout(instance.batchTimer);
+        instance.batchTimer = null;
+      }
+      if (instance.batchBuffer && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('pty:data', { sessionId, data: instance.batchBuffer });
+      }
+      instance.batchBuffer = '';
     };
 
     // Handle PTY data - only forward if this instance is still the active one
@@ -480,9 +496,9 @@ export function createPty(
         instance.outputBuffer = instance.outputBuffer.slice(-instance.maxBufferLines);
       }
 
-      // Send data to renderer
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('pty:data', { sessionId, data });
+      instance.batchBuffer += data;
+      if (!instance.batchTimer) {
+        instance.batchTimer = setTimeout(flushBatchedData, PTY_BATCH_INTERVAL_MS);
       }
     });
 
@@ -492,6 +508,7 @@ export function createPty(
     ptyProcess.onExit(({ exitCode }) => {
       if (ptyInstances.get(sessionId) !== instance) return;
 
+      flushBatchedData();
       console.log(`PTY for session ${sessionId} exited with code ${exitCode}`);
       ptyInstances.delete(sessionId);
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -578,6 +595,14 @@ export function closePty(sessionId: string): { success: boolean; error?: string 
   }
 
   try {
+    if (instance.batchTimer) {
+      clearTimeout(instance.batchTimer);
+      instance.batchTimer = null;
+    }
+    if (instance.batchBuffer && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('pty:data', { sessionId, data: instance.batchBuffer });
+    }
+    instance.batchBuffer = '';
     instance.pty.kill();
     ptyInstances.delete(sessionId);
     return { success: true };

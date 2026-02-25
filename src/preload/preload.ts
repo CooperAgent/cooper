@@ -1,4 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import {
+  COPILOT_IPC_CHANNELS,
+  CopilotCloseSessionArgs,
+  CopilotCloseSessionResult,
+} from '../shared/ipc/contracts';
 
 const electronAPI = {
   // Platform information
@@ -48,8 +53,8 @@ const electronAPI = {
     checkDirectoryTrust: (dir: string): Promise<{ trusted: boolean; decision: string }> => {
       return ipcRenderer.invoke('copilot:checkDirectoryTrust', dir);
     },
-    closeSession: (sessionId: string): Promise<{ success: boolean; remainingSessions: number }> => {
-      return ipcRenderer.invoke('copilot:closeSession', sessionId);
+    closeSession: (sessionId: CopilotCloseSessionArgs): Promise<CopilotCloseSessionResult> => {
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.closeSession, sessionId);
     },
     deleteSessionFromHistory: (
       sessionId: string
@@ -162,6 +167,7 @@ const electronAPI = {
           cwd?: string;
         }[];
         models: { id: string; name: string; multiplier: number }[];
+        clientUnavailable?: boolean;
       }) => void
     ): (() => void) => {
       const handler = (
@@ -183,6 +189,7 @@ const electronAPI = {
             cwd?: string;
           }[];
           models: { id: string; name: string; multiplier: number }[];
+          clientUnavailable?: boolean;
         }
       ): void => callback(data);
       ipcRenderer.on('copilot:ready', handler);
