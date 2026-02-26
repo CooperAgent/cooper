@@ -70,6 +70,19 @@ import {
 import Store from 'electron-store';
 import log from 'electron-log/main';
 import {
+  COPILOT_IPC_CHANNELS,
+  CopilotCloseSessionArgs,
+  CopilotCloseSessionResult,
+  CopilotCreateSessionArgs,
+  CopilotCreateSessionResult,
+  CopilotGetMessagesArgs,
+  CopilotGetMessagesResult,
+  CopilotSendAndWaitArgs,
+  CopilotSendAndWaitResult,
+  CopilotSendArgs,
+  CopilotSendResult,
+} from '../shared/ipc/contracts';
+import {
   extractExecutables,
   containsDestructiveCommand,
   getDestructiveExecutables,
@@ -2764,59 +2777,62 @@ ipcMain.on('copilot:abort', async (_event, sessionId: string) => {
 });
 
 // Get message history for a session
-ipcMain.handle('copilot:getMessages', async (_event, sessionId: string) => {
-  const sessionState = sessions.get(sessionId);
-  if (!sessionState) {
-    throw new Error(`Session not found: ${sessionId}`);
-  }
-
-  try {
-    const events = await sessionState.session.getMessages();
-
-    // Convert events to simplified message format
-    const messages: { role: 'user' | 'assistant'; content: string }[] = [];
-
-    for (const event of events) {
-      if (event.type === 'user.message') {
-        messages.push({ role: 'user', content: event.data.content });
-      } else if (event.type === 'assistant.message') {
-        messages.push({ role: 'assistant', content: event.data.content });
-      }
+ipcMain.handle(
+  COPILOT_IPC_CHANNELS.getMessages,
+  async (_event, sessionId: CopilotGetMessagesArgs): Promise<CopilotGetMessagesResult> => {
+    const sessionState = sessions.get(sessionId);
+    if (!sessionState) {
+      throw new Error(`Session not found: ${sessionId}`);
     }
 
-    return messages;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    try {
+      const events = await sessionState.session.getMessages();
 
-    // Check if session was disconnected/timed out
-    if (errorMessage.includes('Session not found') || errorMessage.includes('failed')) {
-      log.warn(
-        `[${sessionId}] Session appears disconnected, attempting to resume for getMessages...`
-      );
+      // Convert events to simplified message format
+      const messages: CopilotGetMessagesResult = [];
 
-      try {
-        await resumeDisconnectedSession(sessionId, sessionState);
-        const events = await sessionState.session.getMessages();
-
-        const messages: { role: 'user' | 'assistant'; content: string }[] = [];
-        for (const event of events) {
-          if (event.type === 'user.message') {
-            messages.push({ role: 'user', content: event.data.content });
-          } else if (event.type === 'assistant.message') {
-            messages.push({ role: 'assistant', content: event.data.content });
-          }
+      for (const event of events) {
+        if (event.type === 'user.message') {
+          messages.push({ role: 'user', content: event.data.content });
+        } else if (event.type === 'assistant.message') {
+          messages.push({ role: 'assistant', content: event.data.content });
         }
-        return messages;
-      } catch (resumeError) {
-        log.error(`[${sessionId}] Failed to resume session for getMessages:`, resumeError);
-        // Return empty array instead of throwing - messages may not be recoverable
-        return [];
       }
-    }
 
-    throw error;
+      return messages;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Check if session was disconnected/timed out
+      if (errorMessage.includes('Session not found') || errorMessage.includes('failed')) {
+        log.warn(
+          `[${sessionId}] Session appears disconnected, attempting to resume for getMessages...`
+        );
+
+        try {
+          await resumeDisconnectedSession(sessionId, sessionState);
+          const events = await sessionState.session.getMessages();
+
+          const messages: CopilotGetMessagesResult = [];
+          for (const event of events) {
+            if (event.type === 'user.message') {
+              messages.push({ role: 'user', content: event.data.content });
+            } else if (event.type === 'assistant.message') {
+              messages.push({ role: 'assistant', content: event.data.content });
+            }
+          }
+          return messages;
+        } catch (resumeError) {
+          log.error(`[${sessionId}] Failed to resume session for getMessages:`, resumeError);
+          // Return empty array instead of throwing - messages may not be recoverable
+          return [];
+        }
+      }
+
+      throw error;
+    }
   }
-});
+);
 
 // Generate a short title for a conversation using AI
 ipcMain.handle('copilot:generateTitle', async (_event, data: { conversation: string }) => {
@@ -3551,11 +3567,14 @@ ipcMain.handle('copilot:getCwd', async () => {
 });
 
 // Create a new session (for new tabs)
-ipcMain.handle('copilot:createSession', async (_event, options?: { cwd?: string }) => {
-  const sessionId = await createNewSession(undefined, options?.cwd);
-  const sessionState = sessions.get(sessionId)!;
-  return { sessionId, model: sessionState.model, cwd: sessionState.cwd };
-});
+ipcMain.handle(
+  COPILOT_IPC_CHANNELS.createSession,
+  async (_event, options?: CopilotCreateSessionArgs): Promise<CopilotCreateSessionResult> => {
+    const sessionId = await createNewSession(undefined, options?.cwd);
+    const sessionState = sessions.get(sessionId)!;
+    return { sessionId, model: sessionState.model, cwd: sessionState.cwd };
+  }
+);
 
 // Pick a folder dialog
 ipcMain.handle('copilot:pickFolder', async () => {
@@ -3621,22 +3640,25 @@ ipcMain.handle('copilot:checkDirectoryTrust', async (_event, dir: string) => {
 });
 
 // Close a session (when closing a tab)
-ipcMain.handle('copilot:closeSession', async (_event, sessionId: string) => {
-  const sessionState = sessions.get(sessionId);
-  if (sessionState) {
-    await sessionState.session.destroy();
-    sessions.delete(sessionId);
-    sessionSawDelta.delete(sessionId);
-    console.log(`Closed session ${sessionId}`);
-  }
+ipcMain.handle(
+  COPILOT_IPC_CHANNELS.closeSession,
+  async (_event, sessionId: CopilotCloseSessionArgs): Promise<CopilotCloseSessionResult> => {
+    const sessionState = sessions.get(sessionId);
+    if (sessionState) {
+      await sessionState.session.destroy();
+      sessions.delete(sessionId);
+      sessionSawDelta.delete(sessionId);
+      console.log(`Closed session ${sessionId}`);
+    }
 
-  // Update active session if needed
-  if (activeSessionId === sessionId) {
-    activeSessionId = sessions.keys().next().value || null;
-  }
+    // Update active session if needed
+    if (activeSessionId === sessionId) {
+      activeSessionId = sessions.keys().next().value || null;
+    }
 
-  return { success: true, remainingSessions: sessions.size };
-});
+    return { success: true, remainingSessions: sessions.size };
+  }
+);
 
 // Delete a session from history (permanently removes session files)
 ipcMain.handle('copilot:deleteSessionFromHistory', async (_event, sessionId: string) => {

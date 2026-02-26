@@ -1,8 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   COPILOT_IPC_CHANNELS,
+  CopilotCreateSessionArgs,
+  CopilotCreateSessionResult,
   CopilotCloseSessionArgs,
   CopilotCloseSessionResult,
+  CopilotGetMessagesArgs,
+  CopilotGetMessagesResult,
+  CopilotSendAndWaitArgs,
+  CopilotSendAndWaitResult,
+  CopilotSendArgs,
+  CopilotSendResult,
 } from '../shared/ipc/contracts';
 
 const electronAPI = {
@@ -16,33 +24,31 @@ const electronAPI = {
       prompt: string,
       attachments?: { type: 'file'; path: string; displayName?: string }[],
       mode?: 'enqueue' | 'immediate'
-    ): Promise<string> => {
-      return ipcRenderer.invoke('copilot:send', { sessionId, prompt, attachments, mode });
+    ): Promise<CopilotSendResult> => {
+      const args: CopilotSendArgs = { sessionId, prompt, attachments, mode };
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.send, args);
     },
     sendAndWait: (
       sessionId: string,
       prompt: string,
       attachments?: { type: 'file'; path: string; displayName?: string }[]
-    ): Promise<string> => {
-      return ipcRenderer.invoke('copilot:sendAndWait', { sessionId, prompt, attachments });
+    ): Promise<CopilotSendAndWaitResult> => {
+      const args: CopilotSendAndWaitArgs = { sessionId, prompt, attachments };
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.sendAndWait, args);
     },
     generateTitle: (conversation: string): Promise<string> => {
       return ipcRenderer.invoke('copilot:generateTitle', { conversation });
     },
-    getMessages: (
-      sessionId: string
-    ): Promise<{ role: 'user' | 'assistant'; content: string }[]> => {
-      return ipcRenderer.invoke('copilot:getMessages', sessionId);
+    getMessages: (sessionId: CopilotGetMessagesArgs): Promise<CopilotGetMessagesResult> => {
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.getMessages, sessionId);
     },
     abort: (sessionId: string): void => {
       ipcRenderer.send('copilot:abort', sessionId);
     },
 
     // Session management
-    createSession: (options?: {
-      cwd?: string;
-    }): Promise<{ sessionId: string; model: string; cwd: string }> => {
-      return ipcRenderer.invoke('copilot:createSession', options);
+    createSession: (options?: CopilotCreateSessionArgs): Promise<CopilotCreateSessionResult> => {
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.createSession, options);
     },
     getCwd: (): Promise<string> => {
       return ipcRenderer.invoke('copilot:getCwd');
