@@ -110,34 +110,13 @@ import { createBrowserTools } from './browserTools';
 import { voiceService } from './voiceService';
 import { whisperModelManager } from './whisperModelManager';
 import { createDeltaThrottler, ThrottledDeltaEmitter } from './utils/throttle';
-
-// MCP Server Configuration types (matching SDK)
-interface MCPServerConfigBase {
-  tools: string[];
-  type?: string;
-  timeout?: number;
-  builtIn?: boolean;
-}
-
-interface MCPLocalServerConfig extends MCPServerConfigBase {
-  type?: 'local' | 'stdio';
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-  cwd?: string;
-}
-
-interface MCPRemoteServerConfig extends MCPServerConfigBase {
-  type: 'http' | 'sse';
-  url: string;
-  headers?: Record<string, string>;
-}
-
-type MCPServerConfig = MCPLocalServerConfig | MCPRemoteServerConfig;
-
-interface MCPConfigFile {
-  mcpServers: Record<string, MCPServerConfig>;
-}
+import {
+  MCPConfigFile,
+  MCPServerConfig,
+  getMcpConfigPath as getStoredMcpConfigPath,
+  readMcpConfig as readStoredMcpConfig,
+  writeMcpConfig as writeStoredMcpConfig,
+} from './mcpConfig';
 
 // XDG Base Directory helpers - respect standard env vars for config/state isolation
 // See: https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
@@ -170,7 +149,7 @@ const getWorktreeSessionsPath = (): string => {
 };
 
 // Path to MCP config file
-const getMcpConfigPath = (): string => join(getCopilotConfigPath(), 'mcp-config.json');
+const getMcpConfigPath = (): string => getStoredMcpConfigPath(getCopilotConfigPath());
 
 // Copilot folders that are safe to read from without permission (Issue #87)
 // These contain session state data (plans, configs) and are low-risk for read-only access
@@ -187,43 +166,12 @@ const getSafeCopilotReadPaths = (): string[] => {
   ];
 };
 
-// Read MCP config from file
 async function readMcpConfig(): Promise<MCPConfigFile> {
-  const configPath = getMcpConfigPath();
-  try {
-    if (!existsSync(configPath)) {
-      return { mcpServers: {} };
-    }
-    const content = await readFile(configPath, 'utf-8');
-    const parsed = JSON.parse(content) as MCPConfigFile;
-
-    // Default tools to ["*"] for servers that don't specify it (matches copilot-cli behavior)
-    for (const serverName in parsed.mcpServers) {
-      const server = parsed.mcpServers[serverName];
-      if (!server.tools) {
-        server.tools = ['*'];
-      }
-    }
-
-    return parsed;
-  } catch (error) {
-    console.error('Failed to read MCP config:', error);
-    return { mcpServers: {} };
-  }
+  return readStoredMcpConfig(getMcpConfigPath());
 }
 
-// Write MCP config to file
 async function writeMcpConfig(config: MCPConfigFile): Promise<void> {
-  const configPath = getMcpConfigPath();
-  const configDir = getCopilotConfigPath();
-
-  // Ensure directory exists
-  if (!existsSync(configDir)) {
-    await mkdir(configDir, { recursive: true });
-  }
-
-  await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
-  console.log('Saved MCP config:', Object.keys(config.mcpServers));
+  return writeStoredMcpConfig(getMcpConfigPath(), getCopilotConfigPath(), config);
 }
 
 // Agent Skills - imported from skills module

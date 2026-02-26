@@ -121,3 +121,23 @@ yes, don't come back until this is all perfect and working
 ### Next steps:
 
 - Add PTY batching edge-case tests guardrail
+
+## Iteration 6 - 2026-02-26T21:16:36.348Z
+
+### Status: IN PROGRESS
+
+### What I'm working on:
+
+- Main-process decomposition slices after guardrails
+
+### Completed this iteration:
+
+- Extracted MCP config types and persistence helpers from `src/main/main.ts` into new `src/main/mcpConfig.ts`
+- Kept existing main-process behavior and IPC contracts while reducing `main.ts` MCP storage concerns
+- Validated with:
+  - `npm run build`
+  - `npm exec vitest run src/main/pty.test.ts`
+
+### Next steps:
+
+- Continue with next `main.ts` domain extraction slice
