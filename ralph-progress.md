@@ -25,3 +25,24 @@ yes, don't come back until this is all perfect and working
 ### Next steps:
 
 - None
+
+## Iteration 2 - 2026-02-26T17:24:30.000Z
+
+### Status: IN PROGRESS
+
+### What I'm working on:
+
+- Implementing next high-priority latency item from handoff notes (stream delta IPC throttling)
+
+### Completed this iteration:
+
+- Optimized SessionHistory search filtering via precomputed lowercase search index (`d73a174`)
+- Implemented per-session Copilot delta IPC throttling with flush on idle/close in `src/main/main.ts`
+- Validated with `npm run build` and targeted tests:
+  - `src/main/pty.test.ts`
+  - `src/main/utils/throttle.test.ts`
+
+### Next steps:
+
+- Run a focused runtime stream check in app to confirm no visible UX regression
+- Continue to next remaining high-priority perf item from handoff notes

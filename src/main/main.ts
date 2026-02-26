@@ -109,6 +109,7 @@ import * as browserManager from './browser';
 import { createBrowserTools } from './browserTools';
 import { voiceService } from './voiceService';
 import { whisperModelManager } from './whisperModelManager';
+import { createDeltaThrottler, ThrottledDeltaEmitter } from './utils/throttle';
 
 // MCP Server Configuration types (matching SDK)
 interface MCPServerConfigBase {
@@ -716,6 +717,7 @@ interface SessionState {
 }
 const sessions = new Map<string, SessionState>();
 const sessionSawDelta = new Map<string, boolean>();
+const sessionDeltaThrottlers = new Map<string, ThrottledDeltaEmitter>();
 let activeSessionId: string | null = null;
 let sessionCounter = 0;
 const SESSION_CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -849,7 +851,19 @@ async function loadSessionContext(cwd?: string): Promise<{
 function emitAssistantDelta(sessionId: string, content: string): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   sessionSawDelta.set(sessionId, true);
-  mainWindow.webContents.send('copilot:delta', { sessionId, content });
+
+  // Get or create throttler for this session
+  let throttler = sessionDeltaThrottlers.get(sessionId);
+  if (!throttler) {
+    throttler = createDeltaThrottler((batchedContent) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('copilot:delta', { sessionId, content: batchedContent });
+      }
+    });
+    sessionDeltaThrottlers.set(sessionId, throttler);
+  }
+
+  throttler.addDelta(content);
 }
 
 function emitAssistantMessage(sessionId: string, content: string): void {
@@ -874,6 +888,11 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
     } else if (event.type === 'assistant.message') {
       emitAssistantMessage(sessionId, event.data.content);
     } else if (event.type === 'session.idle') {
+      // Flush any pending deltas before marking idle
+      const throttler = sessionDeltaThrottlers.get(sessionId);
+      if (throttler) {
+        throttler.flush();
+      }
       sessionSawDelta.set(sessionId, false);
       const currentSessionState = sessions.get(sessionId);
       if (currentSessionState) {
@@ -1194,6 +1213,11 @@ async function startEarlySessionResumption(): Promise<void> {
           } else if (event.type === 'assistant.message') {
             emitAssistantMessage(sessionId, event.data.content);
           } else if (event.type === 'session.idle') {
+            // Flush any pending deltas before marking idle
+            const throttler = sessionDeltaThrottlers.get(sessionId);
+            if (throttler) {
+              throttler.flush();
+            }
             sessionSawDelta.set(sessionId, false);
             const currentSessionState = sessions.get(sessionId);
             if (currentSessionState) currentSessionState.isProcessing = false;
@@ -2361,6 +2385,11 @@ async function initCopilot(): Promise<void> {
           } else if (event.type === 'assistant.message') {
             emitAssistantMessage(sessionId, event.data.content);
           } else if (event.type === 'session.idle') {
+            // Flush any pending deltas before marking idle
+            const throttler = sessionDeltaThrottlers.get(sessionId);
+            if (throttler) {
+              throttler.flush();
+            }
             sessionSawDelta.set(sessionId, false);
             const currentSessionState = sessions.get(sessionId);
             if (currentSessionState) currentSessionState.isProcessing = false;
@@ -3648,6 +3677,12 @@ ipcMain.handle(
   async (_event, sessionId: CopilotCloseSessionArgs): Promise<CopilotCloseSessionResult> => {
     const sessionState = sessions.get(sessionId);
     if (sessionState) {
+      // Flush and cleanup throttler for this session
+      const throttler = sessionDeltaThrottlers.get(sessionId);
+      if (throttler) {
+        throttler.flush();
+        sessionDeltaThrottlers.delete(sessionId);
+      }
       await sessionState.session.destroy();
       sessions.delete(sessionId);
       sessionSawDelta.delete(sessionId);
@@ -4968,6 +5003,11 @@ ipcMain.handle(
       } else if (event.type === 'assistant.message') {
         emitAssistantMessage(sessionId, event.data.content);
       } else if (event.type === 'session.idle') {
+        // Flush any pending deltas before marking idle
+        const throttler = sessionDeltaThrottlers.get(sessionId);
+        if (throttler) {
+          throttler.flush();
+        }
         sessionSawDelta.set(sessionId, false);
         const currentSessionState = sessions.get(sessionId);
         if (currentSessionState) currentSessionState.isProcessing = false;
