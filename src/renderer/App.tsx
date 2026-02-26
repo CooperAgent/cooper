@@ -5388,8 +5388,16 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         index={index}
                         lastAssistantIndex={lastAssistantIndex}
                         isVoiceSpeaking={voiceSpeech.isSpeaking}
-                        activeTools={activeTab?.activeTools}
-                        activeSubagents={activeTab?.activeSubagents}
+                        activeTools={
+                          message.role === 'assistant' && message.isStreaming && message.content
+                            ? activeTab?.activeTools
+                            : undefined
+                        }
+                        activeSubagents={
+                          message.role === 'assistant' && message.isStreaming && message.content
+                            ? activeTab?.activeSubagents
+                            : undefined
+                        }
                         onStopSpeaking={voiceSpeech.stopSpeaking}
                         onImageClick={handleImageClick}
                         isHighlighted={isHighlighted}

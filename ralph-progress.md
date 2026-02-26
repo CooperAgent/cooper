@@ -50,3 +50,25 @@ yes, don't come back until this is all perfect and working
 
 - Run a focused runtime open/close check for lazy-loaded modals to confirm first-open UX remains smooth
 - Continue with message-render containment from handoff Priority 2
+
+## Iteration 3 - 2026-02-26T15:55:02.403Z
+
+### Status: IN PROGRESS
+
+### What I'm working on:
+
+- Reducing streaming-time rerenders in the chat message list
+
+### Completed this iteration:
+
+- Added render containment in `App.tsx` so live tool/subagent activity props are only passed to the currently streaming assistant message
+- Tightened `MessageItem` memo comparator to ignore live activity prop changes for non-live messages
+- Added/updated `plan.md` with current status and next execution steps
+- Validated with:
+  - `npm run build`
+  - `npm run test:components` (224/224 passing)
+
+### Next steps:
+
+- Commit containment slice and close todo
+- Move to next high-priority perf item from handoff
