@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Create hoisted mock functions using vi.hoisted
 const mocks = vi.hoisted(() => ({
+  exec: vi.fn(),
   existsSync: vi.fn(),
   mkdirSync: vi.fn(),
   readFileSync: vi.fn(),
@@ -10,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   rmSync: vi.fn(),
   statSync: vi.fn(),
   readdirSync: vi.fn(),
+}));
+
+vi.mock('child_process', () => ({
+  exec: mocks.exec,
 }));
 
 // Mock electron app
@@ -52,11 +57,26 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 // Import module under test after mocks are set up
-import { loadConfig, listWorktreeSessions, sanitizeBranchName } from './worktree';
+import {
+  createWorktreeSession,
+  loadConfig,
+  listWorktreeSessions,
+  sanitizeBranchName,
+} from './worktree';
 
 describe('worktree module', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.exec.mockImplementation(
+      (
+        _command: string,
+        options: unknown,
+        callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void
+      ) => {
+        const cb = typeof options === 'function' ? options : callback;
+        cb?.(null, { stdout: '', stderr: '' });
+      }
+    );
   });
 
   describe('sanitizeBranchName', () => {
@@ -178,6 +198,75 @@ describe('worktree module', () => {
 
       expect(result.sessions.length).toBe(1);
       expect(result.sessions[0].status).toBe('orphaned');
+    });
+  });
+
+  describe('createWorktreeSession', () => {
+    it('should create a new branch from the selected origin base branch when local branch does not exist', async () => {
+      const executedCommands: string[] = [];
+      mocks.existsSync.mockReturnValue(false);
+      mocks.exec.mockImplementation(
+        (
+          command: string,
+          options: unknown,
+          callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void
+        ) => {
+          executedCommands.push(command);
+          const cb = typeof options === 'function' ? options : callback;
+          if (command.startsWith('git show-ref --verify --quiet refs/heads/feature/new-branch')) {
+            cb?.(new Error('missing'), { stdout: '', stderr: '' });
+            return;
+          }
+          if (command === 'git worktree list --porcelain') {
+            cb?.(null, { stdout: '', stderr: '' });
+            return;
+          }
+          cb?.(null, { stdout: 'git version 2.45', stderr: '' });
+        }
+      );
+
+      const result = await createWorktreeSession('/tmp/repo', 'feature/new-branch', 'release/1.2');
+
+      expect(result.success).toBe(true);
+      expect(executedCommands).toContain('git fetch origin "release/1.2"');
+      expect(
+        executedCommands.some(
+          (command) =>
+            command.startsWith('git worktree add -b "feature/new-branch"') &&
+            command.includes('"origin/release/1.2"')
+        )
+      ).toBe(true);
+    });
+
+    it('should keep existing branch checkout behavior for local branches', async () => {
+      const executedCommands: string[] = [];
+      mocks.existsSync.mockReturnValue(false);
+      mocks.exec.mockImplementation(
+        (
+          command: string,
+          options: unknown,
+          callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void
+        ) => {
+          executedCommands.push(command);
+          const cb = typeof options === 'function' ? options : callback;
+          if (command === 'git worktree list --porcelain') {
+            cb?.(null, { stdout: '', stderr: '' });
+            return;
+          }
+          cb?.(null, { stdout: 'git version 2.45', stderr: '' });
+        }
+      );
+
+      const result = await createWorktreeSession('/tmp/repo', 'feature/existing', 'main');
+
+      expect(result.success).toBe(true);
+      expect(executedCommands).not.toContain('git fetch origin "main"');
+      expect(
+        executedCommands.some(
+          (command) =>
+            command.startsWith('git worktree add "') && command.endsWith('"feature/existing"')
+        )
+      ).toBe(true);
     });
   });
 });
