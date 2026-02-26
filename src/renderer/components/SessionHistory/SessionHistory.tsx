@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useDeferredValue, useState, useMemo, useEffect, useRef } from 'react';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { Spinner } from '../Spinner';
@@ -215,6 +215,7 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
     hasUnpushed: boolean;
   } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   // Worktree data fetched directly (for detecting active worktrees and adding standalone worktrees)
   const [worktreeMap, setWorktreeMap] = useState<Map<string, WorktreeData>>(new Map());
@@ -387,8 +388,8 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
     }
 
     // Apply search query
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
+    if (deferredSearchQuery.trim()) {
+      const query = deferredSearchQuery.toLowerCase();
       result = result.filter((session) => {
         const name = (session.name || '').toLowerCase();
         const sessionId = session.sessionId.toLowerCase();
@@ -404,7 +405,7 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
     }
 
     return result;
-  }, [allSessions, searchQuery, filter]);
+  }, [allSessions, deferredSearchQuery, filter]);
 
   // Count worktree sessions for filter badge
   const worktreeCount = useMemo(() => {
