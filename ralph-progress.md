@@ -65,10 +65,12 @@ yes, don't come back until this is all perfect and working
 - Tightened `MessageItem` memo comparator to ignore live activity prop changes for non-live messages
 - Added/updated `plan.md` with current status and next execution steps
 - Deferred diagnostics-path startup loading until Settings modal is opened
+- Added bundle-size guardrail script (`scripts/check-bundle-size.js`) and `test:bundle-size` npm script
 - Validated with:
   - `npm run build`
   - `npm run test:components` (224/224 passing)
+  - `npm run test:bundle-size` (passes with current bundle budgets)
 
 ### Next steps:
 
-- Commit startup deferral slice and continue to next high-priority perf item from handoff
+- Continue to next high-priority perf item from handoff
