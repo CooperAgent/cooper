@@ -268,6 +268,8 @@ const App: React.FC = () => {
 
   // Subagents state (for chevron widget in right pane)
   const [showSubagents, setShowSubagents] = useState(false);
+  const [sessionContextLoadedForCwd, setSessionContextLoadedForCwd] = useState<string | null>(null);
+  const [sessionContextLoading, setSessionContextLoading] = useState(false);
 
   const instructionSections = useMemo(() => {
     const grouped = groupBy(instructions, (instruction) => instruction.type);
@@ -1164,27 +1166,31 @@ const App: React.FC = () => {
   );
 
   useEffect(() => {
-    if (!showMcpServers && !showMcpModal && !showMcpJsonModal) return;
-    void loadMcpConfig();
-  }, [showMcpServers, showMcpModal, showMcpJsonModal, loadMcpConfig]);
+    if (!activeTabId) return;
+    const timer = setTimeout(() => {
+      void loadMcpConfig();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [activeTabId, loadMcpConfig]);
 
-  const shouldLoadSessionContext =
-    showEnvironmentModal || (!isMobile && !rightPanelCollapsed) || (isMobile && rightDrawerOpen);
-
-  // Load skills/agents/instructions when environment surfaces are visible and cwd changes
   useEffect(() => {
-    if (!shouldLoadSessionContext) return;
+    if (!showMcpServers && !showMcpModal && !showMcpJsonModal && !mcpConfigLoading) return;
+    void loadMcpConfig();
+  }, [showMcpServers, showMcpModal, showMcpJsonModal, mcpConfigLoading, loadMcpConfig]);
 
-    let cancelled = false;
-    const loadSessionContext = async () => {
+  const loadSessionContext = useCallback(
+    async (force = false) => {
+      const cwd = activeTab?.cwd || '';
+      if (!force && (sessionContextLoading || sessionContextLoadedForCwd === cwd)) return;
+
+      setSessionContextLoading(true);
       try {
-        const cwd = activeTab?.cwd;
-        const result = await window.electronAPI.sessionContext.getAll(cwd);
-        if (cancelled) return;
+        const result = await window.electronAPI.sessionContext.getAll(activeTab?.cwd);
 
         setSkills(result.skills.skills || []);
         setAgents(result.agents.agents || []);
         setInstructions(result.instructions.instructions || []);
+        setSessionContextLoadedForCwd(cwd);
 
         if (result.skills.errors?.length > 0) {
           console.warn('Some skills had errors:', result.skills.errors);
@@ -1193,16 +1199,20 @@ const App: React.FC = () => {
           console.warn('Some instructions had errors:', result.instructions.errors);
         }
       } catch (error) {
-        if (!cancelled) {
-          console.error('Failed to load session context:', error);
-        }
+        console.error('Failed to load session context:', error);
+      } finally {
+        setSessionContextLoading(false);
       }
-    };
-    loadSessionContext();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab?.cwd, shouldLoadSessionContext]);
+    },
+    [activeTab?.cwd, sessionContextLoading, sessionContextLoadedForCwd]
+  );
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadSessionContext();
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [activeTab?.cwd, loadSessionContext]);
 
   // Fetch worktree data to map worktree paths to original repo paths
   useEffect(() => {
@@ -6514,12 +6524,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     <div>
                       <div className="flex items-center">
                         <button
-                          onClick={() => {
-                            if (!showMcpServers) {
-                              void loadMcpConfig();
-                            }
-                            setShowMcpServers(!showMcpServers);
-                          }}
+                          onClick={() => setShowMcpServers(!showMcpServers)}
                           className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                         >
                           <ChevronRightIcon
@@ -6535,10 +6540,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         </button>
                         <IconButton
                           icon={<FileIcon size={12} />}
-                          onClick={async () => {
-                            await loadMcpConfig();
-                            setShowMcpJsonModal(true);
-                          }}
+                          onClick={() => setShowMcpJsonModal(true)}
                           variant="accent"
                           size="sm"
                           title="View JSON config"
