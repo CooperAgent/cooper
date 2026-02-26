@@ -38,11 +38,15 @@ yes, don't come back until this is all perfect and working
 
 - Optimized SessionHistory search filtering via precomputed lowercase search index (`d73a174`)
 - Implemented per-session Copilot delta IPC throttling with flush on idle/close in `src/main/main.ts`
+- Lazy-loaded heavy App modals (`SessionHistory`, `Environment`, `FilePreview`, `Update`, `ReleaseNotes`, `Settings`) to cut initial renderer payload
 - Validated with `npm run build` and targeted tests:
   - `src/main/pty.test.ts`
   - `src/main/utils/throttle.test.ts`
+- Validated lazy-load slice with:
+  - `npm run build` (new split chunks emitted for modal modules)
+  - `npm run test:components` (224/224 passing)
 
 ### Next steps:
 
-- Run a focused runtime stream check in app to confirm no visible UX regression
-- Continue to next remaining high-priority perf item from handoff notes
+- Run a focused runtime open/close check for lazy-loaded modals to confirm first-open UX remains smooth
+- Continue with message-render containment from handoff Priority 2

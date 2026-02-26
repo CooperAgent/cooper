@@ -35,12 +35,7 @@ import {
   ChoiceSelector,
   PaperclipIcon,
   MicButton,
-  SessionHistory,
-  FilePreviewModal,
-  EnvironmentModal,
-  UpdateAvailableModal,
   SpotlightTour,
-  ReleaseNotesModal,
   CodeBlockWithCopy,
   RepeatIcon,
   StarIcon,
@@ -49,7 +44,6 @@ import {
   SidebarDrawer,
   MenuIcon,
   ZapIcon,
-  SettingsModal,
   SettingsIcon,
   HelpCircleIcon,
   VolumeMuteIcon,
@@ -149,6 +143,20 @@ const SKILL_TYPE_LABELS: Record<Skill['type'], string> = {
   project: 'Project skills',
 };
 const SKILL_TYPE_ORDER: Skill['type'][] = ['personal', 'project'];
+const SessionHistoryLazy = React.lazy(() => import('./components/SessionHistory/SessionHistory'));
+const EnvironmentModalLazy = React.lazy(
+  () => import('./components/EnvironmentModal/EnvironmentModal')
+);
+const FilePreviewModalLazy = React.lazy(
+  () => import('./components/FilePreviewModal/FilePreviewModal')
+);
+const UpdateAvailableModalLazy = React.lazy(
+  () => import('./components/UpdateAvailableModal/UpdateAvailableModal')
+);
+const ReleaseNotesModalLazy = React.lazy(
+  () => import('./components/ReleaseNotesModal/ReleaseNotesModal')
+);
+const SettingsModalLazy = React.lazy(() => import('./components/SettingsModal/SettingsModal'));
 const App: React.FC = () => {
   const [status, setStatus] = useState<Status>('connecting');
   const [tabs, setTabs] = useState<TabState[]>([]);
@@ -7087,18 +7095,22 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         </Modal>
 
         {/* Session History Modal */}
-        <SessionHistory
-          isOpen={showSessionHistory}
-          onClose={() => setShowSessionHistory(false)}
-          sessions={previousSessions}
-          activeSessions={tabs}
-          activeSessionId={activeTabId}
-          onResumeSession={handleResumePreviousSession}
-          onSwitchToSession={handleSwitchTab}
-          onDeleteSession={handleDeleteSessionFromHistory}
-          onRemoveWorktreeSession={handleRemoveWorktreeSession}
-          onOpenWorktreeSession={handleOpenWorktreeSession}
-        />
+        {showSessionHistory && (
+          <React.Suspense fallback={null}>
+            <SessionHistoryLazy
+              isOpen={showSessionHistory}
+              onClose={() => setShowSessionHistory(false)}
+              sessions={previousSessions}
+              activeSessions={tabs}
+              activeSessionId={activeTabId}
+              onResumeSession={handleResumePreviousSession}
+              onSwitchToSession={handleSwitchTab}
+              onDeleteSession={handleDeleteSessionFromHistory}
+              onRemoveWorktreeSession={handleRemoveWorktreeSession}
+              onOpenWorktreeSession={handleOpenWorktreeSession}
+            />
+          </React.Suspense>
+        )}
 
         {/* Create Worktree Session Modal */}
         <CreateWorktreeSession
@@ -7148,146 +7160,168 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         )}
 
         {/* Environment Modal */}
-        <EnvironmentModal
-          isOpen={showEnvironmentModal}
-          onClose={() => setShowEnvironmentModal(false)}
-          instructions={instructions}
-          skills={skills}
-          agents={agents}
-          cwd={activeTab?.cwd}
-          initialTab={environmentTab}
-          initialInstructionPath={environmentInstructionPath}
-          initialSkillPath={environmentSkillPath}
-          initialAgentPath={environmentAgentPath}
-          fileViewMode={activeTab?.fileViewMode || 'flat'}
-          onViewModeChange={(mode) => {
-            if (activeTab) {
-              updateTab(activeTab.id, { fileViewMode: mode });
-            }
-          }}
-          onTabChange={(tab) => setEnvironmentTab(tab)}
-        />
+        {showEnvironmentModal && (
+          <React.Suspense fallback={null}>
+            <EnvironmentModalLazy
+              isOpen={showEnvironmentModal}
+              onClose={() => setShowEnvironmentModal(false)}
+              instructions={instructions}
+              skills={skills}
+              agents={agents}
+              cwd={activeTab?.cwd}
+              initialTab={environmentTab}
+              initialInstructionPath={environmentInstructionPath}
+              initialSkillPath={environmentSkillPath}
+              initialAgentPath={environmentAgentPath}
+              fileViewMode={activeTab?.fileViewMode || 'flat'}
+              onViewModeChange={(mode) => {
+                if (activeTab) {
+                  updateTab(activeTab.id, { fileViewMode: mode });
+                }
+              }}
+              onTabChange={(tab) => setEnvironmentTab(tab)}
+            />
+          </React.Suspense>
+        )}
 
         {/* File Preview Modal */}
-        <FilePreviewModal
-          isOpen={!!filePreviewPath}
-          onClose={() => setFilePreviewPath(null)}
-          filePath={filePreviewPath || ''}
-          cwd={activeTab?.cwd}
-          isGitRepo={isGitRepo}
-          editedFiles={activeTab ? getCleanEditedFiles(activeTab.editedFiles) : []}
-          untrackedFiles={activeTab?.untrackedFiles || []}
-          conflictedFiles={commitModal.conflictedFiles}
-          fileViewMode={activeTab?.fileViewMode || 'flat'}
-          onUntrackFile={(filePath) => {
-            if (activeTab) {
-              const newUntracked = [...(activeTab.untrackedFiles || []), filePath];
-              updateTab(activeTab.id, { untrackedFiles: newUntracked });
-            }
-          }}
-          onRetrackFile={(filePath) => {
-            if (activeTab) {
-              const newUntracked = (activeTab.untrackedFiles || []).filter((f) => f !== filePath);
-              updateTab(activeTab.id, { untrackedFiles: newUntracked });
-            }
-          }}
-          onViewModeChange={(mode) => {
-            if (activeTab) {
-              updateTab(activeTab.id, { fileViewMode: mode });
-            }
-          }}
-        />
+        {filePreviewPath && (
+          <React.Suspense fallback={null}>
+            <FilePreviewModalLazy
+              isOpen={!!filePreviewPath}
+              onClose={() => setFilePreviewPath(null)}
+              filePath={filePreviewPath || ''}
+              cwd={activeTab?.cwd}
+              isGitRepo={isGitRepo}
+              editedFiles={activeTab ? getCleanEditedFiles(activeTab.editedFiles) : []}
+              untrackedFiles={activeTab?.untrackedFiles || []}
+              conflictedFiles={commitModal.conflictedFiles}
+              fileViewMode={activeTab?.fileViewMode || 'flat'}
+              onUntrackFile={(filePath) => {
+                if (activeTab) {
+                  const newUntracked = [...(activeTab.untrackedFiles || []), filePath];
+                  updateTab(activeTab.id, { untrackedFiles: newUntracked });
+                }
+              }}
+              onRetrackFile={(filePath) => {
+                if (activeTab) {
+                  const newUntracked = (activeTab.untrackedFiles || []).filter(
+                    (f) => f !== filePath
+                  );
+                  updateTab(activeTab.id, { untrackedFiles: newUntracked });
+                }
+              }}
+              onViewModeChange={(mode) => {
+                if (activeTab) {
+                  updateTab(activeTab.id, { fileViewMode: mode });
+                }
+              }}
+            />
+          </React.Suspense>
+        )}
 
         {/* Update Available Modal */}
-        <UpdateAvailableModal
-          isOpen={showUpdateModal}
-          onClose={() => setShowUpdateModal(false)}
-          currentVersion={updateInfo?.currentVersion || buildInfo.baseVersion}
-          newVersion={updateInfo?.latestVersion || ''}
-          onDontRemind={() => {
-            if (updateInfo?.latestVersion) {
-              window.electronAPI.updates.dismissVersion(updateInfo.latestVersion);
-            }
-          }}
-        />
+        {showUpdateModal && (
+          <React.Suspense fallback={null}>
+            <UpdateAvailableModalLazy
+              isOpen={showUpdateModal}
+              onClose={() => setShowUpdateModal(false)}
+              currentVersion={updateInfo?.currentVersion || buildInfo.baseVersion}
+              newVersion={updateInfo?.latestVersion || ''}
+              onDontRemind={() => {
+                if (updateInfo?.latestVersion) {
+                  window.electronAPI.updates.dismissVersion(updateInfo.latestVersion);
+                }
+              }}
+            />
+          </React.Suspense>
+        )}
 
         {/* Release Notes Modal */}
-        <ReleaseNotesModal
-          isOpen={showReleaseNotesModal}
-          onClose={() => {
-            setShowReleaseNotesModal(false);
-            // Show update modal if there's an update available
-            if (updateInfo) {
-              setShowUpdateModal(true);
-            }
-          }}
-          version={buildInfo.baseVersion}
-          releaseNotes={buildInfo.releaseNotes || ''}
-        />
+        {showReleaseNotesModal && (
+          <React.Suspense fallback={null}>
+            <ReleaseNotesModalLazy
+              isOpen={showReleaseNotesModal}
+              onClose={() => {
+                setShowReleaseNotesModal(false);
+                // Show update modal if there's an update available
+                if (updateInfo) {
+                  setShowUpdateModal(true);
+                }
+              }}
+              version={buildInfo.baseVersion}
+              releaseNotes={buildInfo.releaseNotes || ''}
+            />
+          </React.Suspense>
+        )}
 
         {/* Settings Modal */}
-        <SettingsModal
-          isOpen={showSettingsModal}
-          onClose={() => {
-            setShowSettingsModal(false);
-            setSettingsDefaultSection(undefined);
-          }}
-          soundEnabled={soundEnabled}
-          onSoundEnabledChange={handleSoundEnabledChange}
-          defaultSection={settingsDefaultSection}
-          zoomFactor={zoomFactor}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onResetZoom={handleResetZoom}
-          // Voice settings
-          voiceSupported={voiceSpeech.isSupported}
-          voiceMuted={voiceSpeech.isMuted}
-          onToggleVoiceMute={voiceSpeech.toggleMute}
-          pushToTalk={pushToTalk}
-          onTogglePushToTalk={handleTogglePushToTalk}
-          alwaysListening={alwaysListening}
-          onToggleAlwaysListening={handleToggleAlwaysListening}
-          // Voice status
-          isRecording={voiceSpeech.isRecording}
-          isSpeaking={voiceSpeech.isSpeaking}
-          isModelLoading={voiceModelLoading}
-          modelLoaded={voiceModelLoaded}
-          voiceError={voiceInitError}
-          alwaysListeningError={alwaysListeningError}
-          voiceDownloadProgress={voiceDownloadProgress}
-          onInitVoice={handleInitVoice}
-          availableVoices={voiceSpeech.availableVoices}
-          selectedVoiceURI={voiceSpeech.selectedVoiceURI}
-          onVoiceChange={voiceSpeech.setSelectedVoiceURI}
-          // Global commands
-          globalSafeCommands={globalSafeCommands}
-          onAddGlobalSafeCommand={async (cmd) => {
-            try {
-              await window.electronAPI.copilot.addGlobalSafeCommand(cmd);
-              setGlobalSafeCommands((prev) => [...prev, cmd]);
-            } catch (error) {
-              console.error('Failed to add global safe command:', error);
-            }
-          }}
-          onRemoveGlobalSafeCommand={handleRemoveGlobalSafeCommand}
-          diagnosticsPaths={diagnosticsPaths}
-          recursiveAgentSkillsScan={recursiveAgentSkillsScan}
-          onToggleRecursiveAgentSkillsScan={handleToggleRecursiveAgentSkillsScan}
-          onRevealLogFile={async (pathToReveal) => {
-            try {
-              await window.electronAPI.file.revealInFolder(pathToReveal);
-            } catch (error) {
-              console.error('Failed to reveal log path:', error);
-            }
-          }}
-          onOpenCrashDumps={async (pathToOpen) => {
-            try {
-              await window.electronAPI.file.openFile(pathToOpen);
-            } catch (error) {
-              console.error('Failed to reveal crash dumps path:', error);
-            }
-          }}
-        />
+        {showSettingsModal && (
+          <React.Suspense fallback={null}>
+            <SettingsModalLazy
+              isOpen={showSettingsModal}
+              onClose={() => {
+                setShowSettingsModal(false);
+                setSettingsDefaultSection(undefined);
+              }}
+              soundEnabled={soundEnabled}
+              onSoundEnabledChange={handleSoundEnabledChange}
+              defaultSection={settingsDefaultSection}
+              zoomFactor={zoomFactor}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onResetZoom={handleResetZoom}
+              // Voice settings
+              voiceSupported={voiceSpeech.isSupported}
+              voiceMuted={voiceSpeech.isMuted}
+              onToggleVoiceMute={voiceSpeech.toggleMute}
+              pushToTalk={pushToTalk}
+              onTogglePushToTalk={handleTogglePushToTalk}
+              alwaysListening={alwaysListening}
+              onToggleAlwaysListening={handleToggleAlwaysListening}
+              // Voice status
+              isRecording={voiceSpeech.isRecording}
+              isSpeaking={voiceSpeech.isSpeaking}
+              isModelLoading={voiceModelLoading}
+              modelLoaded={voiceModelLoaded}
+              voiceError={voiceInitError}
+              alwaysListeningError={alwaysListeningError}
+              voiceDownloadProgress={voiceDownloadProgress}
+              onInitVoice={handleInitVoice}
+              availableVoices={voiceSpeech.availableVoices}
+              selectedVoiceURI={voiceSpeech.selectedVoiceURI}
+              onVoiceChange={voiceSpeech.setSelectedVoiceURI}
+              // Global commands
+              globalSafeCommands={globalSafeCommands}
+              onAddGlobalSafeCommand={async (cmd) => {
+                try {
+                  await window.electronAPI.copilot.addGlobalSafeCommand(cmd);
+                  setGlobalSafeCommands((prev) => [...prev, cmd]);
+                } catch (error) {
+                  console.error('Failed to add global safe command:', error);
+                }
+              }}
+              onRemoveGlobalSafeCommand={handleRemoveGlobalSafeCommand}
+              diagnosticsPaths={diagnosticsPaths}
+              recursiveAgentSkillsScan={recursiveAgentSkillsScan}
+              onToggleRecursiveAgentSkillsScan={handleToggleRecursiveAgentSkillsScan}
+              onRevealLogFile={async (pathToReveal) => {
+                try {
+                  await window.electronAPI.file.revealInFolder(pathToReveal);
+                } catch (error) {
+                  console.error('Failed to reveal log path:', error);
+                }
+              }}
+              onOpenCrashDumps={async (pathToOpen) => {
+                try {
+                  await window.electronAPI.file.openFile(pathToOpen);
+                } catch (error) {
+                  console.error('Failed to reveal crash dumps path:', error);
+                }
+              }}
+            />
+          </React.Suspense>
+        )}
 
         {/* Welcome Wizard - Spotlight Tour */}
         <SpotlightTour
