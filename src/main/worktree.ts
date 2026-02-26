@@ -305,7 +305,8 @@ async function isBranchInWorktree(repoPath: string, branch: string): Promise<str
  */
 export async function createWorktreeSession(
   repoPath: string,
-  branch: string
+  branch: string,
+  baseBranch: string
 ): Promise<{
   success: boolean;
   session?: WorktreeSession;
@@ -315,6 +316,10 @@ export async function createWorktreeSession(
 
   // Sanitize branch name for git compatibility
   const sanitizedBranch = sanitizeBranchName(branch);
+  if (!baseBranch.trim()) {
+    return { success: false, error: 'Base branch is required' };
+  }
+  const sanitizedBaseBranch = sanitizeBranchName(baseBranch);
 
   // Validate git is available and version is sufficient
   const gitCheck = await checkGitVersion();
@@ -364,10 +369,14 @@ export async function createWorktreeSession(
       // Checkout existing branch
       await execAsync(`git worktree add "${worktreePath}" "${sanitizedBranch}"`, { cwd: repoPath });
     } else {
-      // Create new branch
-      await execAsync(`git worktree add -b "${sanitizedBranch}" "${worktreePath}"`, {
-        cwd: repoPath,
-      });
+      // Create new branch from the latest selected remote branch
+      await execAsync(`git fetch origin "${sanitizedBaseBranch}"`, { cwd: repoPath });
+      await execAsync(
+        `git worktree add --no-track -b "${sanitizedBranch}" "${worktreePath}" "origin/${sanitizedBaseBranch}"`,
+        {
+          cwd: repoPath,
+        }
+      );
     }
   } catch (error) {
     return { success: false, error: `Failed to create worktree: ${error}` };

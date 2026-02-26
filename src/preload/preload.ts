@@ -687,6 +687,9 @@ const electronAPI = {
     ): Promise<{ branch: string | null; success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:getBranch', cwd);
     },
+    getCurrentOriginBranch: (cwd: string): Promise<{ branch: string | null; success: boolean }> => {
+      return ipcRenderer.invoke('git:getCurrentOriginBranch', cwd);
+    },
     listBranches: (
       cwd: string
     ): Promise<{ success: boolean; branches: string[]; error?: string }> => {
@@ -1088,6 +1091,7 @@ const electronAPI = {
     createSession: (data: {
       repoPath: string;
       branch: string;
+      baseBranch: string;
     }): Promise<{
       success: boolean;
       session?: WorktreeSession;

@@ -2223,11 +2223,30 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       setTabs((prev) =>
         prev.map((tab) => {
           if (tab.id !== sessionId) return tab;
+          const existingSubagents = tab.activeSubagents || [];
+          const existingIndex = existingSubagents.findIndex((s) => s.toolCallId === toolCallId);
+
+          if (existingIndex >= 0) {
+            return {
+              ...tab,
+              activeSubagents: existingSubagents.map((s) =>
+                s.toolCallId === toolCallId
+                  ? {
+                      ...s,
+                      agentName,
+                      agentDisplayName,
+                      agentDescription,
+                      status: 'running',
+                    }
+                  : s
+              ),
+            };
+          }
 
           return {
             ...tab,
             activeSubagents: [
-              ...(tab.activeSubagents || []),
+              ...existingSubagents,
               {
                 toolCallId,
                 agentName,

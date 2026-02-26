@@ -7,21 +7,27 @@ const mockFetchGitHubIssue = vi.fn();
 const mockFetchAzureDevOpsWorkItem = vi.fn();
 const mockCheckGitVersion = vi.fn();
 const mockListBranches = vi.fn();
+const mockGetCurrentOriginBranch = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
 
   // Mock git version to pass the check (2.38 > 2.20)
   mockCheckGitVersion.mockResolvedValue({ version: '2.38.0', valid: true });
-  mockListBranches.mockResolvedValue([]);
+  mockListBranches.mockResolvedValue({ success: true, branches: ['main', 'develop'] });
+  mockGetCurrentOriginBranch.mockResolvedValue({ success: true, branch: 'develop' });
 
   window.electronAPI = {
     ...window.electronAPI,
+    git: {
+      ...(window.electronAPI?.git || {}),
+      listBranches: mockListBranches,
+      getCurrentOriginBranch: mockGetCurrentOriginBranch,
+    },
     worktree: {
       fetchGitHubIssue: mockFetchGitHubIssue,
       fetchAzureDevOpsWorkItem: mockFetchAzureDevOpsWorkItem,
       checkGitVersion: mockCheckGitVersion,
-      listBranches: mockListBranches,
       createSession: vi.fn(),
       listSessions: vi.fn().mockResolvedValue([]),
     },
@@ -29,6 +35,24 @@ beforeEach(() => {
 });
 
 describe('CreateWorktreeSession', () => {
+  it('defaults fork branch to current origin upstream branch', async () => {
+    render(
+      <CreateWorktreeSession
+        isOpen={true}
+        onClose={() => {}}
+        repoPath="/test/repo"
+        onSessionCreated={() => {}}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockListBranches).toHaveBeenCalledWith('/test/repo');
+      expect(mockGetCurrentOriginBranch).toHaveBeenCalledWith('/test/repo');
+    });
+
+    expect(screen.getByText('develop')).toBeInTheDocument();
+  });
+
   it('renders Issue / Work Item label', async () => {
     render(
       <CreateWorktreeSession
