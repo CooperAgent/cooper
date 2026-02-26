@@ -183,6 +183,7 @@ import { AgentMcpServer, getAllAgents, parseAgentFrontmatter, type AgentsResult 
 // MCP Discovery - imported from mcpDiscovery module
 import { discoverMcpServers } from './mcpDiscovery';
 import { registerMcpHandlers } from './mcpHandlers';
+import { registerSessionContextHandlers } from './sessionContextHandlers';
 
 // Copilot Instructions - imported from instructions module
 import { getAllInstructions, getGitRoot, type InstructionsResult } from './instructions';
@@ -5197,32 +5198,8 @@ registerMcpHandlers({
   getMcpConfigPath,
 });
 
-// Agent Skills handlers
-ipcMain.handle('skills:getAll', async (_event, cwd?: string) => {
-  const result = await loadSessionContext(cwd);
-  console.log(
-    `Found ${result.skills.skills.length} skills (${result.skills.errors.length} errors)`
-  );
-  return result.skills;
-});
-
-// Agent discovery handlers
-ipcMain.handle('agents:getAll', async (_event, cwd?: string) => {
-  const result = await loadSessionContext(cwd);
-  return result.agents;
-});
-
-// Copilot Instructions handlers
-ipcMain.handle('instructions:getAll', async (_event, cwd?: string) => {
-  const result = await loadSessionContext(cwd);
-  console.log(
-    `Found ${result.instructions.instructions.length} instructions (${result.instructions.errors.length} errors)`
-  );
-  return result.instructions;
-});
-
-ipcMain.handle('sessionContext:getAll', async (_event, cwd?: string) => {
-  return loadSessionContext(cwd);
+registerSessionContextHandlers({
+  loadSessionContext,
 });
 
 // Browser session management handlers

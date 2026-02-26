@@ -142,3 +142,27 @@ yes, don't come back until this is all perfect and working
 ### Next steps:
 
 - Continue with next `main.ts` domain extraction slice
+
+## Iteration 7 - 2026-02-26T21:49:01.375Z
+
+### Status: IN PROGRESS
+
+### What I'm working on:
+
+- Completing remaining high-priority structural/guardrail items
+
+### Completed this iteration:
+
+- Extracted session context IPC handlers from `src/main/main.ts` into `src/main/sessionContextHandlers.ts`
+- Wired bundle guardrail comparison into CI workflows:
+  - `.github/workflows/build-pr.yml`
+  - `.github/workflows/build-staging.yml`
+  - `.github/workflows/release.yml`
+- Validated with:
+  - `npm run build`
+  - `npm exec vitest run src/main/pty.test.ts`
+  - `node scripts/check-bundle-size.js --compare-baseline`
+
+### Next steps:
+
+- Continue with next `main.ts` domain extraction slice
