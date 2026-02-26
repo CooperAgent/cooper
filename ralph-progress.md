@@ -133,6 +133,7 @@ yes, don't come back until this is all perfect and working
 ### Completed this iteration:
 
 - Extracted MCP config types and persistence helpers from `src/main/main.ts` into new `src/main/mcpConfig.ts`
+- Extracted MCP IPC handler registration into new `src/main/mcpHandlers.ts`
 - Kept existing main-process behavior and IPC contracts while reducing `main.ts` MCP storage concerns
 - Validated with:
   - `npm run build`

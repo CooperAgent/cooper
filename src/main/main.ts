@@ -181,7 +181,8 @@ import { getAllSkills, type SkillsResult } from './skills';
 import { AgentMcpServer, getAllAgents, parseAgentFrontmatter, type AgentsResult } from './agents';
 
 // MCP Discovery - imported from mcpDiscovery module
-import { discoverMcpServers, getMcpDiscoveryMetadata } from './mcpDiscovery';
+import { discoverMcpServers } from './mcpDiscovery';
+import { registerMcpHandlers } from './mcpHandlers';
 
 // Copilot Instructions - imported from instructions module
 import { getAllInstructions, getGitRoot, type InstructionsResult } from './instructions';
@@ -5187,81 +5188,14 @@ ipcMain.handle('copilot:authLogin', async () => {
   }
 });
 
-// MCP Server Management
-ipcMain.handle('mcp:getConfig', async () => {
-  let projectRoot: string | undefined;
-  const currentSessionId = activeSessionId;
-  if (currentSessionId) {
-    const sessionState = sessions.get(currentSessionId);
-    if (sessionState) {
-      projectRoot = await getProjectRootForCwd(sessionState.cwd);
-    }
-  }
-
-  const discovery = await discoverMcpServers({ projectRoot });
-  return { mcpServers: discovery.effectiveServers };
+registerMcpHandlers({
+  getActiveSessionId: () => activeSessionId,
+  sessions,
+  getProjectRootForCwd,
+  readMcpConfig,
+  writeMcpConfig,
+  getMcpConfigPath,
 });
-
-ipcMain.handle('mcp:saveConfig', async (_event, config: MCPConfigFile) => {
-  await writeMcpConfig(config);
-  return { success: true };
-});
-
-ipcMain.handle('mcp:addServer', async (_event, data: { name: string; server: MCPServerConfig }) => {
-  const config = await readMcpConfig();
-  config.mcpServers[data.name] = data.server;
-  await writeMcpConfig(config);
-  return { success: true };
-});
-
-ipcMain.handle(
-  'mcp:updateServer',
-  async (_event, data: { name: string; server: MCPServerConfig }) => {
-    const config = await readMcpConfig();
-    if (config.mcpServers[data.name]) {
-      config.mcpServers[data.name] = data.server;
-      await writeMcpConfig(config);
-      return { success: true };
-    }
-    return { success: false, error: 'Server not found' };
-  }
-);
-
-ipcMain.handle('mcp:deleteServer', async (_event, name: string) => {
-  const config = await readMcpConfig();
-  if (config.mcpServers[name]) {
-    delete config.mcpServers[name];
-    await writeMcpConfig(config);
-    return { success: true };
-  }
-  return { success: false, error: 'Server not found' };
-});
-
-ipcMain.handle('mcp:getConfigPath', async () => {
-  return { path: getMcpConfigPath() };
-});
-
-// MCP Discovery handlers (Issue #456)
-ipcMain.handle(
-  'mcp:getDiscoveryMetadata',
-  async (
-    _event,
-    options?: {
-      sessionConfig?: Record<string, MCPServerConfig>;
-      projectRoot?: string;
-    }
-  ) => {
-    try {
-      const result = await getMcpDiscoveryMetadata(options || {});
-      return { success: true, data: result };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-);
 
 // Agent Skills handlers
 ipcMain.handle('skills:getAll', async (_event, cwd?: string) => {
