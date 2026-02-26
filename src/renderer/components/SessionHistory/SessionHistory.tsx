@@ -382,33 +382,38 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
   }, [activeSessions, sessions, worktreeMap]);
 
   // Filter sessions based on search query AND filter type
+  const searchableSessions = useMemo(
+    () =>
+      allSessions.map((session) => ({
+        session,
+        searchableText: [
+          session.name || '',
+          session.sessionId,
+          session.cwd || '',
+          session.worktree?.branch || '',
+        ]
+          .join('\n')
+          .toLowerCase(),
+      })),
+    [allSessions]
+  );
+
   const filteredSessions = useMemo(() => {
-    let result = allSessions;
+    let result = searchableSessions;
 
     // Apply filter type
     if (filter === 'worktree') {
-      result = result.filter((session) => session.worktree);
+      result = result.filter(({ session }) => session.worktree);
     }
 
     // Apply search query
     if (deferredSearchQuery.trim()) {
       const query = deferredSearchQuery.toLowerCase();
-      result = result.filter((session) => {
-        const name = (session.name || '').toLowerCase();
-        const sessionId = session.sessionId.toLowerCase();
-        const cwd = (session.cwd || '').toLowerCase();
-        const branch = (session.worktree?.branch || '').toLowerCase();
-        return (
-          name.includes(query) ||
-          sessionId.includes(query) ||
-          cwd.includes(query) ||
-          branch.includes(query)
-        );
-      });
+      result = result.filter(({ searchableText }) => searchableText.includes(query));
     }
 
-    return result;
-  }, [allSessions, deferredSearchQuery, filter]);
+    return result.map(({ session }) => session);
+  }, [searchableSessions, deferredSearchQuery, filter]);
 
   // Count worktree sessions for filter badge
   const worktreeCount = useMemo(() => {
