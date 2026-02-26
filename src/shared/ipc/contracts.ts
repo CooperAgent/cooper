@@ -4,6 +4,9 @@ export const COPILOT_IPC_CHANNELS = {
   getMessages: 'copilot:getMessages',
   createSession: 'copilot:createSession',
   closeSession: 'copilot:closeSession',
+  setModel: 'copilot:setModel',
+  switchSession: 'copilot:switchSession',
+  resumePreviousSession: 'copilot:resumePreviousSession',
 } as const;
 
 export interface CopilotFileAttachment {
@@ -55,4 +58,35 @@ export type CopilotCloseSessionArgs = string;
 export interface CopilotCloseSessionResult {
   success: boolean;
   remainingSessions: number;
+}
+
+export interface CopilotSetModelArgs {
+  sessionId: string;
+  model: string;
+  hasMessages: boolean;
+}
+
+export interface CopilotSetModelResult {
+  sessionId?: string;
+  model: string;
+  cwd?: string;
+  newSession?: boolean;
+}
+
+export type CopilotSwitchSessionArgs = string;
+
+export interface CopilotSwitchSessionResult {
+  sessionId: string;
+  model: string;
+}
+
+export type CopilotResumePreviousSessionArgs = [sessionId: string, cwd?: string];
+
+export interface CopilotResumePreviousSessionResult {
+  sessionId: string;
+  model: string;
+  cwd: string;
+  alreadyOpen: boolean;
+  editedFiles?: string[];
+  alwaysAllowed?: string[];
 }

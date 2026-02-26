@@ -7,10 +7,16 @@ import {
   CopilotCloseSessionResult,
   CopilotGetMessagesArgs,
   CopilotGetMessagesResult,
+  CopilotResumePreviousSessionArgs,
+  CopilotResumePreviousSessionResult,
   CopilotSendAndWaitArgs,
   CopilotSendAndWaitResult,
   CopilotSendArgs,
   CopilotSendResult,
+  CopilotSetModelArgs,
+  CopilotSetModelResult,
+  CopilotSwitchSessionArgs,
+  CopilotSwitchSessionResult,
 } from '../shared/ipc/contracts';
 
 const electronAPI = {
@@ -67,8 +73,8 @@ const electronAPI = {
     ): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('copilot:deleteSessionFromHistory', sessionId);
     },
-    switchSession: (sessionId: string): Promise<{ sessionId: string; model: string }> => {
-      return ipcRenderer.invoke('copilot:switchSession', sessionId);
+    switchSession: (sessionId: CopilotSwitchSessionArgs): Promise<CopilotSwitchSessionResult> => {
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.switchSession, sessionId);
     },
     saveOpenSessions: (
       sessions: {
@@ -144,15 +150,9 @@ const electronAPI = {
     resumePreviousSession: (
       sessionId: string,
       cwd?: string
-    ): Promise<{
-      sessionId: string;
-      model: string;
-      cwd: string;
-      alreadyOpen: boolean;
-      editedFiles?: string[];
-      alwaysAllowed?: string[];
-    }> => {
-      return ipcRenderer.invoke('copilot:resumePreviousSession', sessionId, cwd);
+    ): Promise<CopilotResumePreviousSessionResult> => {
+      const args: CopilotResumePreviousSessionArgs = [sessionId, cwd];
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.resumePreviousSession, ...args);
     },
 
     onReady: (
@@ -235,8 +235,9 @@ const electronAPI = {
       sessionId: string,
       model: string,
       hasMessages: boolean
-    ): Promise<{ sessionId: string; model: string; cwd?: string; newSession?: boolean }> => {
-      return ipcRenderer.invoke('copilot:setModel', { sessionId, model, hasMessages });
+    ): Promise<CopilotSetModelResult> => {
+      const args: CopilotSetModelArgs = { sessionId, model, hasMessages };
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.setModel, args);
     },
     setActiveAgent: (
       sessionId: string,
