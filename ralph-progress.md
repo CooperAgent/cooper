@@ -88,6 +88,7 @@ yes, don't come back until this is all perfect and working
 - Deferred MCP config fetch from unconditional startup to on-demand MCP UI usage
 - Added MCP loading guard state to avoid duplicate fetches and preserve refresh behavior
 - Added loading-state UI copy for MCP section while config is being fetched
+- Deferred `sessionContext.getAll` calls until environment surfaces are visible (right panel/open modal/drawer)
 - Validated with:
   - `npm run build`
   - `npm run test:components` (224/224 passing)

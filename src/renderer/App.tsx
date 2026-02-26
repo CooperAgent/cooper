@@ -1168,8 +1168,13 @@ const App: React.FC = () => {
     void loadMcpConfig();
   }, [showMcpServers, showMcpModal, showMcpJsonModal, loadMcpConfig]);
 
-  // Load skills/agents/instructions together on startup and when active tab changes
+  const shouldLoadSessionContext =
+    showEnvironmentModal || (!isMobile && !rightPanelCollapsed) || (isMobile && rightDrawerOpen);
+
+  // Load skills/agents/instructions when environment surfaces are visible and cwd changes
   useEffect(() => {
+    if (!shouldLoadSessionContext) return;
+
     let cancelled = false;
     const loadSessionContext = async () => {
       try {
@@ -1197,7 +1202,7 @@ const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeTab?.cwd]);
+  }, [activeTab?.cwd, shouldLoadSessionContext]);
 
   // Fetch worktree data to map worktree paths to original repo paths
   useEffect(() => {
