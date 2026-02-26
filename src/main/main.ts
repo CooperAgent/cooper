@@ -4135,6 +4135,25 @@ ipcMain.handle('git:getBranch', async (_event, cwd: string) => {
   }
 });
 
+// Git operations - get current branch upstream on origin
+ipcMain.handle('git:getCurrentOriginBranch', async (_event, cwd: string) => {
+  try {
+    const { stdout } = await execAsync(
+      'git rev-parse --abbrev-ref --symbolic-full-name @{upstream}',
+      {
+        cwd,
+      }
+    );
+    const upstream = stdout.trim();
+    if (!upstream.startsWith('origin/')) {
+      return { success: false, branch: null };
+    }
+    return { success: true, branch: upstream.replace(/^origin\//, '') };
+  } catch {
+    return { success: false, branch: null };
+  }
+});
+
 // Git operations - list all branches (remote and local)
 ipcMain.handle('git:listBranches', async (_event, cwd: string) => {
   try {
@@ -5626,9 +5645,10 @@ ipcMain.handle(
     data: {
       repoPath: string;
       branch: string;
+      baseBranch: string;
     }
   ) => {
-    return worktree.createWorktreeSession(data.repoPath, data.branch);
+    return worktree.createWorktreeSession(data.repoPath, data.branch, data.baseBranch);
   }
 );
 
