@@ -104,7 +104,6 @@ export function getMcpUserConfigPath(): string {
 async function readMcpConfigFromFile(filePath: string): Promise<MCPConfigFile | null> {
   try {
     if (!existsSync(filePath)) {
-      console.log(`[MCP Discovery] Config not found: ${filePath}`);
       return null;
     }
     const content = await readFile(filePath, 'utf-8');
@@ -121,9 +120,6 @@ async function readMcpConfigFromFile(filePath: string): Promise<MCPConfigFile | 
       }
     }
 
-    console.log(
-      `[MCP Discovery] Loaded ${Object.keys(parsed.mcpServers || {}).length} servers from ${filePath}`
-    );
     return parsed;
   } catch (error) {
     console.error(`Failed to read MCP config from ${filePath}:`, error);
@@ -134,7 +130,6 @@ async function readMcpConfigFromFile(filePath: string): Promise<MCPConfigFile | 
 async function readBuiltInPluginServers(): Promise<Record<string, MCPServerConfig>> {
   const configPath = join(getCopilotConfigPath(), 'config.json');
   if (!existsSync(configPath)) {
-    console.log(`[MCP Discovery] Built-in plugins config not found: ${configPath}`);
     return {};
   }
 
@@ -173,9 +168,6 @@ async function readBuiltInPluginServers(): Promise<Record<string, MCPServerConfi
       }
     }
 
-    console.log(
-      `[MCP Discovery] Loaded ${Object.keys(builtInServers).length} built-in plugin servers from ${configPath}`
-    );
     return builtInServers;
   } catch (error) {
     console.error(`[MCP Discovery] Failed to read built-in plugins from ${configPath}:`, error);
@@ -234,12 +226,6 @@ export async function discoverMcpServers(options: {
   const allMetadata: MCPServerMetadata[] = [];
   const sources: MCPDiscoveryResult['sources'] = {};
   const serversByPriority = new Map<string, MCPServerMetadata[]>();
-  console.log('[MCP Discovery] Starting discovery', {
-    projectRoot: options.projectRoot,
-    sessionCount: Object.keys(options.sessionConfig || {}).length,
-    agentCount: Object.keys(options.agentMcpServers || {}).length,
-    defaultCount: Object.keys(options.defaultConfig || {}).length,
-  });
 
   // Helper to add servers from a source
   const addServers = (
@@ -250,9 +236,6 @@ export async function discoverMcpServers(options: {
   ) => {
     if (!servers) return;
     sources[sourceKey] = source;
-    console.log(
-      `[MCP Discovery] Applying ${Object.keys(servers).length} servers from ${sourceKey} (${source}) at priority ${priority}`
-    );
 
     for (const [name, config] of Object.entries(servers)) {
       const metadata = {
@@ -330,17 +313,6 @@ export async function discoverMcpServers(options: {
       allMetadata.push(overridden);
     }
   }
-
-  const overriddenServers = allMetadata
-    .filter((metadata) => !metadata.effective)
-    .map((metadata) => `${metadata.serverName}<- ${metadata.overriddenBy}`);
-  console.log('[MCP Discovery] Discovery complete', {
-    effectiveCount: Object.keys(effectiveServers).length,
-    effectiveServers: Object.keys(effectiveServers),
-    overriddenCount: overriddenServers.length,
-    overriddenServers,
-    sources,
-  });
 
   return {
     effectiveServers,

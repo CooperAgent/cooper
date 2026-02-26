@@ -30,6 +30,13 @@ Pre-commit hooks (husky) run lint-staged (Prettier) and `npm test` automatically
 - Prettier handles formatting: single quotes, semicolons, 2-space indent, 100 char width.
 - Path alias: `@` maps to `src/` in renderer code.
 
+## Formatting Guardrails
+
+- Do not reformat files or unrelated lines when implementing a task.
+- Preserve existing formatting in touched files unless a formatting change is required for correctness.
+- Never run project-wide formatting as part of a feature/fix unless the user explicitly requests it.
+- If formatting is required, scope it to the smallest possible set of changed lines/files.
+
 ## Release & Versioning
 
 **Read [CONTRIBUTING.md](CONTRIBUTING.md) before making release-related changes.** It documents the full release workflow, versioning strategy, CI pipelines, and artifact naming.
