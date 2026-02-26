@@ -74,3 +74,25 @@ yes, don't come back until this is all perfect and working
 ### Next steps:
 
 - Continue to next high-priority perf item from handoff
+
+## Iteration 4 - 2026-02-26T16:03:59.122Z
+
+### Status: IN PROGRESS
+
+### What I'm working on:
+
+- Deferring another optional startup path with low UX risk
+
+### Completed this iteration:
+
+- Deferred MCP config fetch from unconditional startup to on-demand MCP UI usage
+- Added MCP loading guard state to avoid duplicate fetches and preserve refresh behavior
+- Added loading-state UI copy for MCP section while config is being fetched
+- Validated with:
+  - `npm run build`
+  - `npm run test:components` (224/224 passing)
+
+### Next steps:
+
+- Commit MCP startup deferral slice
+- Move to next perf item from handoff notes

@@ -226,6 +226,8 @@ const App: React.FC = () => {
   const { themePreference, activeTheme, availableThemes, setTheme, importTheme } = useTheme();
   // MCP Server state
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>({});
+  const [mcpConfigLoaded, setMcpConfigLoaded] = useState(false);
+  const [mcpConfigLoading, setMcpConfigLoading] = useState(false);
   const [showMcpServers, setShowMcpServers] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [showMcpJsonModal, setShowMcpJsonModal] = useState(false);
@@ -1144,18 +1146,27 @@ const App: React.FC = () => {
     }
   }, [isMobileOrTablet]);
 
-  // Load MCP servers on startup
-  useEffect(() => {
-    const loadMcpConfig = async () => {
+  const loadMcpConfig = useCallback(
+    async (force = false) => {
+      if (!force && (mcpConfigLoaded || mcpConfigLoading)) return;
+      setMcpConfigLoading(true);
       try {
         const config = await window.electronAPI.mcp.getConfig();
         setMcpServers(config.mcpServers || {});
+        setMcpConfigLoaded(true);
       } catch (error) {
         console.error('Failed to load MCP config:', error);
+      } finally {
+        setMcpConfigLoading(false);
       }
-    };
-    loadMcpConfig();
-  }, []);
+    },
+    [mcpConfigLoaded, mcpConfigLoading]
+  );
+
+  useEffect(() => {
+    if (!showMcpServers && !showMcpModal && !showMcpJsonModal) return;
+    void loadMcpConfig();
+  }, [showMcpServers, showMcpModal, showMcpJsonModal, loadMcpConfig]);
 
   // Load skills/agents/instructions together on startup and when active tab changes
   useEffect(() => {
@@ -3298,8 +3309,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       }
 
       // Reload config
-      const config = await window.electronAPI.mcp.getConfig();
-      setMcpServers(config.mcpServers || {});
+      await loadMcpConfig(true);
       setShowMcpModal(false);
     } catch (error) {
       console.error('Failed to save MCP server:', error);
@@ -3309,8 +3319,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
   const handleDeleteMcpServer = async (name: string) => {
     try {
       await window.electronAPI.mcp.deleteServer(name);
-      const config = await window.electronAPI.mcp.getConfig();
-      setMcpServers(config.mcpServers || {});
+      await loadMcpConfig(true);
     } catch (error) {
       console.error('Failed to delete MCP server:', error);
     }
@@ -3318,8 +3327,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
   const handleRefreshMcpServers = async () => {
     try {
-      const config = await window.electronAPI.mcp.getConfig();
-      setMcpServers(config.mcpServers || {});
+      await loadMcpConfig(true);
     } catch (error) {
       console.error('Failed to refresh MCP servers:', error);
     }
@@ -6501,7 +6509,12 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     <div>
                       <div className="flex items-center">
                         <button
-                          onClick={() => setShowMcpServers(!showMcpServers)}
+                          onClick={() => {
+                            if (!showMcpServers) {
+                              void loadMcpConfig();
+                            }
+                            setShowMcpServers(!showMcpServers);
+                          }}
                           className="flex-1 flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                         >
                           <ChevronRightIcon
@@ -6517,7 +6530,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         </button>
                         <IconButton
                           icon={<FileIcon size={12} />}
-                          onClick={() => setShowMcpJsonModal(true)}
+                          onClick={async () => {
+                            await loadMcpConfig();
+                            setShowMcpJsonModal(true);
+                          }}
                           variant="accent"
                           size="sm"
                           title="View JSON config"
@@ -6542,7 +6558,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                       </div>
                       {showMcpServers && (
                         <div className="max-h-48 overflow-y-auto">
-                          {mcpEntries.length === 0 ? (
+                          {mcpConfigLoading && !mcpConfigLoaded ? (
+                            <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
+                              Loading MCP servers...
+                            </div>
+                          ) : mcpEntries.length === 0 ? (
                             <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
                               No MCP servers configured
                             </div>
