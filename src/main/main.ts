@@ -212,7 +212,7 @@ import { getAllInstructions, getGitRoot, type InstructionsResult } from './instr
 
 // Set up file logging only - no IPC to renderer (causes errors)
 log.transports.file.level = 'info';
-log.transports.console.level = 'info';
+log.transports.console.level = 'warn';
 
 // Crash reporter (local-only)
 const crashDumpsDir = join(app.getPath('userData'), 'crash-dumps');
@@ -3993,9 +3993,12 @@ ipcMain.handle(
       } catch (pushError) {
         // If push fails due to no upstream branch, set upstream and push
         const errorMsg = String(pushError);
-        if (errorMsg.includes('has no upstream branch')) {
+        if (
+          errorMsg.includes('has no upstream branch') ||
+          errorMsg.includes('upstream branch of your current branch does not match')
+        ) {
           // Set upstream and push
-          await execAsync(`git push --set-upstream origin ${currentBranch}`, { cwd: data.cwd });
+          await execAsync('git push --set-upstream origin HEAD', { cwd: data.cwd });
         } else {
           throw pushError;
         }
@@ -4476,8 +4479,11 @@ ipcMain.handle(
         await execAsync('git push', { cwd: data.cwd });
       } catch (pushError) {
         const errorMsg = String(pushError);
-        if (errorMsg.includes('has no upstream branch')) {
-          await execAsync(`git push --set-upstream origin ${currentBranch}`, { cwd: data.cwd });
+        if (
+          errorMsg.includes('has no upstream branch') ||
+          errorMsg.includes('upstream branch of your current branch does not match')
+        ) {
+          await execAsync('git push --set-upstream origin HEAD', { cwd: data.cwd });
         } else {
           throw pushError;
         }
@@ -4573,8 +4579,11 @@ ipcMain.handle(
           await execAsync(`git push --force-with-lease`, { cwd: data.cwd });
         } catch (pushError) {
           const errorMsg = String(pushError);
-          if (errorMsg.includes('has no upstream branch')) {
-            await execAsync(`git push --set-upstream origin ${currentBranch}`, { cwd: data.cwd });
+          if (
+            errorMsg.includes('has no upstream branch') ||
+            errorMsg.includes('upstream branch of your current branch does not match')
+          ) {
+            await execAsync('git push --set-upstream origin HEAD', { cwd: data.cwd });
           } else {
             // Ignore other push errors, continue with merge
             console.warn('Force push after rebase failed:', errorMsg);
@@ -4783,8 +4792,11 @@ ipcMain.handle(
         await execGitWithEnv('git push', { cwd: data.cwd });
       } catch (pushError) {
         const errorMsg = String(pushError);
-        if (errorMsg.includes('has no upstream branch')) {
-          await execGitWithEnv(`git push --set-upstream origin ${currentBranch}`, {
+        if (
+          errorMsg.includes('has no upstream branch') ||
+          errorMsg.includes('upstream branch of your current branch does not match')
+        ) {
+          await execGitWithEnv('git push --set-upstream origin HEAD', {
             cwd: data.cwd,
           });
         } else {
