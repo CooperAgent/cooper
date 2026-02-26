@@ -232,7 +232,7 @@ describe('worktree module', () => {
       expect(
         executedCommands.some(
           (command) =>
-            command.startsWith('git worktree add -b "feature/new-branch"') &&
+            command.startsWith('git worktree add --no-track -b "feature/new-branch"') &&
             command.includes('"origin/release/1.2"')
         )
       ).toBe(true);

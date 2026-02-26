@@ -372,7 +372,7 @@ export async function createWorktreeSession(
       // Create new branch from the latest selected remote branch
       await execAsync(`git fetch origin "${sanitizedBaseBranch}"`, { cwd: repoPath });
       await execAsync(
-        `git worktree add -b "${sanitizedBranch}" "${worktreePath}" "origin/${sanitizedBaseBranch}"`,
+        `git worktree add --no-track -b "${sanitizedBranch}" "${worktreePath}" "origin/${sanitizedBaseBranch}"`,
         {
           cwd: repoPath,
         }

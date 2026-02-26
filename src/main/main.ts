@@ -212,7 +212,7 @@ import { getAllInstructions, getGitRoot, type InstructionsResult } from './instr
 
 // Set up file logging only - no IPC to renderer (causes errors)
 log.transports.file.level = 'info';
-log.transports.console.level = 'info';
+log.transports.console.level = 'warn';
 
 // Crash reporter (local-only)
 const crashDumpsDir = join(app.getPath('userData'), 'crash-dumps');
@@ -1337,59 +1337,24 @@ function getCachedModels(): ModelInfo[] {
         modelsCache = storedCache; // Hydrate in-memory cache
         return storedCache.models;
       }
-    } else {
-      console.log('No stored models cache found');
     }
   } catch (err) {
     console.warn('Failed to load stored models cache:', err);
   }
 
   // No valid cache
-  console.log('Returning empty models array (no valid cache)');
   return [];
 }
 
 // Fetch models from Copilot SDK API (single source of truth)
 async function fetchModelsFromAPI(client: CopilotClient): Promise<ModelInfo[]> {
-  console.log('[fetchModelsFromAPI] Fetching models from Copilot SDK...');
-  console.log('[fetchModelsFromAPI] Environment:', {
-    isDev: process.env.NODE_ENV === 'development',
-    isPackaged: app.isPackaged,
-    appPath: app.getAppPath(),
-    cliPath: getCliPath(),
-  });
-
-  // Check which gh account is being used
   try {
-    const { execSync } = require('child_process');
-    const ghStatus = execSync('gh auth status', {
-      encoding: 'utf-8',
-      env: getAugmentedEnv(),
-      stdio: 'pipe',
-    }).toString();
-    console.log('[fetchModelsFromAPI] gh auth status:', ghStatus);
-  } catch (err: any) {
-    console.log(
-      '[fetchModelsFromAPI] gh auth status (stderr):',
-      err.stderr?.toString() || err.message
-    );
-  }
-
-  try {
-    console.log('[fetchModelsFromAPI] Calling client.listModels()...');
     const apiModels = await client.listModels();
-    console.log(`[fetchModelsFromAPI] SDK returned ${apiModels.length} models`);
-
-    // Log all model IDs for debugging
-    console.log('[fetchModelsFromAPI] Model IDs from SDK:', apiModels.map((m) => m.id).join(', '));
-
-    // Log full model data to see everything
-    console.log('[fetchModelsFromAPI] Full API response:', JSON.stringify(apiModels, null, 2));
 
     // Log any models with disabled policy state
     const disabledModels = apiModels.filter((m) => m.policy?.state === 'disabled');
     if (disabledModels.length > 0) {
-      console.log(
+      console.warn(
         `Warning: ${disabledModels.length} models have disabled policy:`,
         disabledModels.map((m) => m.id).join(', ')
       );
@@ -2002,20 +1967,11 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     projectRoot,
   });
 
-  console.log(
-    `[MCP Discovery] Found ${Object.keys(mcpDiscovery.effectiveServers).length} effective servers from sources:`,
-    Object.keys(mcpDiscovery.sources)
-  );
-
   // Generate session ID upfront so we can pass it to browser tools
   const generatedSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
   // Create browser tools for this session
   const browserTools = createBrowserTools(generatedSessionId);
-  console.log(
-    `[${generatedSessionId}] Registering ${browserTools.length} tools:`,
-    browserTools.map((t) => t.name)
-  );
 
   // Build subagent prompting section
   const subagentPrompt = buildSubagentPrompt();
@@ -3314,7 +3270,6 @@ ipcMain.handle(
 );
 
 ipcMain.handle('copilot:getModels', async () => {
-  console.log('[copilot:getModels] IPC handler called');
   const currentModel = store.get('model') as string;
   const cachedModels = getCachedModels();
 
@@ -3324,17 +3279,14 @@ ipcMain.handle('copilot:getModels', async () => {
     if (shouldRefreshModelsFromCacheAge()) {
       warmModelsCacheInBackground(true);
     }
-    console.log(`[copilot:getModels] Returning ${cachedModels.length} cached models`);
     return { models: cachedModels, current: currentModel };
   }
 
   // No valid cache - fetch fresh from API
-  console.log('[copilot:getModels] No cache, fetching from API...');
   if (modelsWarmupPromise) {
     await modelsWarmupPromise;
     const warmedModels = getCachedModels();
     if (warmedModels.length > 0) {
-      console.log(`[copilot:getModels] Returning ${warmedModels.length} warmed models`);
       return { models: warmedModels, current: currentModel };
     }
   }
@@ -3346,10 +3298,7 @@ ipcMain.handle('copilot:getModels', async () => {
   }
 
   try {
-    console.log('[copilot:getModels] About to call fetchModelsFromAPI...');
     const models = await fetchModelsFromAPI(client);
-    console.log(`[copilot:getModels] Fetched ${models.length} models from API`);
-    console.log(`[copilot:getModels] Returning model IDs:`, models.map((m) => m.id).join(', '));
     return { models, current: currentModel };
   } catch (err) {
     console.error('Failed to fetch models on-demand:', err);
@@ -4044,9 +3993,12 @@ ipcMain.handle(
       } catch (pushError) {
         // If push fails due to no upstream branch, set upstream and push
         const errorMsg = String(pushError);
-        if (errorMsg.includes('has no upstream branch')) {
+        if (
+          errorMsg.includes('has no upstream branch') ||
+          errorMsg.includes('upstream branch of your current branch does not match')
+        ) {
           // Set upstream and push
-          await execAsync(`git push --set-upstream origin ${currentBranch}`, { cwd: data.cwd });
+          await execAsync('git push --set-upstream origin HEAD', { cwd: data.cwd });
         } else {
           throw pushError;
         }
@@ -4527,8 +4479,11 @@ ipcMain.handle(
         await execAsync('git push', { cwd: data.cwd });
       } catch (pushError) {
         const errorMsg = String(pushError);
-        if (errorMsg.includes('has no upstream branch')) {
-          await execAsync(`git push --set-upstream origin ${currentBranch}`, { cwd: data.cwd });
+        if (
+          errorMsg.includes('has no upstream branch') ||
+          errorMsg.includes('upstream branch of your current branch does not match')
+        ) {
+          await execAsync('git push --set-upstream origin HEAD', { cwd: data.cwd });
         } else {
           throw pushError;
         }
@@ -4624,8 +4579,11 @@ ipcMain.handle(
           await execAsync(`git push --force-with-lease`, { cwd: data.cwd });
         } catch (pushError) {
           const errorMsg = String(pushError);
-          if (errorMsg.includes('has no upstream branch')) {
-            await execAsync(`git push --set-upstream origin ${currentBranch}`, { cwd: data.cwd });
+          if (
+            errorMsg.includes('has no upstream branch') ||
+            errorMsg.includes('upstream branch of your current branch does not match')
+          ) {
+            await execAsync('git push --set-upstream origin HEAD', { cwd: data.cwd });
           } else {
             // Ignore other push errors, continue with merge
             console.warn('Force push after rebase failed:', errorMsg);
@@ -4834,8 +4792,11 @@ ipcMain.handle(
         await execGitWithEnv('git push', { cwd: data.cwd });
       } catch (pushError) {
         const errorMsg = String(pushError);
-        if (errorMsg.includes('has no upstream branch')) {
-          await execGitWithEnv(`git push --set-upstream origin ${currentBranch}`, {
+        if (
+          errorMsg.includes('has no upstream branch') ||
+          errorMsg.includes('upstream branch of your current branch does not match')
+        ) {
+          await execGitWithEnv('git push --set-upstream origin HEAD', {
             cwd: data.cwd,
           });
         } else {
