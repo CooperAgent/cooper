@@ -64,11 +64,11 @@ yes, don't come back until this is all perfect and working
 - Added render containment in `App.tsx` so live tool/subagent activity props are only passed to the currently streaming assistant message
 - Tightened `MessageItem` memo comparator to ignore live activity prop changes for non-live messages
 - Added/updated `plan.md` with current status and next execution steps
+- Deferred diagnostics-path startup loading until Settings modal is opened
 - Validated with:
   - `npm run build`
   - `npm run test:components` (224/224 passing)
 
 ### Next steps:
 
-- Commit containment slice and close todo
-- Move to next high-priority perf item from handoff
+- Commit startup deferral slice and continue to next high-priority perf item from handoff

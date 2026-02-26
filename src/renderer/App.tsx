@@ -661,6 +661,10 @@ const App: React.FC = () => {
   }, [soundEnabled]);
 
   useEffect(() => {
+    if (!showSettingsModal || diagnosticsPaths) {
+      return;
+    }
+
     let isMounted = true;
     const loadDiagnostics = async () => {
       try {
@@ -676,7 +680,7 @@ const App: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [showSettingsModal, diagnosticsPaths]);
 
   // Keep ref in sync with state (update prevActiveTabIdRef BEFORE activeTabIdRef)
   useEffect(() => {
