@@ -94,6 +94,14 @@ import {
   getDestructiveExecutables,
   extractFilesToDelete,
 } from './utils/extractExecutables';
+import {
+  validateCopilotCreateSessionArgs,
+  validateCopilotResumePreviousSessionArgs,
+  validateCopilotSendAndWaitArgs,
+  validateCopilotSendArgs,
+  validateCopilotSetModelArgs,
+  validateCopilotSwitchSessionArgs,
+} from './utils/ipcValidation';
 import { mergeSessionCwds, resolveSessionName } from './utils/sessionRestore';
 import * as worktree from './worktree';
 import * as ptyManager from './pty';
@@ -2655,15 +2663,8 @@ function createWindow(): void {
 // IPC Handlers
 ipcMain.handle(
   'copilot:send',
-  async (
-    _event,
-    data: {
-      sessionId: string;
-      prompt: string;
-      attachments?: { type: 'file'; path: string; displayName?: string }[];
-      mode?: 'enqueue' | 'immediate';
-    }
-  ) => {
+  async (_event, data: CopilotSendArgs): Promise<CopilotSendResult> => {
+    validateCopilotSendArgs(data);
     const sessionState = sessions.get(data.sessionId);
     if (!sessionState) {
       throw new Error(`Session not found: ${data.sessionId}`);
@@ -2723,14 +2724,8 @@ ipcMain.handle(
 
 ipcMain.handle(
   'copilot:sendAndWait',
-  async (
-    _event,
-    data: {
-      sessionId: string;
-      prompt: string;
-      attachments?: { type: 'file'; path: string; displayName?: string }[];
-    }
-  ) => {
+  async (_event, data: CopilotSendAndWaitArgs): Promise<CopilotSendAndWaitResult> => {
+    validateCopilotSendAndWaitArgs(data);
     const sessionState = sessions.get(data.sessionId);
     if (!sessionState) {
       throw new Error(`Session not found: ${data.sessionId}`);
@@ -3120,6 +3115,7 @@ ipcMain.handle(
 ipcMain.handle(
   COPILOT_IPC_CHANNELS.setModel,
   async (_event, data: CopilotSetModelArgs): Promise<CopilotSetModelResult> => {
+    validateCopilotSetModelArgs(data);
     store.set('model', data.model); // Persist as default for new sessions
 
     const sessionState = sessions.get(data.sessionId);
@@ -3576,6 +3572,7 @@ ipcMain.handle('copilot:getCwd', async () => {
 ipcMain.handle(
   COPILOT_IPC_CHANNELS.createSession,
   async (_event, options?: CopilotCreateSessionArgs): Promise<CopilotCreateSessionResult> => {
+    validateCopilotCreateSessionArgs(options);
     const sessionId = await createNewSession(undefined, options?.cwd);
     const sessionState = sessions.get(sessionId)!;
     return { sessionId, model: sessionState.model, cwd: sessionState.cwd };
@@ -3709,6 +3706,7 @@ ipcMain.handle('copilot:deleteSessionFromHistory', async (_event, sessionId: str
 ipcMain.handle(
   COPILOT_IPC_CHANNELS.switchSession,
   async (_event, sessionId: CopilotSwitchSessionArgs): Promise<CopilotSwitchSessionResult> => {
+    validateCopilotSwitchSessionArgs(sessionId);
     if (!sessions.has(sessionId)) {
       throw new Error(`Session not found: ${sessionId}`);
     }
@@ -4932,6 +4930,7 @@ ipcMain.handle(
     sessionId: CopilotResumePreviousSessionArgs[0],
     cwd?: CopilotResumePreviousSessionArgs[1]
   ): Promise<CopilotResumePreviousSessionResult> => {
+    validateCopilotResumePreviousSessionArgs(sessionId, cwd);
     // Check if already resumed
     if (sessions.has(sessionId)) {
       const sessionState = sessions.get(sessionId)!;
