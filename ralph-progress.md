@@ -98,3 +98,26 @@ yes, don't come back until this is all perfect and working
 
 - Commit MCP startup deferral slice
 - Move to next perf item from handoff notes
+
+## Iteration 5 - 2026-02-26T21:16:36.348Z
+
+### Status: IN PROGRESS
+
+### What I'm working on:
+
+- Guardrails first: hardening bundle regression detection
+
+### Completed this iteration:
+
+- Extended `scripts/check-bundle-size.js` with baseline comparison support
+- Added `test:bundle-size:update-baseline` npm script
+- Generated committed baseline at `scripts/bundle-size-baseline.json`
+- Added PTY batching regression tests in `src/main/pty.test.ts` (timed flush + explicit flush)
+- Validated both:
+  - `npm run test:bundle-size:update-baseline`
+  - `npm run test:bundle-size`
+  - `npm exec vitest run src/main/pty.test.ts`
+
+### Next steps:
+
+- Add PTY batching edge-case tests guardrail
