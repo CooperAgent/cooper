@@ -470,7 +470,7 @@ export function createPty(
 ): { success: boolean; error?: string } {
   // Close existing PTY for this session if any
   if (ptyInstances.has(sessionId)) {
-    closePty(sessionId);
+    closePty(sessionId, mainWindow);
   }
 
   try {
@@ -603,14 +603,17 @@ export function clearPtyBuffer(sessionId: string): { success: boolean; error?: s
 }
 
 // Close PTY
-export function closePty(sessionId: string): { success: boolean; error?: string } {
+export function closePty(
+  sessionId: string,
+  windowRef: BrowserWindow | null = null
+): { success: boolean; error?: string } {
   const instance = ptyInstances.get(sessionId);
   if (!instance) {
     return { success: true }; // Already closed
   }
 
   try {
-    flushBatchBuffer(instance, sessionId, mainWindow);
+    flushBatchBuffer(instance, sessionId, windowRef);
     instance.pty.kill();
     ptyInstances.delete(sessionId);
     return { success: true };
