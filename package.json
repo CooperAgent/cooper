@@ -51,6 +51,7 @@
     "asarUnpack": [
       "node_modules/@github/copilot-*/**/*",
       "node_modules/ffmpeg-static/**/*",
+      "node_modules/node-pty/**/*",
       "public/whisper-cpp/**/*",
       "public/whisper-model/**/*"
     ],
