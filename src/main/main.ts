@@ -5680,7 +5680,7 @@ ipcMain.handle('pty:clearBuffer', async (_event, sessionId: string) => {
 });
 
 ipcMain.handle('pty:close', async (_event, sessionId: string) => {
-  return ptyManager.closePty(sessionId);
+  return ptyManager.closePty(sessionId, mainWindow);
 });
 
 ipcMain.handle('pty:exists', async (_event, sessionId: string) => {
