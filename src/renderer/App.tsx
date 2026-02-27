@@ -969,7 +969,10 @@ const App: React.FC = () => {
   // Save message attachments whenever tabs/messages change
   useEffect(() => {
     tabs.forEach((tab) => {
-      const attachments = tab.messages
+      const canonicalMessages = tab.messages.filter(
+        (msg) => msg.role === 'user' || msg.role === 'assistant'
+      );
+      const attachments = canonicalMessages
         .map((msg, index) => ({
           messageIndex: index,
           imageAttachments: msg.imageAttachments,
@@ -2974,10 +2977,9 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     [commitModal]
   );
 
-  // Handle image click (for now, just a no-op - can be extended for image viewer modal)
+  // Handle image click
   const handleImageClick = useCallback((src: string, alt: string) => {
-    // Placeholder for future image viewer modal
-    console.log('Image clicked:', src, alt);
+    setLightboxImage({ src, alt });
   }, []);
 
   // Handle confirmation from shrink modal
