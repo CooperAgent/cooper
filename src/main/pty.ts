@@ -21,9 +21,41 @@ interface PtyInstance {
   pty: pty.IPty;
   outputBuffer: string[];
   maxBufferLines: number;
+  batchBuffer: string;
+  batchTimer: NodeJS.Timeout | null;
 }
 
 const ptyInstances = new Map<string, PtyInstance>();
+const PTY_BATCH_INTERVAL_MS = 16;
+
+function flushBatchBuffer(
+  instance: Pick<PtyInstance, 'batchBuffer' | 'batchTimer'>,
+  sessionId: string,
+  windowRef: BrowserWindow | null
+): void {
+  if (instance.batchTimer) {
+    clearTimeout(instance.batchTimer);
+    instance.batchTimer = null;
+  }
+  if (instance.batchBuffer && windowRef && !windowRef.isDestroyed()) {
+    windowRef.webContents.send('pty:data', { sessionId, data: instance.batchBuffer });
+  }
+  instance.batchBuffer = '';
+}
+
+function enqueueBatchBuffer(
+  instance: Pick<PtyInstance, 'batchBuffer' | 'batchTimer'>,
+  sessionId: string,
+  data: string,
+  windowRef: BrowserWindow | null
+): void {
+  instance.batchBuffer += data;
+  if (!instance.batchTimer) {
+    instance.batchTimer = setTimeout(() => {
+      flushBatchBuffer(instance, sessionId, windowRef);
+    }, PTY_BATCH_INTERVAL_MS);
+  }
+}
 
 interface WindowsTerminalProfile {
   guid?: string;
@@ -467,6 +499,8 @@ export function createPty(
       pty: ptyProcess,
       outputBuffer: [],
       maxBufferLines: 1000,
+      batchBuffer: '',
+      batchTimer: null,
     };
 
     // Handle PTY data - only forward if this instance is still the active one
@@ -480,10 +514,7 @@ export function createPty(
         instance.outputBuffer = instance.outputBuffer.slice(-instance.maxBufferLines);
       }
 
-      // Send data to renderer
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('pty:data', { sessionId, data });
-      }
+      enqueueBatchBuffer(instance, sessionId, data, mainWindow);
     });
 
     // Handle PTY exit - only act if this instance is still the active one.
@@ -492,6 +523,7 @@ export function createPty(
     ptyProcess.onExit(({ exitCode }) => {
       if (ptyInstances.get(sessionId) !== instance) return;
 
+      flushBatchBuffer(instance, sessionId, mainWindow);
       console.log(`PTY for session ${sessionId} exited with code ${exitCode}`);
       ptyInstances.delete(sessionId);
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -578,6 +610,7 @@ export function closePty(sessionId: string): { success: boolean; error?: string 
   }
 
   try {
+    flushBatchBuffer(instance, sessionId, mainWindow);
     instance.pty.kill();
     ptyInstances.delete(sessionId);
     return { success: true };
@@ -602,4 +635,6 @@ export function closeAllPtys(): void {
 
 export const __ptyInternals = {
   splitCommandLine,
+  flushBatchBuffer,
+  enqueueBatchBuffer,
 };

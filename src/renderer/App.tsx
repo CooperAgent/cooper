@@ -35,12 +35,7 @@ import {
   ChoiceSelector,
   PaperclipIcon,
   MicButton,
-  SessionHistory,
-  FilePreviewModal,
-  EnvironmentModal,
-  UpdateAvailableModal,
   SpotlightTour,
-  ReleaseNotesModal,
   CodeBlockWithCopy,
   RepeatIcon,
   StarIcon,
@@ -49,7 +44,6 @@ import {
   SidebarDrawer,
   MenuIcon,
   ZapIcon,
-  SettingsModal,
   SettingsIcon,
   HelpCircleIcon,
   VolumeMuteIcon,
@@ -149,6 +143,20 @@ const SKILL_TYPE_LABELS: Record<Skill['type'], string> = {
   project: 'Project skills',
 };
 const SKILL_TYPE_ORDER: Skill['type'][] = ['personal', 'project'];
+const SessionHistoryLazy = React.lazy(() => import('./components/SessionHistory/SessionHistory'));
+const EnvironmentModalLazy = React.lazy(
+  () => import('./components/EnvironmentModal/EnvironmentModal')
+);
+const FilePreviewModalLazy = React.lazy(
+  () => import('./components/FilePreviewModal/FilePreviewModal')
+);
+const UpdateAvailableModalLazy = React.lazy(
+  () => import('./components/UpdateAvailableModal/UpdateAvailableModal')
+);
+const ReleaseNotesModalLazy = React.lazy(
+  () => import('./components/ReleaseNotesModal/ReleaseNotesModal')
+);
+const SettingsModalLazy = React.lazy(() => import('./components/SettingsModal/SettingsModal'));
 const App: React.FC = () => {
   const [status, setStatus] = useState<Status>('connecting');
   const [tabs, setTabs] = useState<TabState[]>([]);
@@ -218,6 +226,8 @@ const App: React.FC = () => {
   const { themePreference, activeTheme, availableThemes, setTheme, importTheme } = useTheme();
   // MCP Server state
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>({});
+  const [mcpConfigLoaded, setMcpConfigLoaded] = useState(false);
+  const [mcpConfigLoading, setMcpConfigLoading] = useState(false);
   const [showMcpServers, setShowMcpServers] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [showMcpJsonModal, setShowMcpJsonModal] = useState(false);
@@ -258,6 +268,8 @@ const App: React.FC = () => {
 
   // Subagents state (for chevron widget in right pane)
   const [showSubagents, setShowSubagents] = useState(false);
+  const [sessionContextLoadedForCwd, setSessionContextLoadedForCwd] = useState<string | null>(null);
+  const [sessionContextLoading, setSessionContextLoading] = useState(false);
 
   const instructionSections = useMemo(() => {
     const grouped = groupBy(instructions, (instruction) => instruction.type);
@@ -603,18 +615,6 @@ const App: React.FC = () => {
     return cleanup;
   }, []);
 
-  // Check if voice model is already loaded on mount
-  useEffect(() => {
-    if (!window.electronAPI?.voiceServer) return;
-    window.electronAPI.voiceServer.checkModel().then((check) => {
-      if (check.exists && check.binaryExists) {
-        window.electronAPI.voice.loadModel().then((result) => {
-          if (result.success) setVoiceModelLoaded(true);
-        });
-      }
-    });
-  }, []);
-
   // Voice initialization handler for settings page
   const handleInitVoice = useCallback(async () => {
     if (!window.electronAPI?.voiceServer) return;
@@ -665,6 +665,10 @@ const App: React.FC = () => {
   }, [soundEnabled]);
 
   useEffect(() => {
+    if (!showSettingsModal || diagnosticsPaths) {
+      return;
+    }
+
     let isMounted = true;
     const loadDiagnostics = async () => {
       try {
@@ -680,7 +684,7 @@ const App: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [showSettingsModal, diagnosticsPaths]);
 
   // Keep ref in sync with state (update prevActiveTabIdRef BEFORE activeTabIdRef)
   useEffect(() => {
@@ -792,8 +796,24 @@ const App: React.FC = () => {
       setUpdateInfo({ ...defaults, ...info });
       setShowUpdateModal(true);
     };
+    (window as any).showReleaseNotesModal = () => {
+      setShowReleaseNotesModal(true);
+    };
+    (window as any).showSessionHistoryModal = () => {
+      setShowSessionHistory(true);
+    };
+    (window as any).showEnvironmentModal = () => {
+      setShowEnvironmentModal(true);
+    };
+    (window as any).showFilePreviewModal = (filePath?: string) => {
+      setFilePreviewPath(filePath || 'README.md');
+    };
     return () => {
       delete (window as any).showUpdateModal;
+      delete (window as any).showReleaseNotesModal;
+      delete (window as any).showSessionHistoryModal;
+      delete (window as any).showEnvironmentModal;
+      delete (window as any).showFilePreviewModal;
     };
   }, []);
 
@@ -1128,31 +1148,49 @@ const App: React.FC = () => {
     }
   }, [isMobileOrTablet]);
 
-  // Load MCP servers on startup
-  useEffect(() => {
-    const loadMcpConfig = async () => {
+  const loadMcpConfig = useCallback(
+    async (force = false) => {
+      if (!force && (mcpConfigLoaded || mcpConfigLoading)) return;
+      setMcpConfigLoading(true);
       try {
         const config = await window.electronAPI.mcp.getConfig();
         setMcpServers(config.mcpServers || {});
+        setMcpConfigLoaded(true);
       } catch (error) {
         console.error('Failed to load MCP config:', error);
+      } finally {
+        setMcpConfigLoading(false);
       }
-    };
-    loadMcpConfig();
-  }, []);
+    },
+    [mcpConfigLoaded, mcpConfigLoading]
+  );
 
-  // Load skills/agents/instructions together on startup and when active tab changes
   useEffect(() => {
-    let cancelled = false;
-    const loadSessionContext = async () => {
+    if (!activeTabId) return;
+    const timer = setTimeout(() => {
+      void loadMcpConfig();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [activeTabId, loadMcpConfig]);
+
+  useEffect(() => {
+    if (!showMcpServers && !showMcpModal && !showMcpJsonModal && !mcpConfigLoading) return;
+    void loadMcpConfig();
+  }, [showMcpServers, showMcpModal, showMcpJsonModal, mcpConfigLoading, loadMcpConfig]);
+
+  const loadSessionContext = useCallback(
+    async (force = false) => {
+      const cwd = activeTab?.cwd || '';
+      if (!force && (sessionContextLoading || sessionContextLoadedForCwd === cwd)) return;
+
+      setSessionContextLoading(true);
       try {
-        const cwd = activeTab?.cwd;
-        const result = await window.electronAPI.sessionContext.getAll(cwd);
-        if (cancelled) return;
+        const result = await window.electronAPI.sessionContext.getAll(activeTab?.cwd);
 
         setSkills(result.skills.skills || []);
         setAgents(result.agents.agents || []);
         setInstructions(result.instructions.instructions || []);
+        setSessionContextLoadedForCwd(cwd);
 
         if (result.skills.errors?.length > 0) {
           console.warn('Some skills had errors:', result.skills.errors);
@@ -1161,16 +1199,20 @@ const App: React.FC = () => {
           console.warn('Some instructions had errors:', result.instructions.errors);
         }
       } catch (error) {
-        if (!cancelled) {
-          console.error('Failed to load session context:', error);
-        }
+        console.error('Failed to load session context:', error);
+      } finally {
+        setSessionContextLoading(false);
       }
-    };
-    loadSessionContext();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab?.cwd]);
+    },
+    [activeTab?.cwd, sessionContextLoading, sessionContextLoadedForCwd]
+  );
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadSessionContext();
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [activeTab?.cwd, loadSessionContext]);
 
   // Fetch worktree data to map worktree paths to original repo paths
   useEffect(() => {
@@ -1276,6 +1318,19 @@ const App: React.FC = () => {
 
       // If no sessions exist, we need to create one (with trust check)
       if (data.sessions.length === 0) {
+        if (data.clientUnavailable) {
+          setShowCliSetupModal(true);
+          setDataLoaded(true);
+          return;
+        }
+
+        const cliStatus = await window.electronAPI.copilot.checkCliStatus();
+        if (!cliStatus.cliInstalled || !cliStatus.authenticated) {
+          setShowCliSetupModal(true);
+          setDataLoaded(true);
+          return;
+        }
+
         // Check trust for current directory
         const cwd = await window.electronAPI.copilot.getCwd();
         const trustResult = await window.electronAPI.copilot.checkDirectoryTrust(cwd);
@@ -1314,7 +1369,9 @@ const App: React.FC = () => {
           setDataLoaded(true);
         } catch (error) {
           console.error('Failed to create initial session:', error);
-          setStatus('error');
+          setShowCliSetupModal(true);
+          setDataLoaded(true);
+          setStatus('connected');
         }
         return;
       }
@@ -3286,8 +3343,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       }
 
       // Reload config
-      const config = await window.electronAPI.mcp.getConfig();
-      setMcpServers(config.mcpServers || {});
+      await loadMcpConfig(true);
       setShowMcpModal(false);
     } catch (error) {
       console.error('Failed to save MCP server:', error);
@@ -3297,8 +3353,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
   const handleDeleteMcpServer = async (name: string) => {
     try {
       await window.electronAPI.mcp.deleteServer(name);
-      const config = await window.electronAPI.mcp.getConfig();
-      setMcpServers(config.mcpServers || {});
+      await loadMcpConfig(true);
     } catch (error) {
       console.error('Failed to delete MCP server:', error);
     }
@@ -3306,8 +3361,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
   const handleRefreshMcpServers = async () => {
     try {
-      const config = await window.electronAPI.mcp.getConfig();
-      setMcpServers(config.mcpServers || {});
+      await loadMcpConfig(true);
     } catch (error) {
       console.error('Failed to refresh MCP servers:', error);
     }
@@ -5380,8 +5434,16 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         index={index}
                         lastAssistantIndex={lastAssistantIndex}
                         isVoiceSpeaking={voiceSpeech.isSpeaking}
-                        activeTools={activeTab?.activeTools}
-                        activeSubagents={activeTab?.activeSubagents}
+                        activeTools={
+                          message.role === 'assistant' && message.isStreaming && message.content
+                            ? activeTab?.activeTools
+                            : undefined
+                        }
+                        activeSubagents={
+                          message.role === 'assistant' && message.isStreaming && message.content
+                            ? activeTab?.activeSubagents
+                            : undefined
+                        }
                         onStopSpeaking={voiceSpeech.stopSpeaking}
                         onImageClick={handleImageClick}
                         isHighlighted={isHighlighted}
@@ -6522,7 +6584,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                       </div>
                       {showMcpServers && (
                         <div className="max-h-48 overflow-y-auto">
-                          {mcpEntries.length === 0 ? (
+                          {mcpConfigLoading && !mcpConfigLoaded ? (
+                            <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
+                              Loading MCP servers...
+                            </div>
+                          ) : mcpEntries.length === 0 ? (
                             <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
                               No MCP servers configured
                             </div>
@@ -7087,18 +7153,22 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         </Modal>
 
         {/* Session History Modal */}
-        <SessionHistory
-          isOpen={showSessionHistory}
-          onClose={() => setShowSessionHistory(false)}
-          sessions={previousSessions}
-          activeSessions={tabs}
-          activeSessionId={activeTabId}
-          onResumeSession={handleResumePreviousSession}
-          onSwitchToSession={handleSwitchTab}
-          onDeleteSession={handleDeleteSessionFromHistory}
-          onRemoveWorktreeSession={handleRemoveWorktreeSession}
-          onOpenWorktreeSession={handleOpenWorktreeSession}
-        />
+        {showSessionHistory && (
+          <React.Suspense fallback={null}>
+            <SessionHistoryLazy
+              isOpen={showSessionHistory}
+              onClose={() => setShowSessionHistory(false)}
+              sessions={previousSessions}
+              activeSessions={tabs}
+              activeSessionId={activeTabId}
+              onResumeSession={handleResumePreviousSession}
+              onSwitchToSession={handleSwitchTab}
+              onDeleteSession={handleDeleteSessionFromHistory}
+              onRemoveWorktreeSession={handleRemoveWorktreeSession}
+              onOpenWorktreeSession={handleOpenWorktreeSession}
+            />
+          </React.Suspense>
+        )}
 
         {/* Create Worktree Session Modal */}
         <CreateWorktreeSession
@@ -7148,146 +7218,168 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         )}
 
         {/* Environment Modal */}
-        <EnvironmentModal
-          isOpen={showEnvironmentModal}
-          onClose={() => setShowEnvironmentModal(false)}
-          instructions={instructions}
-          skills={skills}
-          agents={agents}
-          cwd={activeTab?.cwd}
-          initialTab={environmentTab}
-          initialInstructionPath={environmentInstructionPath}
-          initialSkillPath={environmentSkillPath}
-          initialAgentPath={environmentAgentPath}
-          fileViewMode={activeTab?.fileViewMode || 'flat'}
-          onViewModeChange={(mode) => {
-            if (activeTab) {
-              updateTab(activeTab.id, { fileViewMode: mode });
-            }
-          }}
-          onTabChange={(tab) => setEnvironmentTab(tab)}
-        />
+        {showEnvironmentModal && (
+          <React.Suspense fallback={null}>
+            <EnvironmentModalLazy
+              isOpen={showEnvironmentModal}
+              onClose={() => setShowEnvironmentModal(false)}
+              instructions={instructions}
+              skills={skills}
+              agents={agents}
+              cwd={activeTab?.cwd}
+              initialTab={environmentTab}
+              initialInstructionPath={environmentInstructionPath}
+              initialSkillPath={environmentSkillPath}
+              initialAgentPath={environmentAgentPath}
+              fileViewMode={activeTab?.fileViewMode || 'flat'}
+              onViewModeChange={(mode) => {
+                if (activeTab) {
+                  updateTab(activeTab.id, { fileViewMode: mode });
+                }
+              }}
+              onTabChange={(tab) => setEnvironmentTab(tab)}
+            />
+          </React.Suspense>
+        )}
 
         {/* File Preview Modal */}
-        <FilePreviewModal
-          isOpen={!!filePreviewPath}
-          onClose={() => setFilePreviewPath(null)}
-          filePath={filePreviewPath || ''}
-          cwd={activeTab?.cwd}
-          isGitRepo={isGitRepo}
-          editedFiles={activeTab ? getCleanEditedFiles(activeTab.editedFiles) : []}
-          untrackedFiles={activeTab?.untrackedFiles || []}
-          conflictedFiles={commitModal.conflictedFiles}
-          fileViewMode={activeTab?.fileViewMode || 'flat'}
-          onUntrackFile={(filePath) => {
-            if (activeTab) {
-              const newUntracked = [...(activeTab.untrackedFiles || []), filePath];
-              updateTab(activeTab.id, { untrackedFiles: newUntracked });
-            }
-          }}
-          onRetrackFile={(filePath) => {
-            if (activeTab) {
-              const newUntracked = (activeTab.untrackedFiles || []).filter((f) => f !== filePath);
-              updateTab(activeTab.id, { untrackedFiles: newUntracked });
-            }
-          }}
-          onViewModeChange={(mode) => {
-            if (activeTab) {
-              updateTab(activeTab.id, { fileViewMode: mode });
-            }
-          }}
-        />
+        {filePreviewPath && (
+          <React.Suspense fallback={null}>
+            <FilePreviewModalLazy
+              isOpen={!!filePreviewPath}
+              onClose={() => setFilePreviewPath(null)}
+              filePath={filePreviewPath || ''}
+              cwd={activeTab?.cwd}
+              isGitRepo={isGitRepo}
+              editedFiles={activeTab ? getCleanEditedFiles(activeTab.editedFiles) : []}
+              untrackedFiles={activeTab?.untrackedFiles || []}
+              conflictedFiles={commitModal.conflictedFiles}
+              fileViewMode={activeTab?.fileViewMode || 'flat'}
+              onUntrackFile={(filePath) => {
+                if (activeTab) {
+                  const newUntracked = [...(activeTab.untrackedFiles || []), filePath];
+                  updateTab(activeTab.id, { untrackedFiles: newUntracked });
+                }
+              }}
+              onRetrackFile={(filePath) => {
+                if (activeTab) {
+                  const newUntracked = (activeTab.untrackedFiles || []).filter(
+                    (f) => f !== filePath
+                  );
+                  updateTab(activeTab.id, { untrackedFiles: newUntracked });
+                }
+              }}
+              onViewModeChange={(mode) => {
+                if (activeTab) {
+                  updateTab(activeTab.id, { fileViewMode: mode });
+                }
+              }}
+            />
+          </React.Suspense>
+        )}
 
         {/* Update Available Modal */}
-        <UpdateAvailableModal
-          isOpen={showUpdateModal}
-          onClose={() => setShowUpdateModal(false)}
-          currentVersion={updateInfo?.currentVersion || buildInfo.baseVersion}
-          newVersion={updateInfo?.latestVersion || ''}
-          onDontRemind={() => {
-            if (updateInfo?.latestVersion) {
-              window.electronAPI.updates.dismissVersion(updateInfo.latestVersion);
-            }
-          }}
-        />
+        {showUpdateModal && (
+          <React.Suspense fallback={null}>
+            <UpdateAvailableModalLazy
+              isOpen={showUpdateModal}
+              onClose={() => setShowUpdateModal(false)}
+              currentVersion={updateInfo?.currentVersion || buildInfo.baseVersion}
+              newVersion={updateInfo?.latestVersion || ''}
+              onDontRemind={() => {
+                if (updateInfo?.latestVersion) {
+                  window.electronAPI.updates.dismissVersion(updateInfo.latestVersion);
+                }
+              }}
+            />
+          </React.Suspense>
+        )}
 
         {/* Release Notes Modal */}
-        <ReleaseNotesModal
-          isOpen={showReleaseNotesModal}
-          onClose={() => {
-            setShowReleaseNotesModal(false);
-            // Show update modal if there's an update available
-            if (updateInfo) {
-              setShowUpdateModal(true);
-            }
-          }}
-          version={buildInfo.baseVersion}
-          releaseNotes={buildInfo.releaseNotes || ''}
-        />
+        {showReleaseNotesModal && (
+          <React.Suspense fallback={null}>
+            <ReleaseNotesModalLazy
+              isOpen={showReleaseNotesModal}
+              onClose={() => {
+                setShowReleaseNotesModal(false);
+                // Show update modal if there's an update available
+                if (updateInfo) {
+                  setShowUpdateModal(true);
+                }
+              }}
+              version={buildInfo.baseVersion}
+              releaseNotes={buildInfo.releaseNotes || ''}
+            />
+          </React.Suspense>
+        )}
 
         {/* Settings Modal */}
-        <SettingsModal
-          isOpen={showSettingsModal}
-          onClose={() => {
-            setShowSettingsModal(false);
-            setSettingsDefaultSection(undefined);
-          }}
-          soundEnabled={soundEnabled}
-          onSoundEnabledChange={handleSoundEnabledChange}
-          defaultSection={settingsDefaultSection}
-          zoomFactor={zoomFactor}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onResetZoom={handleResetZoom}
-          // Voice settings
-          voiceSupported={voiceSpeech.isSupported}
-          voiceMuted={voiceSpeech.isMuted}
-          onToggleVoiceMute={voiceSpeech.toggleMute}
-          pushToTalk={pushToTalk}
-          onTogglePushToTalk={handleTogglePushToTalk}
-          alwaysListening={alwaysListening}
-          onToggleAlwaysListening={handleToggleAlwaysListening}
-          // Voice status
-          isRecording={voiceSpeech.isRecording}
-          isSpeaking={voiceSpeech.isSpeaking}
-          isModelLoading={voiceModelLoading}
-          modelLoaded={voiceModelLoaded}
-          voiceError={voiceInitError}
-          alwaysListeningError={alwaysListeningError}
-          voiceDownloadProgress={voiceDownloadProgress}
-          onInitVoice={handleInitVoice}
-          availableVoices={voiceSpeech.availableVoices}
-          selectedVoiceURI={voiceSpeech.selectedVoiceURI}
-          onVoiceChange={voiceSpeech.setSelectedVoiceURI}
-          // Global commands
-          globalSafeCommands={globalSafeCommands}
-          onAddGlobalSafeCommand={async (cmd) => {
-            try {
-              await window.electronAPI.copilot.addGlobalSafeCommand(cmd);
-              setGlobalSafeCommands((prev) => [...prev, cmd]);
-            } catch (error) {
-              console.error('Failed to add global safe command:', error);
-            }
-          }}
-          onRemoveGlobalSafeCommand={handleRemoveGlobalSafeCommand}
-          diagnosticsPaths={diagnosticsPaths}
-          recursiveAgentSkillsScan={recursiveAgentSkillsScan}
-          onToggleRecursiveAgentSkillsScan={handleToggleRecursiveAgentSkillsScan}
-          onRevealLogFile={async (pathToReveal) => {
-            try {
-              await window.electronAPI.file.revealInFolder(pathToReveal);
-            } catch (error) {
-              console.error('Failed to reveal log path:', error);
-            }
-          }}
-          onOpenCrashDumps={async (pathToOpen) => {
-            try {
-              await window.electronAPI.file.openFile(pathToOpen);
-            } catch (error) {
-              console.error('Failed to reveal crash dumps path:', error);
-            }
-          }}
-        />
+        {showSettingsModal && (
+          <React.Suspense fallback={null}>
+            <SettingsModalLazy
+              isOpen={showSettingsModal}
+              onClose={() => {
+                setShowSettingsModal(false);
+                setSettingsDefaultSection(undefined);
+              }}
+              soundEnabled={soundEnabled}
+              onSoundEnabledChange={handleSoundEnabledChange}
+              defaultSection={settingsDefaultSection}
+              zoomFactor={zoomFactor}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onResetZoom={handleResetZoom}
+              // Voice settings
+              voiceSupported={voiceSpeech.isSupported}
+              voiceMuted={voiceSpeech.isMuted}
+              onToggleVoiceMute={voiceSpeech.toggleMute}
+              pushToTalk={pushToTalk}
+              onTogglePushToTalk={handleTogglePushToTalk}
+              alwaysListening={alwaysListening}
+              onToggleAlwaysListening={handleToggleAlwaysListening}
+              // Voice status
+              isRecording={voiceSpeech.isRecording}
+              isSpeaking={voiceSpeech.isSpeaking}
+              isModelLoading={voiceModelLoading}
+              modelLoaded={voiceModelLoaded}
+              voiceError={voiceInitError}
+              alwaysListeningError={alwaysListeningError}
+              voiceDownloadProgress={voiceDownloadProgress}
+              onInitVoice={handleInitVoice}
+              availableVoices={voiceSpeech.availableVoices}
+              selectedVoiceURI={voiceSpeech.selectedVoiceURI}
+              onVoiceChange={voiceSpeech.setSelectedVoiceURI}
+              // Global commands
+              globalSafeCommands={globalSafeCommands}
+              onAddGlobalSafeCommand={async (cmd) => {
+                try {
+                  await window.electronAPI.copilot.addGlobalSafeCommand(cmd);
+                  setGlobalSafeCommands((prev) => [...prev, cmd]);
+                } catch (error) {
+                  console.error('Failed to add global safe command:', error);
+                }
+              }}
+              onRemoveGlobalSafeCommand={handleRemoveGlobalSafeCommand}
+              diagnosticsPaths={diagnosticsPaths}
+              recursiveAgentSkillsScan={recursiveAgentSkillsScan}
+              onToggleRecursiveAgentSkillsScan={handleToggleRecursiveAgentSkillsScan}
+              onRevealLogFile={async (pathToReveal) => {
+                try {
+                  await window.electronAPI.file.revealInFolder(pathToReveal);
+                } catch (error) {
+                  console.error('Failed to reveal log path:', error);
+                }
+              }}
+              onOpenCrashDumps={async (pathToOpen) => {
+                try {
+                  await window.electronAPI.file.openFile(pathToOpen);
+                } catch (error) {
+                  console.error('Failed to reveal crash dumps path:', error);
+                }
+              }}
+            />
+          </React.Suspense>
+        )}
 
         {/* Welcome Wizard - Spotlight Tour */}
         <SpotlightTour

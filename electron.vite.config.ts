@@ -36,6 +36,12 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/renderer/index.html'),
         },
+        output: {
+          manualChunks: {
+            // Separate markdown dependencies into their own chunk for better caching
+            markdown: ['react-markdown', 'remark-gfm'],
+          },
+        },
       },
     },
     plugins: [react()],

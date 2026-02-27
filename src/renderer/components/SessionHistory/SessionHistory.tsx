@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useDeferredValue, useState, useMemo, useEffect, useRef } from 'react';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { Spinner } from '../Spinner';
@@ -7,6 +7,8 @@ import { PreviousSession, TabState, WorktreeRemovalStatus } from '../../types';
 
 // Filter options for the session list
 type SessionFilter = 'all' | 'worktree';
+const INITIAL_RENDER_LIMIT = 200;
+const RENDER_CHUNK_SIZE = 200;
 
 // Extended session type that includes active flag
 interface DisplaySession extends PreviousSession {
@@ -215,6 +217,8 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
     hasUnpushed: boolean;
   } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const [renderLimit, setRenderLimit] = useState(INITIAL_RENDER_LIMIT);
 
   // Worktree data fetched directly (for detecting active worktrees and adding standalone worktrees)
   const [worktreeMap, setWorktreeMap] = useState<Map<string, WorktreeData>>(new Map());
@@ -378,33 +382,38 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
   }, [activeSessions, sessions, worktreeMap]);
 
   // Filter sessions based on search query AND filter type
+  const searchableSessions = useMemo(
+    () =>
+      allSessions.map((session) => ({
+        session,
+        searchableText: [
+          session.name || '',
+          session.sessionId,
+          session.cwd || '',
+          session.worktree?.branch || '',
+        ]
+          .join('\n')
+          .toLowerCase(),
+      })),
+    [allSessions]
+  );
+
   const filteredSessions = useMemo(() => {
-    let result = allSessions;
+    let result = searchableSessions;
 
     // Apply filter type
     if (filter === 'worktree') {
-      result = result.filter((session) => session.worktree);
+      result = result.filter(({ session }) => session.worktree);
     }
 
     // Apply search query
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter((session) => {
-        const name = (session.name || '').toLowerCase();
-        const sessionId = session.sessionId.toLowerCase();
-        const cwd = (session.cwd || '').toLowerCase();
-        const branch = (session.worktree?.branch || '').toLowerCase();
-        return (
-          name.includes(query) ||
-          sessionId.includes(query) ||
-          cwd.includes(query) ||
-          branch.includes(query)
-        );
-      });
+    if (deferredSearchQuery.trim()) {
+      const query = deferredSearchQuery.toLowerCase();
+      result = result.filter(({ searchableText }) => searchableText.includes(query));
     }
 
-    return result;
-  }, [allSessions, searchQuery, filter]);
+    return result.map(({ session }) => session);
+  }, [searchableSessions, deferredSearchQuery, filter]);
 
   // Count worktree sessions for filter badge
   const worktreeCount = useMemo(() => {
@@ -415,6 +424,35 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
   const categorizedSessions = useMemo(() => {
     return categorizeByTime(filteredSessions);
   }, [filteredSessions]);
+
+  // Progressive rendering for very large result sets
+  useEffect(() => {
+    if (isOpen) {
+      setRenderLimit(INITIAL_RENDER_LIMIT);
+    }
+  }, [isOpen, deferredSearchQuery, filter]);
+
+  const visibleCategorizedSessions = useMemo(() => {
+    let remainingSlots = renderLimit;
+    return categorizedSessions
+      .map((category) => {
+        if (remainingSlots <= 0) return null;
+        const visibleSessions = category.sessions.slice(0, remainingSlots);
+        remainingSlots -= visibleSessions.length;
+        if (visibleSessions.length === 0) return null;
+        return { ...category, sessions: visibleSessions };
+      })
+      .filter((category): category is { label: string; sessions: DisplaySession[] } => !!category);
+  }, [categorizedSessions, renderLimit]);
+
+  const handleListScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    if (renderLimit >= filteredSessions.length) return;
+    const target = event.currentTarget;
+    const isNearBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 80;
+    if (isNearBottom) {
+      setRenderLimit((previous) => Math.min(previous + RENDER_CHUNK_SIZE, filteredSessions.length));
+    }
+  };
 
   const handleSessionClick = (session: DisplaySession) => {
     if (session.worktree && onOpenWorktreeSession) {
@@ -612,7 +650,7 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
         </div>
 
         {/* Sessions List */}
-        <div className="max-h-[400px] overflow-y-auto">
+        <div className="max-h-[400px] overflow-y-auto" onScroll={handleListScroll}>
           {filteredSessions.length === 0 ? (
             <div className="p-8 text-center text-copilot-text-muted">
               {searchQuery ? (
@@ -630,7 +668,7 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
             </div>
           ) : (
             <div className="py-2">
-              {categorizedSessions.map((category) => (
+              {visibleCategorizedSessions.map((category) => (
                 <div key={category.label}>
                   {/* Category Header */}
                   <div className="px-3 py-1.5 text-xs font-medium text-copilot-text-muted bg-copilot-surface sticky top-0 z-10">
@@ -743,7 +781,8 @@ export const SessionHistory: React.FC<SessionHistoryProps> = ({
           <span>
             {searchQuery || filter === 'worktree' ? (
               <>
-                {filteredSessions.length} of {allSessions.length} sessions
+                {Math.min(renderLimit, filteredSessions.length)} of {filteredSessions.length}{' '}
+                sessions ({allSessions.length} total)
               </>
             ) : (
               <>

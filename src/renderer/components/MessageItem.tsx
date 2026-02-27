@@ -149,6 +149,9 @@ export const MessageItem = memo<MessageItemProps>(
     );
   },
   (prevProps, nextProps) => {
+    const isLiveAssistantMessage = (props: MessageItemProps) =>
+      props.message.role === 'assistant' && props.message.isStreaming && !!props.message.content;
+
     // Custom comparison to optimize re-renders
     return (
       prevProps.message.id === nextProps.message.id &&
@@ -158,8 +161,9 @@ export const MessageItem = memo<MessageItemProps>(
       prevProps.index === nextProps.index &&
       prevProps.lastAssistantIndex === nextProps.lastAssistantIndex &&
       prevProps.isVoiceSpeaking === nextProps.isVoiceSpeaking &&
-      prevProps.activeTools === nextProps.activeTools &&
-      prevProps.activeSubagents === nextProps.activeSubagents &&
+      (!isLiveAssistantMessage(prevProps) ||
+        (prevProps.activeTools === nextProps.activeTools &&
+          prevProps.activeSubagents === nextProps.activeSubagents)) &&
       prevProps.message.tools === nextProps.message.tools &&
       prevProps.message.subagents === nextProps.message.subagents &&
       prevProps.message.imageAttachments === nextProps.message.imageAttachments &&
