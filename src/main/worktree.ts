@@ -306,7 +306,7 @@ async function isBranchInWorktree(repoPath: string, branch: string): Promise<str
 export async function createWorktreeSession(
   repoPath: string,
   branch: string,
-  baseBranch: string
+  baseBranch?: string
 ): Promise<{
   success: boolean;
   session?: WorktreeSession;
@@ -314,12 +314,22 @@ export async function createWorktreeSession(
 }> {
   const config = loadConfig();
 
+  if (!repoPath) {
+    return { success: false, error: 'Repository path is required' };
+  }
+  if (!branch || !branch.trim()) {
+    return { success: false, error: 'Branch name is required' };
+  }
+
   // Sanitize branch name for git compatibility
   const sanitizedBranch = sanitizeBranchName(branch);
-  if (!baseBranch.trim()) {
-    return { success: false, error: 'Base branch is required' };
+
+  // Default baseBranch to current branch of the repo
+  const resolvedBaseBranch = baseBranch?.trim() || (await getCurrentBranch(repoPath));
+  if (!resolvedBaseBranch) {
+    return { success: false, error: 'Could not determine base branch. Pass baseBranch explicitly.' };
   }
-  const sanitizedBaseBranch = sanitizeBranchName(baseBranch);
+  const sanitizedBaseBranch = sanitizeBranchName(resolvedBaseBranch);
 
   // Validate git is available and version is sufficient
   const gitCheck = await checkGitVersion();
