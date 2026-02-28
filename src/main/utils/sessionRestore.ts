@@ -7,7 +7,16 @@ export const resolveSessionName = ({
   persistedName?: string;
   summary?: string;
 }): string | undefined => {
-  return storedName || persistedName || summary || undefined;
+  const isUsableName = (value?: string): value is string => {
+    if (!value) return false;
+    const normalized = value.trim();
+    return normalized.length > 0 && normalized.toLowerCase() !== 'unknown';
+  };
+
+  if (isUsableName(storedName)) return storedName;
+  if (isUsableName(persistedName)) return persistedName;
+  if (isUsableName(summary)) return summary;
+  return undefined;
 };
 
 export const mergeSessionCwds = <T extends { sessionId: string; cwd?: string }>(

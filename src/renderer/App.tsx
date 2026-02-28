@@ -98,6 +98,11 @@ import { LONG_OUTPUT_LINE_THRESHOLD } from './utils/cliOutputCompression';
 import { isAsciiDiagram, extractTextContent } from './utils/isAsciiDiagram';
 import { isCliCommand } from './utils/isCliCommand';
 import { groupAgents } from './utils/agentPicker';
+import {
+  buildFallbackSessionAgents,
+  getActivePrimaryAgentLabel,
+  type SessionAgentOption,
+} from './utils/primaryAgent';
 import { parseGitHubIssueUrl } from './utils/parseGitHubIssueUrl';
 import { useClickOutside, useResponsive, useVoiceSpeech } from './hooks';
 import buildInfo from './build-info.json';
@@ -261,6 +266,9 @@ const App: React.FC = () => {
     }
   });
   const [selectedAgentByTab, setSelectedAgentByTab] = useState<Record<string, string | null>>({});
+  const [sessionAgentsByTab, setSessionAgentsByTab] = useState<
+    Record<string, SessionAgentOption[]>
+  >({});
 
   // Copilot Instructions state
   const [instructions, setInstructions] = useState<Instruction[]>([]);
@@ -886,6 +894,12 @@ const App: React.FC = () => {
   // Get the active tab (defined early for use in effects below)
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
+  const loadSessionAgents = useCallback(async (sessionId: string) => {
+    const sessionAgents = await window.electronAPI.copilot.getSessionAgents(sessionId);
+    setSessionAgentsByTab((prev) => ({ ...prev, [sessionId]: sessionAgents }));
+    return sessionAgents;
+  }, []);
+
   // Fetch model capabilities when active tab changes
   useEffect(() => {
     if (activeTab && activeTab.model && !modelCapabilities[activeTab.model]) {
@@ -903,6 +917,21 @@ const App: React.FC = () => {
         .catch(console.error);
     }
   }, [activeTab?.model]);
+
+  useEffect(() => {
+    if (!activeTab?.id) return;
+    void loadSessionAgents(activeTab.id).catch((error) => {
+      console.error('Failed to load available session agents:', error);
+    });
+    window.electronAPI.copilot
+      .getActiveAgent(activeTab.id)
+      .then((agent) => {
+        setSelectedAgentByTab((prev) => ({ ...prev, [activeTab.id]: agent?.name ?? null }));
+      })
+      .catch((error) => {
+        console.error('Failed to fetch active session agent:', error);
+      });
+  }, [activeTab?.id, loadSessionAgents]);
 
   // Save draft state to departing tab and restore from arriving tab on tab switch
   useEffect(() => {
@@ -969,10 +998,7 @@ const App: React.FC = () => {
   // Save message attachments whenever tabs/messages change
   useEffect(() => {
     tabs.forEach((tab) => {
-      const canonicalMessages = tab.messages.filter(
-        (msg) => msg.role === 'user' || msg.role === 'assistant'
-      );
-      const attachments = canonicalMessages
+      const attachments = tab.messages
         .map((msg, index) => ({
           messageIndex: index,
           imageAttachments: msg.imageAttachments,
@@ -2977,9 +3003,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     [commitModal]
   );
 
-  // Handle image click
+  // Handle image click (for now, just a no-op - can be extended for image viewer modal)
   const handleImageClick = useCallback((src: string, alt: string) => {
-    setLightboxImage({ src, alt });
+    // Placeholder for future image viewer modal
+    console.log('Image clicked:', src, alt);
   }, []);
 
   // Handle confirmation from shrink modal
@@ -4214,6 +4241,76 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     }
   };
 
+  const handleAgentChange = async (agentName: string | null): Promise<void> => {
+    if (!activeTab) return;
+    const currentAgentName = selectedAgentByTab[activeTab.id] ?? null;
+    if (currentAgentName === agentName) return;
+
+    setStatus('connecting');
+    try {
+      const previousTabId = activeTab.id;
+      const hasMessages = activeTab.messages.length > 0;
+      console.info(
+        `[AgentSelection][${previousTabId}] request agent=${agentName ?? 'default'} hasMessages=${hasMessages}`
+      );
+      const result = await window.electronAPI.copilot.setActiveAgent(
+        previousTabId,
+        agentName || undefined,
+        hasMessages
+      );
+      console.info(
+        `[AgentSelection][${previousTabId}] response active=${result.activeAgent?.name ?? 'default'} session=${result.sessionId}`
+      );
+      if (agentName && result.activeAgent?.name !== agentName) {
+        throw new Error(
+          `Selected agent '${agentName}' could not be activated (active: ${result.activeAgent?.name ?? 'default'})`
+        );
+      }
+
+      setSelectedAgentByTab((prev) => {
+        const next = { ...prev, [result.sessionId]: result.activeAgent?.name ?? null };
+        if (result.sessionId !== previousTabId) {
+          delete next[previousTabId];
+        }
+        return next;
+      });
+      setSessionAgentsByTab((prev) => {
+        if (result.sessionId === previousTabId || !prev[previousTabId]) {
+          return prev;
+        }
+        const next = { ...prev, [result.sessionId]: prev[previousTabId] };
+        delete next[previousTabId];
+        return next;
+      });
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === previousTabId
+            ? {
+                ...tab,
+                id: result.sessionId,
+                cwd: result.cwd || tab.cwd,
+                activeAgentName: result.activeAgent?.displayName,
+              }
+            : tab
+        )
+      );
+      setActiveTabId(result.sessionId);
+    } catch (error) {
+      console.error('Failed to change active agent:', error);
+    } finally {
+      setStatus('connected');
+    }
+  };
+
+  const handleCompactSession = async (): Promise<void> => {
+    if (!activeTab || activeTab.compactionStatus === 'compacting') return;
+    try {
+      await window.electronAPI.copilot.compactSession(activeTab.id);
+    } catch (error) {
+      console.error('Failed to compact session:', error);
+    }
+  };
+
   const handleToggleFavoriteModel = async (modelId: string) => {
     const isFavorite = favoriteModels.includes(modelId);
     try {
@@ -4264,14 +4361,20 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     return groupAgents(allAgents, favoriteAgents);
   }, [allAgents, favoriteAgents]);
 
-  const activeAgentPath = activeTab
-    ? (selectedAgentByTab[activeTab.id] ?? COOPER_DEFAULT_AGENT.path)
-    : null;
-  const activeAgent = useMemo(() => {
-    return activeAgentPath
-      ? allAgents.find((agent) => agent.path === activeAgentPath) || null
-      : null;
-  }, [allAgents, activeAgentPath]);
+  const fallbackSessionAgents = useMemo(
+    () => buildFallbackSessionAgents(groupedAgents, COOPER_DEFAULT_AGENT.path),
+    [groupedAgents]
+  );
+
+  const availableSessionAgents = activeTab ? sessionAgentsByTab[activeTab.id] || [] : [];
+  const selectableAgents =
+    availableSessionAgents.length > 0 ? availableSessionAgents : fallbackSessionAgents;
+  const activePrimaryAgentName = activeTab ? (selectedAgentByTab[activeTab.id] ?? null) : null;
+  const activePrimaryAgentLabel = getActivePrimaryAgentLabel(
+    selectableAgents,
+    activePrimaryAgentName,
+    COOPER_DEFAULT_AGENT.name
+  );
 
   // Callbacks for TerminalProvider
   const handleOpenTerminal = useCallback(() => {
@@ -6011,6 +6114,113 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                       )}
                     </div>
 
+                    {/* Agents Selector */}
+                    <div className="relative">
+                      <button
+                        onClick={async () => {
+                          const newState = openTopBarSelector === 'agents' ? null : 'agents';
+                          setOpenTopBarSelector(newState);
+                          if (newState === 'agents' && activeTab) {
+                            try {
+                              await loadSessionAgents(activeTab.id);
+                            } catch (error) {
+                              console.error('Failed to refresh session agents:', error);
+                            }
+                          }
+                        }}
+                        className={`flex items-center gap-1.5 px-3 h-[39px] text-xs transition-colors ${
+                          openTopBarSelector === 'agents'
+                            ? 'text-copilot-accent bg-copilot-surface-hover'
+                            : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover'
+                        }`}
+                        title="Select main agent"
+                      >
+                        <ZapIcon size={12} />
+                        <span className="font-medium truncate max-w-[120px]">
+                          {activePrimaryAgentLabel}
+                        </span>
+                        <ChevronDownIcon
+                          size={10}
+                          className={`transition-transform duration-200 ${openTopBarSelector === 'agents' ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                      {openTopBarSelector === 'agents' && (
+                        <div
+                          className="absolute bottom-full left-0 z-50 mb-0.5 w-72 max-h-80 overflow-y-auto bg-copilot-surface border border-copilot-border rounded-lg"
+                          style={{
+                            boxShadow:
+                              '0 -4px 6px -1px rgb(0 0 0 / 0.1), 0 -2px 4px -2px rgb(0 0 0 / 0.1)',
+                          }}
+                        >
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
+                              void handleAgentChange(null);
+                              setOpenTopBarSelector(null);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                void handleAgentChange(null);
+                                setOpenTopBarSelector(null);
+                              }
+                            }}
+                            className={`w-full px-3 py-2 text-xs text-left hover:bg-copilot-surface-hover transition-colors ${
+                              !activePrimaryAgentName
+                                ? 'text-copilot-accent bg-copilot-surface'
+                                : 'text-copilot-text'
+                            }`}
+                          >
+                            {!activePrimaryAgentName && (
+                              <span className="text-copilot-accent">✔ </span>
+                            )}
+                            {COOPER_DEFAULT_AGENT.name}
+                          </div>
+                          {selectableAgents.length > 0 && (
+                            <div className="border-t border-copilot-border">
+                              {selectableAgents.map((agent) => (
+                                <div
+                                  key={agent.name}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => {
+                                    void handleAgentChange(agent.name);
+                                    setOpenTopBarSelector(null);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      void handleAgentChange(agent.name);
+                                      setOpenTopBarSelector(null);
+                                    }
+                                  }}
+                                  className={`w-full px-3 py-2 text-xs hover:bg-copilot-surface-hover transition-colors ${
+                                    activePrimaryAgentName === agent.name
+                                      ? 'text-copilot-accent bg-copilot-surface'
+                                      : 'text-copilot-text'
+                                  }`}
+                                  title={agent.description || agent.displayName}
+                                >
+                                  <div className="truncate">
+                                    {activePrimaryAgentName === agent.name && (
+                                      <span className="text-copilot-accent">✔ </span>
+                                    )}
+                                    {agent.displayName}
+                                  </div>
+                                  {agent.description && (
+                                    <div className="text-[10px] text-copilot-text-muted truncate mt-0.5">
+                                      {agent.description}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Loops Selector */}
                     <div className="relative">
                       <button
@@ -6230,6 +6440,17 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     {/* Context Usage Tracker */}
                     {activeTab?.contextUsage && (
                       <div className="ml-auto flex items-center gap-2 px-3 h-[39px] text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleCompactSession();
+                          }}
+                          disabled={activeTab.compactionStatus === 'compacting'}
+                          className="px-1.5 py-0.5 rounded border border-copilot-border text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Compact session context"
+                        >
+                          Compact
+                        </button>
                         {activeTab.compactionStatus === 'compacting' ? (
                           <>
                             <span className="text-copilot-warning animate-pulse">

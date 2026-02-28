@@ -20,6 +20,16 @@ describe('resolveSessionName', () => {
       })
     ).toBe('Renamed Session');
   });
+
+  it("treats 'Unknown' placeholders as missing", () => {
+    expect(
+      resolveSessionName({
+        storedName: 'Unknown',
+        persistedName: 'unknown',
+        summary: 'Unknown',
+      })
+    ).toBeUndefined();
+  });
 });
 
 describe('mergeSessionCwds', () => {

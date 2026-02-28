@@ -243,8 +243,26 @@ const electronAPI = {
       sessionId: string,
       agentName: string | undefined,
       hasMessages: boolean
-    ): Promise<{ sessionId: string; model: string; cwd?: string }> => {
+    ): Promise<{
+      sessionId: string;
+      model: string;
+      cwd?: string;
+      activeAgent?: { name: string; displayName: string; description?: string } | null;
+    }> => {
       return ipcRenderer.invoke('copilot:setActiveAgent', { sessionId, agentName, hasMessages });
+    },
+    getSessionAgents: (
+      sessionId: string
+    ): Promise<Array<{ name: string; displayName: string; description?: string }>> => {
+      return ipcRenderer.invoke('copilot:getSessionAgents', sessionId);
+    },
+    getActiveAgent: (
+      sessionId: string
+    ): Promise<{ name: string; displayName: string; description?: string } | null> => {
+      return ipcRenderer.invoke('copilot:getActiveAgent', sessionId);
+    },
+    compactSession: (sessionId: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('copilot:compactSession', sessionId);
     },
     getModels: (): Promise<{
       models: { id: string; name: string; multiplier: number }[];
