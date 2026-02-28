@@ -961,6 +961,7 @@ const App: React.FC = () => {
       fileViewMode: t.fileViewMode,
       yoloMode: t.yoloMode,
       activeAgentName: t.activeAgentName,
+      activeAgentPath: t.activeAgentPath,
       sourceIssue: t.sourceIssue,
     }));
     window.electronAPI.copilot.saveOpenSessions(openSessions);
@@ -1419,6 +1420,7 @@ const App: React.FC = () => {
               reviewNote: s.reviewNote,
               yoloMode: s.yoloMode,
               activeAgentName: s.activeAgentName,
+              activeAgentPath: s.activeAgentPath,
               sourceIssue: s.sourceIssue,
             };
           });
@@ -1435,6 +1437,19 @@ const App: React.FC = () => {
 
       // Don't load messages here - sessions are still pending resumption
       // The copilot:sessionResumed handler below will load messages when each session is actually ready
+
+      // Restore agent selections from persisted sessions
+      const restoredAgents: Record<string, string | null> = {};
+      for (const s of data.sessions) {
+        if (s.activeAgentPath) {
+          restoredAgents[s.sessionId] = s.activeAgentPath;
+          // Agent content will be re-cached in main process after session resumption
+          // (see onSessionResumed handler below)
+        }
+      }
+      if (Object.keys(restoredAgents).length > 0) {
+        setSelectedAgentByTab((prev) => ({ ...prev, ...restoredAgents }));
+      }
 
       // Mark data as loaded for wizard
       setDataLoaded(true);
@@ -1462,6 +1477,7 @@ const App: React.FC = () => {
                     })),
                     needsTitle: false,
                     activeAgentName: s.activeAgentName ?? tab.activeAgentName,
+                    activeAgentPath: s.activeAgentPath ?? tab.activeAgentPath,
                   }
                 : tab
             );
@@ -1498,6 +1514,7 @@ const App: React.FC = () => {
             lisaConfig,
             yoloMode: s.yoloMode,
             activeAgentName: s.activeAgentName,
+            activeAgentPath: s.activeAgentPath,
             sourceIssue: s.sourceIssue,
           },
         ];
@@ -1505,6 +1522,13 @@ const App: React.FC = () => {
 
       // Only set active tab if none is set yet (don't switch tabs when loading in background)
       setActiveTabId((currentActive) => currentActive || s.sessionId);
+
+      // Re-cache agent content in main process now that the session exists
+      if (s.activeAgentPath) {
+        window.electronAPI.copilot.setSelectedAgent(s.sessionId, s.activeAgentPath).catch(() => {
+          // Agent file may no longer exist — silently ignore
+        });
+      }
 
       // Always load canonical history after resumption to avoid stale/partial preloaded history.
       Promise.all([
@@ -6007,6 +6031,156 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               </React.Fragment>
                             );
                           })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Agents Selector */}
+                    <div className="relative">
+                      <button
+                        onClick={() =>
+                          setOpenTopBarSelector(openTopBarSelector === 'agents' ? null : 'agents')
+                        }
+                        className={`flex items-center gap-1.5 px-3 py-2 text-xs transition-colors ${
+                          openTopBarSelector === 'agents'
+                            ? 'text-copilot-accent bg-copilot-surface-hover'
+                            : activeAgent && activeAgent.path !== COOPER_DEFAULT_AGENT.path
+                              ? 'text-copilot-accent hover:bg-copilot-surface-hover'
+                              : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover'
+                        }`}
+                        title="Select agent"
+                      >
+                        <ZapIcon size={12} />
+                        <span className="font-medium truncate max-w-[120px]">
+                          {activeAgent && activeAgent.path !== COOPER_DEFAULT_AGENT.path
+                            ? activeAgent.name
+                            : 'Agents'}
+                        </span>
+                        <ChevronDownIcon
+                          size={10}
+                          className={`transition-transform duration-200 ${openTopBarSelector === 'agents' ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                      {openTopBarSelector === 'agents' && (
+                        <div className="absolute bottom-full left-0 z-50 mb-0.5 w-60 max-h-80 overflow-y-auto bg-copilot-surface border border-copilot-border rounded-lg shadow-lg">
+                          {groupedAgents.length === 0 ? (
+                            <div className="px-4 py-4 text-xs text-copilot-text-muted text-center">
+                              No agents found
+                            </div>
+                          ) : (
+                            groupedAgents.map((section, sectionIdx) => (
+                              <div key={section.id}>
+                                <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-copilot-text-muted">
+                                  {section.label}
+                                </div>
+                                {section.agents.map((agent) => {
+                                  const isFav = favoriteAgents.includes(agent.path);
+                                  const isActive = activeAgentPath === agent.path;
+                                  const selectAgent = async () => {
+                                    if (!activeTab) return;
+                                    setOpenTopBarSelector(null);
+
+                                    const agentPath =
+                                      agent.path === COOPER_DEFAULT_AGENT.path ? null : agent.path;
+                                    const previousAgentPath =
+                                      selectedAgentByTab[activeTab.id] ?? COOPER_DEFAULT_AGENT.path;
+
+                                    // Auto-switch model if agent specifies one
+                                    if (agent.model && activeTab.model !== agent.model) {
+                                      await handleModelChange(agent.model);
+                                    }
+
+                                    // Optimistically update local state
+                                    setSelectedAgentByTab((prev) => ({
+                                      ...prev,
+                                      [activeTab.id]: agent.path,
+                                    }));
+
+                                    // Tell main process to cache agent content
+                                    try {
+                                      await window.electronAPI.copilot.setSelectedAgent(
+                                        activeTab.id,
+                                        agentPath
+                                      );
+                                    } catch (error) {
+                                      console.error('Failed to select agent:', error);
+                                      // Rollback on failure
+                                      setSelectedAgentByTab((prev) => ({
+                                        ...prev,
+                                        [activeTab.id]: previousAgentPath,
+                                      }));
+                                      return;
+                                    }
+
+                                    updateTab(activeTab.id, {
+                                      activeAgentName: agentPath ? agent.name : undefined,
+                                      activeAgentPath: agentPath ?? undefined,
+                                    });
+                                  };
+                                  return (
+                                    <div
+                                      key={agent.path}
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={selectAgent}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                          event.preventDefault();
+                                          selectAgent();
+                                        }
+                                      }}
+                                      className={`group w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-copilot-surface-hover transition-colors ${
+                                        isActive
+                                          ? 'text-copilot-accent bg-copilot-surface'
+                                          : 'text-copilot-text'
+                                      }`}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          handleToggleFavoriteAgent(agent.path);
+                                        }}
+                                        className={`shrink-0 transition-colors ${
+                                          isFav
+                                            ? 'text-copilot-warning'
+                                            : 'text-transparent group-hover:text-copilot-text-muted hover:!text-copilot-warning'
+                                        }`}
+                                        title={isFav ? 'Remove from favorites' : 'Add to favorites'}
+                                      >
+                                        {isFav ? (
+                                          <StarFilledIcon size={12} />
+                                        ) : (
+                                          <StarIcon size={12} />
+                                        )}
+                                      </button>
+                                      <span className="flex-1 text-left truncate">
+                                        {isActive && (
+                                          <span className="text-copilot-accent">✓ </span>
+                                        )}
+                                        {agent.name}
+                                      </span>
+                                      {agent.type !== 'system' && (
+                                        <button
+                                          type="button"
+                                          onClick={(event) =>
+                                            handleOpenEnvironment('agents', event, agent.path)
+                                          }
+                                          className="shrink-0 opacity-0 group-hover:opacity-100 text-copilot-text-muted hover:text-copilot-text transition-opacity"
+                                          title="View agent file"
+                                        >
+                                          <EyeIcon size={12} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                {sectionIdx < groupedAgents.length - 1 && (
+                                  <div className="border-t border-copilot-border" />
+                                )}
+                              </div>
+                            ))
+                          )}
                         </div>
                       )}
                     </div>
