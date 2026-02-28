@@ -27,6 +27,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { createServer, Server } from 'http';
 
 const execAsync = promisify(exec);
+const COOPER_CLIENT_NAME = 'cooper';
 
 // Get augmented PATH that includes common CLI tool locations
 // This is needed because packaged Electron apps don't inherit the user's shell PATH
@@ -664,6 +665,7 @@ interface SessionState {
   allowedPaths: Set<string>; // Per-session allowed out-of-scope paths (parent directories)
   isProcessing: boolean; // Whether the session is currently waiting for a response
   yoloMode: boolean; // Auto-approve all permission requests without prompting
+  activeAgentName: string | null; // Selected main agent name for this session
 }
 const sessions = new Map<string, SessionState>();
 const sessionSawDelta = new Map<string, boolean>();
@@ -1049,6 +1051,7 @@ async function resumeDisconnectedSession(
   const client = await getClientForCwd(sessionState.cwd);
   const projectRoot = await getProjectRootForCwd(sessionState.cwd);
   const mcpDiscovery = await discoverMcpServers({ projectRoot });
+  const customAgents = await loadCustomAgents(sessionState.cwd);
 
   // Create browser tools for resumed session
   const browserTools = createBrowserTools(sessionId);
@@ -1058,13 +1061,16 @@ async function resumeDisconnectedSession(
   );
 
   const resumedSession = await client.resumeSession(sessionId, {
+    clientName: COOPER_CLIENT_NAME,
     mcpServers: mcpDiscovery.effectiveServers,
     tools: browserTools,
+    customAgents,
     onPermissionRequest: (request, invocation) =>
       handlePermissionRequest(request, invocation, sessionId),
   });
 
   registerSessionEventForwarding(sessionId, resumedSession);
+  await enforceSelectedAgent(sessionId, { ...sessionState, session: resumedSession });
 
   // Update session state with new session object
   sessionState.session = resumedSession;
@@ -1168,6 +1174,7 @@ async function startEarlySessionResumption(): Promise<void> {
         const agentResult = await getAllAgents(undefined, sessionCwd);
         const customAgents: CustomAgentConfig[] = [];
         for (const agent of agentResult.agents) {
+          if (agent.source === 'codex') continue;
           try {
             const content = await readFile(agent.path, 'utf-8');
             const metadata = parseAgentFrontmatter(content);
@@ -1185,6 +1192,7 @@ async function startEarlySessionResumption(): Promise<void> {
         const projectRoot = await getProjectRootForCwd(sessionCwd);
         const mcpDiscovery = await discoverMcpServers({ projectRoot });
         const session = await sessionClient.resumeSession(sessionId, {
+          clientName: COOPER_CLIENT_NAME,
           mcpServers: mcpDiscovery.effectiveServers,
           tools: createBrowserTools(sessionId),
           customAgents,
@@ -1285,6 +1293,7 @@ async function startEarlySessionResumption(): Promise<void> {
           allowedPaths: new Set(),
           isProcessing: false,
           yoloMode: yoloMode || false,
+          activeAgentName: null,
         });
 
         console.log(`Early resumed session ${sessionId}`);
@@ -1969,6 +1978,43 @@ async function getProjectRootForCwd(cwd: string): Promise<string | undefined> {
   return gitRoot || undefined;
 }
 
+async function loadCustomAgents(sessionCwd: string): Promise<CustomAgentConfig[]> {
+  const agentResult = await getAllAgents(undefined, sessionCwd);
+  const customAgents: CustomAgentConfig[] = [];
+  for (const agent of agentResult.agents) {
+    if (agent.source === 'codex') continue;
+    try {
+      const content = await readFile(agent.path, 'utf-8');
+      const metadata = parseAgentFrontmatter(content);
+      customAgents.push({
+        name: metadata.name || agent.name,
+        displayName: agent.name,
+        description: metadata.description,
+        tools: null,
+        prompt: content,
+      });
+    } catch (error) {
+      log.warn('Failed to load agent prompt:', agent.path, error);
+    }
+  }
+  return customAgents;
+}
+
+async function enforceSelectedAgent(sessionId: string, sessionState: SessionState): Promise<void> {
+  if (!sessionState.activeAgentName) return;
+  log.info(`[${sessionId}] [AgentSelection] enforcing agent=${sessionState.activeAgentName}`);
+  await sessionState.session.rpc.agent.select({ name: sessionState.activeAgentName });
+  const { agent } = await sessionState.session.rpc.agent.getCurrent();
+  log.info(
+    `[${sessionId}] [AgentSelection] current agent after enforce=${agent?.name ?? 'default'}`
+  );
+  if (agent?.name !== sessionState.activeAgentName) {
+    throw new Error(
+      `Selected agent '${sessionState.activeAgentName}' is not active (active: '${agent?.name ?? 'default'}').`
+    );
+  }
+}
+
 // Create a new session and return its ID
 async function createNewSession(model?: string, cwd?: string): Promise<string> {
   const sessionModel = model || (store.get('model') as string);
@@ -1988,6 +2034,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
   const agentMcpServers: Record<string, MCPServerConfig> = {};
 
   for (const agent of agentResult.agents) {
+    if (agent.source === 'codex') continue;
     try {
       const content = await readFile(agent.path, 'utf-8');
       const metadata = parseAgentFrontmatter(content);
@@ -2036,6 +2083,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
   const subagentPrompt = buildSubagentPrompt();
 
   const newSession = await client.createSession({
+    clientName: COOPER_CLIENT_NAME,
     sessionId: generatedSessionId,
     model: sessionModel,
     mcpServers: mcpDiscovery.effectiveServers,
@@ -2095,6 +2143,7 @@ Browser tools available: browser_navigate, browser_click, browser_fill, browser_
     allowedPaths: new Set(),
     isProcessing: false,
     yoloMode: false,
+    activeAgentName: null,
   });
   activeSessionId = sessionId;
 
@@ -2260,7 +2309,10 @@ async function initCopilot(): Promise<void> {
       .filter((s) => !openSessionIds.includes(s.sessionId))
       .map((s) => ({
         sessionId: s.sessionId,
-        name: sessionNames[s.sessionId] || s.summary || undefined,
+        name: resolveSessionName({
+          storedName: sessionNames[s.sessionId],
+          summary: s.summary,
+        }),
         modifiedTime: s.modifiedTime.toISOString(),
         cwd: sessionCwds[s.sessionId],
         markedForReview: sessionMarks[s.sessionId]?.markedForReview,
@@ -2298,6 +2350,7 @@ async function initCopilot(): Promise<void> {
         const agentResult = await getAllAgents(undefined, sessionCwd);
         const customAgents: CustomAgentConfig[] = [];
         for (const agent of agentResult.agents) {
+          if (agent.source === 'codex') continue;
           try {
             const content = await readFile(agent.path, 'utf-8');
             const metadata = parseAgentFrontmatter(content);
@@ -2315,6 +2368,7 @@ async function initCopilot(): Promise<void> {
         const projectRoot = await getProjectRootForCwd(sessionCwd);
         const mcpDiscovery = await discoverMcpServers({ projectRoot });
         const session = await client.resumeSession(sessionId, {
+          clientName: COOPER_CLIENT_NAME,
           mcpServers: mcpDiscovery.effectiveServers,
           tools: createBrowserTools(sessionId),
           customAgents,
@@ -2415,6 +2469,7 @@ async function initCopilot(): Promise<void> {
           allowedPaths: new Set(),
           isProcessing: false,
           yoloMode: storedSession?.yoloMode || false,
+          activeAgentName: null,
         });
 
         const resumed = {
@@ -2668,6 +2723,7 @@ ipcMain.handle(
     }
 
     try {
+      await enforceSelectedAgent(data.sessionId, sessionState);
       const messageId = await sessionState.session.send(messageOptions);
       return messageId;
     } catch (error) {
@@ -2683,6 +2739,7 @@ ipcMain.handle(
         try {
           // Try to resume the session
           await resumeDisconnectedSession(data.sessionId, sessionState);
+          await enforceSelectedAgent(data.sessionId, sessionState);
 
           // Retry the send
           const messageId = await sessionState.session.send(messageOptions);
@@ -2718,6 +2775,7 @@ ipcMain.handle(
     };
 
     try {
+      await enforceSelectedAgent(data.sessionId, sessionState);
       const response = await sessionState.session.sendAndWait(messageOptions);
       sessionState.isProcessing = false;
       return response?.data?.content || '';
@@ -2733,6 +2791,7 @@ ipcMain.handle(
 
         try {
           await resumeDisconnectedSession(data.sessionId, sessionState);
+          await enforceSelectedAgent(data.sessionId, sessionState);
           const response = await sessionState.session.sendAndWait(messageOptions);
           sessionState.isProcessing = false;
           return response?.data?.content || '';
@@ -2825,7 +2884,9 @@ ipcMain.handle('copilot:generateTitle', async (_event, data: { conversation: str
 
     // Create a temporary session with the cheapest model for title generation
     const tempSession = await defaultClient.createSession({
+      clientName: COOPER_CLIENT_NAME,
       model: quickModel,
+      onPermissionRequest: () => ({ kind: 'approved' }),
       systemMessage: {
         mode: 'append',
         content:
@@ -2862,7 +2923,9 @@ ipcMain.handle('git:generateCommitMessage', async (_event, data: { diff: string 
     const quickModel = await getQuickTasksModel(defaultClient);
 
     const tempSession = await defaultClient.createSession({
+      clientName: COOPER_CLIENT_NAME,
       model: quickModel,
+      onPermissionRequest: () => ({ kind: 'approved' }),
       systemMessage: {
         mode: 'append',
         content:
@@ -2900,7 +2963,9 @@ ipcMain.handle('copilot:detectChoices', async (_event, data: { message: string }
     const quickModel = await getQuickTasksModel(defaultClient);
 
     const tempSession = await defaultClient.createSession({
+      clientName: COOPER_CLIENT_NAME,
       model: quickModel,
+      onPermissionRequest: () => ({ kind: 'approved' }),
       systemMessage: {
         mode: 'replace',
         content: `You analyze messages to detect if they ask the user to choose between options.
@@ -3123,6 +3188,7 @@ ipcMain.handle(
 
         // Capture yoloMode before destroying old session
         const preserveYoloMode = sessionState.yoloMode;
+        const preserveActiveAgentName = sessionState.activeAgentName;
 
         // Destroy the old session
         await sessionState.session.destroy();
@@ -3134,6 +3200,10 @@ ipcMain.handle(
 
         // Preserve yoloMode in the new session
         newSessionState.yoloMode = preserveYoloMode;
+        newSessionState.activeAgentName = preserveActiveAgentName;
+        if (preserveActiveAgentName) {
+          await newSessionState.session.rpc.agent.select({ name: preserveActiveAgentName });
+        }
 
         log.info(
           `[${newSessionId}] New session created for model switch: ${previousModel} → ${data.model}`
@@ -3162,6 +3232,7 @@ ipcMain.handle(
       const agentResult = await getAllAgents(undefined, cwd);
       const customAgents: CustomAgentConfig[] = [];
       for (const agent of agentResult.agents) {
+        if (agent.source === 'codex') continue;
         try {
           const content = await readFile(agent.path, 'utf-8');
           const metadata = parseAgentFrontmatter(content);
@@ -3177,6 +3248,7 @@ ipcMain.handle(
         }
       }
       const resumedSession = await client.resumeSession(data.sessionId, {
+        clientName: COOPER_CLIENT_NAME,
         model: data.model,
         mcpServers: mcpDiscovery.effectiveServers,
         tools: browserTools,
@@ -3184,6 +3256,9 @@ ipcMain.handle(
         onPermissionRequest: (request, invocation) =>
           handlePermissionRequest(request, invocation, resumedSession.sessionId),
       });
+      if (sessionState.activeAgentName) {
+        await resumedSession.rpc.agent.select({ name: sessionState.activeAgentName });
+      }
 
       const resumedSessionId = resumedSession.sessionId;
       registerSessionEventForwarding(resumedSessionId, resumedSession);
@@ -3197,6 +3272,7 @@ ipcMain.handle(
         allowedPaths: new Set(sessionState.allowedPaths),
         isProcessing: false,
         yoloMode: sessionState.yoloMode,
+        activeAgentName: sessionState.activeAgentName,
       });
       activeSessionId = resumedSessionId;
 
@@ -3218,114 +3294,53 @@ ipcMain.handle(
       throw new Error(`Session not found: ${data.sessionId}`);
     }
 
-    const { cwd, client, model } = sessionState;
-
-    // Try to call the undocumented session.selectAgent RPC method
-    // This may not exist in all SDK versions
-    try {
-      if (data.agentName) {
-        // @ts-ignore - accessing internal connection to call undocumented RPC
-        await sessionState.session.connection?.sendRequest?.('session.selectAgent', {
-          sessionId: data.sessionId,
-          agentName: data.agentName,
-        });
-        console.log(`Selected agent ${data.agentName} via RPC`);
-      } else {
-        // @ts-ignore - accessing internal connection to call undocumented RPC
-        await sessionState.session.connection?.sendRequest?.('session.clearAgent', {
-          sessionId: data.sessionId,
-        });
-        console.log(`Cleared agent selection via RPC`);
-      }
-      return { sessionId: data.sessionId, model, cwd };
-    } catch (rpcError) {
-      console.log(`RPC method not available, falling back to destroy+resume: ${rpcError}`);
+    const { cwd, model } = sessionState;
+    log.info(
+      `[${data.sessionId}] [AgentSelection] set requested=${data.agentName ?? 'default'} hasMessages=${data.hasMessages}`
+    );
+    if (data.agentName) {
+      await sessionState.session.rpc.agent.select({ name: data.agentName });
+    } else {
+      await sessionState.session.rpc.agent.deselect();
     }
-
-    // Fallback: destroy+resume approach (preserves history but less efficient)
-    // If session has no messages, just create a new session
-    if (!data.hasMessages) {
-      console.log(`Creating new session with agent ${data.agentName || 'none'} (empty session)`);
-
-      // Capture yoloMode before destroying old session
-      const preserveYoloMode = sessionState.yoloMode;
-
-      // Destroy the old session
-      await sessionState.session.destroy();
-      sessions.delete(data.sessionId);
-
-      // Create a brand new session with the same model
-      const newSessionId = await createNewSession(model, cwd);
-      const newSessionState = sessions.get(newSessionId)!;
-
-      // Preserve yoloMode in the new session
-      newSessionState.yoloMode = preserveYoloMode;
-
-      return {
-        sessionId: newSessionId,
-        model,
-        cwd,
-        newSession: true,
-      };
+    const { agent } = await sessionState.session.rpc.agent.getCurrent();
+    log.info(`[${data.sessionId}] [AgentSelection] set result active=${agent?.name ?? 'default'}`);
+    if (data.agentName && agent?.name !== data.agentName) {
+      throw new Error(
+        `Requested agent '${data.agentName}' was not applied. Current agent is '${agent?.name ?? 'default'}'.`
+      );
     }
-
-    // Session has messages - resume to preserve conversation history
-    console.log(`Switching to agent ${data.agentName || 'none'} for session ${data.sessionId}`);
-    await sessionState.session.destroy();
-    sessions.delete(data.sessionId);
-
-    const projectRoot = await getProjectRootForCwd(cwd);
-    const mcpDiscovery = await discoverMcpServers({ projectRoot });
-    const browserTools = createBrowserTools(data.sessionId);
-
-    // Build customAgents list for the session
-    const agentResult = await getAllAgents(undefined, cwd);
-    const customAgents: CustomAgentConfig[] = [];
-    for (const agent of agentResult.agents) {
-      try {
-        const content = await readFile(agent.path, 'utf-8');
-        const metadata = parseAgentFrontmatter(content);
-        customAgents.push({
-          name: metadata.name || agent.name,
-          displayName: agent.name,
-          description: metadata.description,
-          tools: null,
-          prompt: content,
-        });
-      } catch (error) {
-        log.warn('Failed to load agent prompt:', agent.path, error);
-      }
-    }
-
-    // Resume the same session — preserves conversation context
-    const resumedSession = await client.resumeSession(data.sessionId, {
-      model,
-      mcpServers: mcpDiscovery.effectiveServers,
-      tools: browserTools,
-      customAgents,
-      onPermissionRequest: (request, invocation) =>
-        handlePermissionRequest(request, invocation, resumedSession.sessionId),
-    });
-
-    const resumedSessionId = resumedSession.sessionId;
-    registerSessionEventForwarding(resumedSessionId, resumedSession);
-
-    sessions.set(resumedSessionId, {
-      session: resumedSession,
-      client,
-      model,
-      cwd,
-      alwaysAllowed: new Set(sessionState.alwaysAllowed),
-      allowedPaths: new Set(sessionState.allowedPaths),
-      isProcessing: false,
-      yoloMode: sessionState.yoloMode,
-    });
-    activeSessionId = resumedSessionId;
-
-    console.log(`Session ${resumedSessionId} resumed with agent ${data.agentName || 'none'}`);
-    return { sessionId: resumedSessionId, model, cwd };
+    sessionState.activeAgentName = agent?.name ?? null;
+    return { sessionId: data.sessionId, model, cwd, activeAgent: agent ?? null };
   }
 );
+
+ipcMain.handle('copilot:getSessionAgents', async (_event, sessionId: string) => {
+  const sessionState = sessions.get(sessionId);
+  if (!sessionState) {
+    throw new Error(`Session not found: ${sessionId}`);
+  }
+  const { agents } = await sessionState.session.rpc.agent.list();
+  return agents;
+});
+
+ipcMain.handle('copilot:getActiveAgent', async (_event, sessionId: string) => {
+  const sessionState = sessions.get(sessionId);
+  if (!sessionState) {
+    throw new Error(`Session not found: ${sessionId}`);
+  }
+  const { agent } = await sessionState.session.rpc.agent.getCurrent();
+  return agent ?? null;
+});
+
+ipcMain.handle('copilot:compactSession', async (_event, sessionId: string) => {
+  const sessionState = sessions.get(sessionId);
+  if (!sessionState) {
+    throw new Error(`Session not found: ${sessionId}`);
+  }
+  await sessionState.session.rpc.compaction.compact();
+  return { success: true };
+});
 
 ipcMain.handle('copilot:getModels', async () => {
   const currentModel = store.get('model') as string;
@@ -4958,10 +4973,13 @@ ipcMain.handle(
     // Load MCP servers config
     const projectRoot = await getProjectRootForCwd(sessionCwd);
     const mcpDiscovery = await discoverMcpServers({ projectRoot });
+    const customAgents = await loadCustomAgents(sessionCwd);
 
     const session = await client.resumeSession(sessionId, {
+      clientName: COOPER_CLIENT_NAME,
       mcpServers: mcpDiscovery.effectiveServers,
       tools: createBrowserTools(sessionId),
+      customAgents,
       onPermissionRequest: (request, invocation) =>
         handlePermissionRequest(request, invocation, sessionId),
     });
@@ -5105,6 +5123,7 @@ ipcMain.handle(
       allowedPaths: new Set(),
       isProcessing: false,
       yoloMode: false,
+      activeAgentName: null,
     });
     activeSessionId = sessionId;
 
@@ -5726,7 +5745,7 @@ ipcMain.handle('pty:clearBuffer', async (_event, sessionId: string) => {
 });
 
 ipcMain.handle('pty:close', async (_event, sessionId: string) => {
-  return ptyManager.closePty(sessionId, mainWindow);
+  return ptyManager.closePty(sessionId);
 });
 
 ipcMain.handle('pty:exists', async (_event, sessionId: string) => {

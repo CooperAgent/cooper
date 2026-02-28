@@ -36,6 +36,7 @@ Pre-commit hooks (husky) run lint-staged (Prettier) and `npm test` automatically
 - Preserve existing formatting in touched files unless a formatting change is required for correctness.
 - Never run project-wide formatting as part of a feature/fix unless the user explicitly requests it.
 - If formatting is required, scope it to the smallest possible set of changed lines/files.
+- Preserve each file's existing line ending style (LF vs CRLF) and never introduce EOL-only churn.
 
 ## Release & Versioning
 

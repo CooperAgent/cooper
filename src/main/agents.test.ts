@@ -124,30 +124,22 @@ mode: gpt-4.5
     expect(result.agents).toEqual([]);
   });
 
-  it('should find gemini and codex agent files', async () => {
+  it('should find gemini agent file', async () => {
     mocks.existsSync.mockImplementation((path: string) => {
       const normalized = normalizePath(path);
-      return (
-        normalized === '/tmp/test-home/.gemini/GEMINI.md' ||
-        normalized === '/tmp/test-home/.codex/AGENTS.md'
-      );
+      return normalized === '/tmp/test-home/.gemini/GEMINI.md';
     });
     mocks.stat.mockResolvedValue({ isFile: () => true });
-    mocks.readFile.mockImplementation((path: string) => {
-      if (normalizePath(path).includes('/.gemini/')) {
-        return Promise.resolve(`---
-name: gemini-agent
----`);
-      }
+    mocks.readFile.mockImplementation(() => {
       return Promise.resolve(`---
-name: codex-agent
+name: gemini-agent
 ---`);
     });
 
     const result = await getAllAgents();
 
-    expect(result.agents.length).toBe(2);
-    const sources = result.agents.map((agent) => agent.source).sort();
-    expect(sources).toEqual(['codex', 'gemini']);
+    expect(result.agents.length).toBe(1);
+    const sources = result.agents.map((agent) => agent.source);
+    expect(sources).toEqual(['gemini']);
   });
 });

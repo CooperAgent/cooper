@@ -278,7 +278,6 @@ export async function getAllAgents(projectRoot?: string, cwd?: string): Promise<
 
   const personalFiles = [
     { path: join(homePath, '.gemini', 'GEMINI.md'), source: 'gemini' as const },
-    { path: join(homePath, '.codex', 'AGENTS.md'), source: 'codex' as const },
   ];
 
   for (const { path, source } of personalFiles) {
@@ -295,8 +294,6 @@ export async function getAllAgents(projectRoot?: string, cwd?: string): Promise<
     for (const { path, source } of projectDirs) {
       addResults(await scanAgentsDirectory(path, 'project', source));
     }
-
-    addResults(await scanAgentFile(join(projectRoot, 'AGENTS.md'), 'project', 'codex'));
   }
 
   if (cwd && cwd !== projectRoot) {
@@ -309,8 +306,6 @@ export async function getAllAgents(projectRoot?: string, cwd?: string): Promise<
     for (const { path, source } of cwdDirs) {
       addResults(await scanAgentsDirectory(path, 'project', source));
     }
-
-    addResults(await scanAgentFile(join(cwd, 'AGENTS.md'), 'project', 'codex'));
   }
 
   return { agents, errors };
