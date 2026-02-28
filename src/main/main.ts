@@ -95,6 +95,7 @@ import {
   getDestructiveExecutables,
   extractFilesToDelete,
 } from './utils/extractExecutables';
+import { createPermissionRequestId } from './utils/permissionRequest';
 import {
   validateCopilotCreateSessionArgs,
   validateCopilotResumePreviousSessionArgs,
@@ -845,6 +846,7 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
       if (throttler) {
         throttler.flush();
       }
+      clearToolStallTimer(sessionId);
       sessionSawDelta.set(sessionId, false);
       const currentSessionState = sessions.get(sessionId);
       if (currentSessionState) {
@@ -875,6 +877,7 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
       });
     } else if (event.type === 'session.error') {
       console.log(`[${sessionId}] Session error:`, event.data);
+      clearToolStallTimer(sessionId);
       const errorMessage = event.data?.message || JSON.stringify(event.data);
 
       // Auto-repair tool_result errors (duplicate or orphaned after compaction)
@@ -1021,6 +1024,14 @@ function startToolStallTimer(sessionId: string, toolName: string): void {
     } catch (err) {
       log.error(`[${sessionId}] Failed to abort stalled session:`, err);
     }
+    const flushedPermissions = resolvePendingPermissionsForSession(sessionId, {
+      kind: 'denied-no-approval-rule-and-could-not-request-from-user',
+    });
+    if (flushedPermissions > 0) {
+      log.warn(
+        `[${sessionId}] Flushed ${flushedPermissions} pending permissions after stall abort`
+      );
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('copilot:error', {
         sessionId,
@@ -1094,6 +1105,20 @@ const pendingPermissions = new Map<
 
 // Track in-flight permission requests by session+executable to deduplicate parallel requests
 const inFlightPermissions = new Map<string, Promise<PermissionRequestResult>>();
+
+function resolvePendingPermissionsForSession(
+  sessionId: string,
+  result: PermissionRequestResult
+): number {
+  let resolvedCount = 0;
+  for (const [requestId, pending] of pendingPermissions.entries()) {
+    if (pending.sessionId !== sessionId) continue;
+    pendingPermissions.delete(requestId);
+    pending.resolve(result);
+    resolvedCount++;
+  }
+  return resolvedCount;
+}
 
 let defaultClient: CopilotClient | null = null;
 
@@ -1216,6 +1241,7 @@ async function startEarlySessionResumption(): Promise<void> {
             if (throttler) {
               throttler.flush();
             }
+            clearToolStallTimer(sessionId);
             sessionSawDelta.set(sessionId, false);
             const currentSessionState = sessions.get(sessionId);
             if (currentSessionState) currentSessionState.isProcessing = false;
@@ -1649,7 +1675,7 @@ async function handlePermissionRequest(
   _invocation: { sessionId: string },
   ourSessionId: string
 ): Promise<PermissionRequestResult> {
-  const requestId = request.toolCallId || `perm-${Date.now()}`;
+  const requestId = createPermissionRequestId(request, ourSessionId);
   const req = request as Record<string, unknown>;
   const sessionState = sessions.get(ourSessionId);
   const globalSafeCommands = new Set((store.get('globalSafeCommands') as string[]) || []);
@@ -2392,6 +2418,7 @@ async function initCopilot(): Promise<void> {
             if (throttler) {
               throttler.flush();
             }
+            clearToolStallTimer(sessionId);
             sessionSawDelta.set(sessionId, false);
             const currentSessionState = sessions.get(sessionId);
             if (currentSessionState) currentSessionState.isProcessing = false;
@@ -3191,6 +3218,10 @@ ipcMain.handle(
         const preserveActiveAgentName = sessionState.activeAgentName;
 
         // Destroy the old session
+        clearToolStallTimer(data.sessionId);
+        resolvePendingPermissionsForSession(data.sessionId, {
+          kind: 'denied-no-approval-rule-and-could-not-request-from-user',
+        });
         await sessionState.session.destroy();
         sessions.delete(data.sessionId);
 
@@ -3221,6 +3252,10 @@ ipcMain.handle(
       log.info(
         `[${data.sessionId}] Resuming session for model switch: ${previousModel} → ${data.model}`
       );
+      clearToolStallTimer(data.sessionId);
+      resolvePendingPermissionsForSession(data.sessionId, {
+        kind: 'denied-no-approval-rule-and-could-not-request-from-user',
+      });
       await sessionState.session.destroy();
       sessions.delete(data.sessionId);
 
@@ -3641,6 +3676,10 @@ ipcMain.handle(
         throttler.flush();
         sessionDeltaThrottlers.delete(sessionId);
       }
+      clearToolStallTimer(sessionId);
+      resolvePendingPermissionsForSession(sessionId, {
+        kind: 'denied-no-approval-rule-and-could-not-request-from-user',
+      });
       await sessionState.session.destroy();
       sessions.delete(sessionId);
       sessionSawDelta.delete(sessionId);
@@ -5000,6 +5039,7 @@ ipcMain.handle(
         if (throttler) {
           throttler.flush();
         }
+        clearToolStallTimer(sessionId);
         sessionSawDelta.set(sessionId, false);
         const currentSessionState = sessions.get(sessionId);
         if (currentSessionState) currentSessionState.isProcessing = false;
@@ -5027,6 +5067,7 @@ ipcMain.handle(
         });
       } else if (event.type === 'session.error') {
         console.log(`[${sessionId}] Session error:`, event.data);
+        clearToolStallTimer(sessionId);
         const errorMessage = event.data?.message || JSON.stringify(event.data);
 
         // Auto-repair tool_result errors (duplicate or orphaned after compaction)
@@ -5566,6 +5607,10 @@ app.on('window-all-closed', async () => {
 
   // Destroy all sessions
   for (const [id, state] of sessions) {
+    clearToolStallTimer(id);
+    resolvePendingPermissionsForSession(id, {
+      kind: 'denied-no-approval-rule-and-could-not-request-from-user',
+    });
     await state.session.destroy();
     console.log(`Destroyed session ${id}`);
   }
@@ -5590,6 +5635,10 @@ app.on('before-quit', async () => {
 
   // Destroy all sessions
   for (const [id, state] of sessions) {
+    clearToolStallTimer(id);
+    resolvePendingPermissionsForSession(id, {
+      kind: 'denied-no-approval-rule-and-could-not-request-from-user',
+    });
     await state.session.destroy();
   }
   sessions.clear();
