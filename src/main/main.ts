@@ -853,6 +853,7 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
       requestUserAttention();
     } else if (event.type === 'tool.execution_start') {
       log.debug(`[${sessionId}] Tool start: ${event.data.toolName} (${event.data.toolCallId})`);
+      startToolStallTimer(sessionId, event.data.toolName);
       mainWindow.webContents.send('copilot:tool-start', {
         sessionId,
         toolCallId: event.data.toolCallId,
@@ -861,6 +862,7 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
       });
     } else if (event.type === 'tool.execution_complete') {
       log.debug(`[${sessionId}] Tool end: ${event.data.toolCallId}`);
+      clearToolStallTimer(sessionId);
       const completeData = event.data as Record<string, unknown>;
       mainWindow.webContents.send('copilot:tool-end', {
         sessionId,
@@ -996,6 +998,44 @@ function stopKeepAlive(): void {
     clearInterval(keepAliveTimer);
     keepAliveTimer = null;
     log.info('Stopped session keep-alive timer');
+  }
+}
+
+// Tool execution stall detection - auto-abort sessions with hung tool calls
+const TOOL_STALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const sessionToolStallTimers = new Map<string, NodeJS.Timeout>();
+
+function startToolStallTimer(sessionId: string, toolName: string): void {
+  clearToolStallTimer(sessionId);
+  const timer = setTimeout(async () => {
+    sessionToolStallTimers.delete(sessionId);
+    const sessionState = sessions.get(sessionId);
+    if (!sessionState) return;
+    log.warn(
+      `[${sessionId}] Tool "${toolName}" stalled for ${TOOL_STALL_TIMEOUT_MS / 60000} minutes, aborting`
+    );
+    try {
+      await sessionState.session.abort();
+    } catch (err) {
+      log.error(`[${sessionId}] Failed to abort stalled session:`, err);
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('copilot:error', {
+        sessionId,
+        message: `Tool "${toolName}" timed out after ${TOOL_STALL_TIMEOUT_MS / 60000} minutes and was aborted.`,
+      });
+      sessionState.isProcessing = false;
+      mainWindow.webContents.send('copilot:idle', { sessionId });
+    }
+  }, TOOL_STALL_TIMEOUT_MS);
+  sessionToolStallTimers.set(sessionId, timer);
+}
+
+function clearToolStallTimer(sessionId: string): void {
+  const timer = sessionToolStallTimers.get(sessionId);
+  if (timer) {
+    clearTimeout(timer);
+    sessionToolStallTimers.delete(sessionId);
   }
 }
 
@@ -1177,6 +1217,7 @@ async function startEarlySessionResumption(): Promise<void> {
             log.debug(
               `[${sessionId}] Tool start: ${event.data.toolName} (${event.data.toolCallId})`
             );
+            startToolStallTimer(sessionId, event.data.toolName);
             mainWindow.webContents.send('copilot:tool-start', {
               sessionId,
               toolCallId: event.data.toolCallId,
@@ -1185,6 +1226,7 @@ async function startEarlySessionResumption(): Promise<void> {
             });
           } else if (event.type === 'tool.execution_complete') {
             log.debug(`[${sessionId}] Tool end: ${event.data.toolCallId}`);
+            clearToolStallTimer(sessionId);
             const completeData = event.data as Record<string, unknown>;
             mainWindow.webContents.send('copilot:tool-end', {
               sessionId,
@@ -2305,6 +2347,7 @@ async function initCopilot(): Promise<void> {
             log.debug(
               `[${sessionId}] Tool start: ${event.data.toolName} (${event.data.toolCallId})`
             );
+            startToolStallTimer(sessionId, event.data.toolName);
             mainWindow.webContents.send('copilot:tool-start', {
               sessionId,
               toolCallId: event.data.toolCallId,
@@ -2313,6 +2356,7 @@ async function initCopilot(): Promise<void> {
             });
           } else if (event.type === 'tool.execution_complete') {
             log.debug(`[${sessionId}] Tool end: ${event.data.toolCallId}`);
+            clearToolStallTimer(sessionId);
             const completeData = event.data as Record<string, unknown>;
             mainWindow.webContents.send('copilot:tool-end', {
               sessionId,
@@ -4945,6 +4989,7 @@ ipcMain.handle(
         requestUserAttention();
       } else if (event.type === 'tool.execution_start') {
         log.debug(`[${sessionId}] Tool start: ${event.data.toolName} (${event.data.toolCallId})`);
+        startToolStallTimer(sessionId, event.data.toolName);
         mainWindow.webContents.send('copilot:tool-start', {
           sessionId,
           toolCallId: event.data.toolCallId,
@@ -4953,6 +4998,7 @@ ipcMain.handle(
         });
       } else if (event.type === 'tool.execution_complete') {
         log.debug(`[${sessionId}] Tool end: ${event.data.toolCallId}`);
+        clearToolStallTimer(sessionId);
         const completeData = event.data as Record<string, unknown>;
         mainWindow.webContents.send('copilot:tool-end', {
           sessionId,
