@@ -2309,7 +2309,10 @@ async function initCopilot(): Promise<void> {
       .filter((s) => !openSessionIds.includes(s.sessionId))
       .map((s) => ({
         sessionId: s.sessionId,
-        name: sessionNames[s.sessionId] || s.summary || undefined,
+        name: resolveSessionName({
+          storedName: sessionNames[s.sessionId],
+          summary: s.summary,
+        }),
         modifiedTime: s.modifiedTime.toISOString(),
         cwd: sessionCwds[s.sessionId],
         markedForReview: sessionMarks[s.sessionId]?.markedForReview,
@@ -2883,6 +2886,7 @@ ipcMain.handle('copilot:generateTitle', async (_event, data: { conversation: str
     const tempSession = await defaultClient.createSession({
       clientName: COOPER_CLIENT_NAME,
       model: quickModel,
+      onPermissionRequest: () => ({ kind: 'approved' }),
       systemMessage: {
         mode: 'append',
         content:
@@ -2921,6 +2925,7 @@ ipcMain.handle('git:generateCommitMessage', async (_event, data: { diff: string 
     const tempSession = await defaultClient.createSession({
       clientName: COOPER_CLIENT_NAME,
       model: quickModel,
+      onPermissionRequest: () => ({ kind: 'approved' }),
       systemMessage: {
         mode: 'append',
         content:
@@ -2960,6 +2965,7 @@ ipcMain.handle('copilot:detectChoices', async (_event, data: { message: string }
     const tempSession = await defaultClient.createSession({
       clientName: COOPER_CLIENT_NAME,
       model: quickModel,
+      onPermissionRequest: () => ({ kind: 'approved' }),
       systemMessage: {
         mode: 'replace',
         content: `You analyze messages to detect if they ask the user to choose between options.
