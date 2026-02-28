@@ -5,6 +5,8 @@
 Cooper is an Electron desktop GUI for GitHub Copilot, built with electron-vite, React, and TypeScript.
 It works on top of the GitHub Copilot CLI SDK (see [Copilot CLI SDK](https://github.com/github/copilot-sdk?tab=readme-ov-file)).
 
+**This repo (scooper) is a fork of Cooper.** See `scooper_features/` for distilled descriptions of all scooper-specific features — read these for full context on what differs from upstream.
+
 ## Development
 
 ```bash
