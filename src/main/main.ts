@@ -96,6 +96,7 @@ import {
   extractFilesToDelete,
 } from './utils/extractExecutables';
 import { createPermissionRequestId } from './utils/permissionRequest';
+import { isToolStallHeartbeatEventType } from './utils/toolStallHeartbeat';
 import {
   validateCopilotCreateSessionArgs,
   validateCopilotResumePreviousSessionArgs,
@@ -864,6 +865,10 @@ function registerSessionEventForwarding(sessionId: string, session: CopilotSessi
         toolName: event.data.toolName,
         input: event.data.arguments || (event.data as Record<string, unknown>),
       });
+    } else if (isToolStallHeartbeatEventType(event.type)) {
+      // SDK emits periodic progress/partial-result events while a tool is still active.
+      // Treat these as heartbeat signals so long-running tools don't trip the stall timeout.
+      refreshToolStallTimer(sessionId);
     } else if (event.type === 'tool.execution_complete') {
       log.debug(`[${sessionId}] Tool end: ${event.data.toolCallId}`);
       clearToolStallTimer(sessionId);
@@ -1009,11 +1014,14 @@ function stopKeepAlive(): void {
 // Tool execution stall detection - auto-abort sessions with hung tool calls
 const TOOL_STALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const sessionToolStallTimers = new Map<string, NodeJS.Timeout>();
+const sessionActiveToolNames = new Map<string, string>();
 
 function startToolStallTimer(sessionId: string, toolName: string): void {
   clearToolStallTimer(sessionId);
+  sessionActiveToolNames.set(sessionId, toolName);
   const timer = setTimeout(async () => {
     sessionToolStallTimers.delete(sessionId);
+    sessionActiveToolNames.delete(sessionId);
     const sessionState = sessions.get(sessionId);
     if (!sessionState) return;
     log.warn(
@@ -1044,12 +1052,19 @@ function startToolStallTimer(sessionId: string, toolName: string): void {
   sessionToolStallTimers.set(sessionId, timer);
 }
 
+function refreshToolStallTimer(sessionId: string): void {
+  const activeToolName = sessionActiveToolNames.get(sessionId);
+  if (!activeToolName) return;
+  startToolStallTimer(sessionId, activeToolName);
+}
+
 function clearToolStallTimer(sessionId: string): void {
   const timer = sessionToolStallTimers.get(sessionId);
   if (timer) {
     clearTimeout(timer);
     sessionToolStallTimers.delete(sessionId);
   }
+  sessionActiveToolNames.delete(sessionId);
 }
 
 // Resume a session that has been disconnected
@@ -1258,6 +1273,8 @@ async function startEarlySessionResumption(): Promise<void> {
               toolName: event.data.toolName,
               input: event.data.arguments || (event.data as Record<string, unknown>),
             });
+          } else if (isToolStallHeartbeatEventType(event.type)) {
+            refreshToolStallTimer(sessionId);
           } else if (event.type === 'tool.execution_complete') {
             log.debug(`[${sessionId}] Tool end: ${event.data.toolCallId}`);
             clearToolStallTimer(sessionId);
@@ -2435,6 +2452,8 @@ async function initCopilot(): Promise<void> {
               toolName: event.data.toolName,
               input: event.data.arguments || (event.data as Record<string, unknown>),
             });
+          } else if (isToolStallHeartbeatEventType(event.type)) {
+            refreshToolStallTimer(sessionId);
           } else if (event.type === 'tool.execution_complete') {
             log.debug(`[${sessionId}] Tool end: ${event.data.toolCallId}`);
             clearToolStallTimer(sessionId);
@@ -5054,6 +5073,8 @@ ipcMain.handle(
           toolName: event.data.toolName,
           input: event.data.arguments || (event.data as Record<string, unknown>),
         });
+      } else if (isToolStallHeartbeatEventType(event.type)) {
+        refreshToolStallTimer(sessionId);
       } else if (event.type === 'tool.execution_complete') {
         log.debug(`[${sessionId}] Tool end: ${event.data.toolCallId}`);
         clearToolStallTimer(sessionId);
