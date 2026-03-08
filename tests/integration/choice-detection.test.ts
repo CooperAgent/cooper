@@ -72,7 +72,7 @@ Rules:
       const prompt = `Analyze this message:\n\n${truncatedMessage}`;
       const response = await tempSession.sendAndWait({ prompt });
 
-      await tempSession.destroy();
+      await tempSession.disconnect();
       await client.deleteSession(sessionId);
 
       const content = (response as { data?: { content?: string } })?.data?.content || '';

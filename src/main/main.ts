@@ -106,6 +106,7 @@ import {
   validateCopilotSwitchSessionArgs,
 } from './utils/ipcValidation';
 import { mergeSessionCwds, resolveSessionName } from './utils/sessionRestore';
+import { switchSessionModelInPlace } from './utils/modelSwitch';
 import * as worktree from './worktree';
 import * as ptyManager from './pty';
 import * as browserManager from './browser';
@@ -2944,8 +2945,8 @@ ipcMain.handle('copilot:generateTitle', async (_event, data: { conversation: str
     const prompt = `Generate a short descriptive title for this conversation, that makes it easy to identify what this is about:\n\n${data.conversation}\n\nRespond with ONLY the title, nothing else.`;
     const response = await tempSession.sendAndWait({ prompt });
 
-    // Clean up temp session - destroy and delete to avoid polluting session list
-    await tempSession.destroy();
+    // Clean up temp session and delete to avoid polluting session list
+    await tempSession.disconnect();
     await defaultClient.deleteSession(sessionId);
 
     // Extract and clean the title
@@ -2986,7 +2987,7 @@ ipcMain.handle('git:generateCommitMessage', async (_event, data: { diff: string 
     const prompt = `Generate a commit message for these changes:\n\n${truncatedDiff}\n\nRespond with ONLY the commit message, nothing else.`;
     const response = await tempSession.sendAndWait({ prompt });
 
-    await tempSession.destroy();
+    await tempSession.disconnect();
     await defaultClient.deleteSession(sessionId);
 
     const message = (response?.data?.content || 'Update files')
@@ -3038,7 +3039,7 @@ Rules:
     const prompt = `Analyze this message:\n\n${truncatedMessage}`;
     const response = await tempSession.sendAndWait({ prompt });
 
-    await tempSession.destroy();
+    await tempSession.disconnect();
     await defaultClient.deleteSession(sessionId);
 
     // Parse the JSON response
@@ -3215,125 +3216,7 @@ ipcMain.handle(
         return { sessionId: data.sessionId, model: data.model, cwd: sessionState.cwd };
       }
       const validModels = getCachedModels().map((m) => m.id);
-      if (!validModels.includes(data.model)) {
-        throw new Error(`Invalid model: ${data.model}`);
-      }
-      const { cwd, client } = sessionState;
-      const previousModel = sessionState.model;
-
-      log.info(
-        `[${data.sessionId}] Model switch requested: ${previousModel} → ${data.model} (hasMessages=${data.hasMessages})`
-      );
-
-      // If session has no messages, just create a new session with the desired model
-      // instead of trying to resume (which would fail for empty sessions)
-      if (!data.hasMessages) {
-        log.info(
-          `[${data.sessionId}] Creating new session with model ${data.model} (empty session)`
-        );
-
-        // Capture yoloMode before destroying old session
-        const preserveYoloMode = sessionState.yoloMode;
-        const preserveActiveAgentName = sessionState.activeAgentName;
-
-        // Destroy the old session
-        clearToolStallTimer(data.sessionId);
-        resolvePendingPermissionsForSession(data.sessionId, {
-          kind: 'denied-no-approval-rule-and-could-not-request-from-user',
-        });
-        await sessionState.session.destroy();
-        sessions.delete(data.sessionId);
-
-        // Create a brand new session with the desired model
-        const newSessionId = await createNewSession(data.model, cwd);
-        const newSessionState = sessions.get(newSessionId)!;
-
-        // Preserve yoloMode in the new session
-        newSessionState.yoloMode = preserveYoloMode;
-        newSessionState.activeAgentName = preserveActiveAgentName;
-        if (preserveActiveAgentName) {
-          await newSessionState.session.rpc.agent.select({ name: preserveActiveAgentName });
-        }
-
-        log.info(
-          `[${newSessionId}] New session created for model switch: ${previousModel} → ${data.model}`
-        );
-
-        return {
-          sessionId: newSessionId,
-          model: data.model,
-          cwd,
-          newSession: true,
-        };
-      }
-
-      // Session has messages - resume to preserve conversation history
-      log.info(
-        `[${data.sessionId}] Resuming session for model switch: ${previousModel} → ${data.model}`
-      );
-      clearToolStallTimer(data.sessionId);
-      resolvePendingPermissionsForSession(data.sessionId, {
-        kind: 'denied-no-approval-rule-and-could-not-request-from-user',
-      });
-      await sessionState.session.destroy();
-      sessions.delete(data.sessionId);
-
-      const projectRoot = await getProjectRootForCwd(cwd);
-      const mcpDiscovery = await discoverMcpServers({ projectRoot });
-      const browserTools = createBrowserTools(data.sessionId);
-
-      // Resume the same session with the new model — preserves conversation context
-      const agentResult = await getAllAgents(undefined, cwd);
-      const customAgents: CustomAgentConfig[] = [];
-      for (const agent of agentResult.agents) {
-        if (agent.source === 'codex') continue;
-        try {
-          const content = await readFile(agent.path, 'utf-8');
-          const metadata = parseAgentFrontmatter(content);
-          customAgents.push({
-            name: metadata.name || agent.name,
-            displayName: agent.name,
-            description: metadata.description,
-            tools: null,
-            prompt: content,
-          });
-        } catch (error) {
-          log.warn('Failed to load agent prompt:', agent.path, error);
-        }
-      }
-      const resumedSession = await client.resumeSession(data.sessionId, {
-        clientName: COOPER_CLIENT_NAME,
-        model: data.model,
-        mcpServers: mcpDiscovery.effectiveServers,
-        tools: browserTools,
-        customAgents,
-        onPermissionRequest: (request, invocation) =>
-          handlePermissionRequest(request, invocation, resumedSession.sessionId),
-      });
-      if (sessionState.activeAgentName) {
-        await resumedSession.rpc.agent.select({ name: sessionState.activeAgentName });
-      }
-
-      const resumedSessionId = resumedSession.sessionId;
-      registerSessionEventForwarding(resumedSessionId, resumedSession);
-
-      sessions.set(resumedSessionId, {
-        session: resumedSession,
-        client,
-        model: data.model,
-        cwd,
-        alwaysAllowed: new Set(sessionState.alwaysAllowed),
-        allowedPaths: new Set(sessionState.allowedPaths),
-        isProcessing: false,
-        yoloMode: sessionState.yoloMode,
-        activeAgentName: sessionState.activeAgentName,
-      });
-      activeSessionId = resumedSessionId;
-
-      log.info(
-        `[${resumedSessionId}] Model switch complete: ${previousModel} → ${data.model} (resumed session)`
-      );
-      return { sessionId: resumedSessionId, model: data.model, cwd };
+      return switchSessionModelInPlace(data.sessionId, data.model, validModels, sessionState, log);
     }
 
     return { model: data.model };
@@ -3699,7 +3582,7 @@ ipcMain.handle(
       resolvePendingPermissionsForSession(sessionId, {
         kind: 'denied-no-approval-rule-and-could-not-request-from-user',
       });
-      await sessionState.session.destroy();
+      await sessionState.session.disconnect();
       sessions.delete(sessionId);
       sessionSawDelta.delete(sessionId);
       console.log(`Closed session ${sessionId}`);
@@ -5634,14 +5517,14 @@ app.on('window-all-closed', async () => {
   // Close browser and save state
   await browserManager.closeBrowser();
 
-  // Destroy all sessions
+    // Disconnect all sessions
   for (const [id, state] of sessions) {
     clearToolStallTimer(id);
     resolvePendingPermissionsForSession(id, {
       kind: 'denied-no-approval-rule-and-could-not-request-from-user',
     });
-    await state.session.destroy();
-    console.log(`Destroyed session ${id}`);
+    await state.session.disconnect();
+    console.log(`Disconnected session ${id}`);
   }
   sessions.clear();
 
@@ -5662,13 +5545,13 @@ app.on('before-quit', async () => {
   // Close browser and save state
   await browserManager.closeBrowser();
 
-  // Destroy all sessions
+  // Disconnect all sessions
   for (const [id, state] of sessions) {
     clearToolStallTimer(id);
     resolvePendingPermissionsForSession(id, {
       kind: 'denied-no-approval-rule-and-could-not-request-from-user',
     });
-    await state.session.destroy();
+    await state.session.disconnect();
   }
   sessions.clear();
 
