@@ -4400,6 +4400,26 @@ ipcMain.handle('git:checkoutBranch', async (_event, data: { cwd: string; branchN
 });
 
 // Git operations - merge worktree branch to main/master
+
+function normalizeGitPathForCompare(filePath: string): string {
+  return filePath.replace(/^\.?[\\/]/, '').replace(/\\/g, '/').trim();
+}
+
+function isCooperExcludedFile(gitPath: string, excludedFiles: string[]): boolean {
+  const normalizedGitPath = normalizeGitPathForCompare(gitPath);
+  const gitName = path.basename(normalizedGitPath);
+  return excludedFiles.some((excluded) => {
+    const normalizedExcluded = normalizeGitPathForCompare(excluded);
+    const excludedName = path.basename(normalizedExcluded);
+    return (
+      normalizedGitPath === normalizedExcluded ||
+      normalizedGitPath.endsWith('/' + normalizedExcluded) ||
+      normalizedExcluded.endsWith('/' + normalizedGitPath) ||
+      gitName === excludedName
+    );
+  });
+}
+
 ipcMain.handle(
   'git:mergeToMain',
   async (
@@ -4456,34 +4476,14 @@ ipcMain.handle(
           .map((line) => line.substring(3).trim()) // Remove status prefix (e.g., " M ", "?? ")
           .filter((f) => f);
 
-        const untrackedFiles = data.untrackedFiles || [];
-
-        // Check if each uncommitted file is in our untracked list
-        // Use flexible matching: check if paths end with the same filename or match exactly
-        const isFileUntracked = (gitPath: string) => {
-          return untrackedFiles.some((untracked) => {
-            // Exact match
-            if (gitPath === untracked) return true;
-            // Git path ends with untracked path
-            if (gitPath.endsWith('/' + untracked) || gitPath.endsWith('\\' + untracked))
-              return true;
-            // Untracked path ends with git path
-            if (untracked.endsWith('/' + gitPath) || untracked.endsWith('\\' + gitPath))
-              return true;
-            // Both are just filenames and match
-            const gitName = gitPath.split(/[/\\]/).pop();
-            const untrackedName = untracked.split(/[/\\]/).pop();
-            if (gitName === untrackedName && gitName === gitPath && untrackedName === untracked)
-              return true;
-            return false;
-          });
-        };
-
-        const nonUntrackedUncommitted = uncommittedFiles.filter((f) => !isFileUntracked(f));
+        const excludedFiles = data.untrackedFiles || [];
+        const nonUntrackedUncommitted = uncommittedFiles.filter(
+          (f) => !isCooperExcludedFile(f, excludedFiles)
+        );
 
         if (nonUntrackedUncommitted.length > 0) {
           console.log('Uncommitted files not in untracked list:', nonUntrackedUncommitted);
-          console.log('Untracked files list:', untrackedFiles);
+          console.log('Excluded files list:', excludedFiles);
           console.log('All uncommitted files:', uncommittedFiles);
           return {
             success: false,
@@ -4801,25 +4801,10 @@ ipcMain.handle(
           .map((line) => line.substring(3).trim())
           .filter((f) => f);
 
-        const untrackedFiles = data.untrackedFiles || [];
-
-        // Check if each uncommitted file is in our untracked list (flexible matching)
-        const isFileUntracked = (gitPath: string) => {
-          return untrackedFiles.some((untracked) => {
-            if (gitPath === untracked) return true;
-            if (gitPath.endsWith('/' + untracked) || gitPath.endsWith('\\' + untracked))
-              return true;
-            if (untracked.endsWith('/' + gitPath) || untracked.endsWith('\\' + gitPath))
-              return true;
-            const gitName = gitPath.split(/[/\\]/).pop();
-            const untrackedName = untracked.split(/[/\\]/).pop();
-            if (gitName === untrackedName && gitName === gitPath && untrackedName === untracked)
-              return true;
-            return false;
-          });
-        };
-
-        const nonUntrackedUncommitted = uncommittedFiles.filter((f) => !isFileUntracked(f));
+        const excludedFiles = data.untrackedFiles || [];
+        const nonUntrackedUncommitted = uncommittedFiles.filter(
+          (f) => !isCooperExcludedFile(f, excludedFiles)
+        );
 
         if (nonUntrackedUncommitted.length > 0) {
           return { success: false, error: 'Uncommitted changes exist. Please commit them first.' };
