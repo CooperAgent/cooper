@@ -302,4 +302,40 @@ describe('FilePreviewModal - Edit Mode', () => {
       expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     });
   });
+
+  it('syncs line number gutter scroll with textarea scroll', async () => {
+    // Provide enough lines to make the content scrollable
+    const manyLines = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join('\n');
+    (window.electronAPI.file.readContent as any).mockResolvedValue({
+      success: true,
+      content: manyLines,
+      fileSize: manyLines.length,
+      fileName: 'test.ts',
+    });
+
+    render(<FilePreviewModal {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Edit file')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTitle('Edit file'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).toBeInTheDocument();
+    });
+
+    const textarea = screen.getByRole('textbox');
+    // The gutter is the aria-hidden div next to the textarea
+    const gutter = textarea.previousElementSibling as HTMLElement;
+    expect(gutter).toBeTruthy();
+    expect(gutter.getAttribute('aria-hidden')).toBe('true');
+
+    // Simulate scrolling the textarea
+    Object.defineProperty(textarea, 'scrollTop', { value: 200, writable: true });
+    fireEvent.scroll(textarea, { target: { scrollTop: 200 } });
+
+    // Gutter scrollTop should be synced
+    expect(gutter.scrollTop).toBe(200);
+  });
 });
