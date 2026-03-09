@@ -25,5 +25,8 @@ export function getActivePrimaryAgentLabel(
   activeAgentName: string | null,
   defaultLabel: string
 ): string {
-  return agents.find((agent) => agent.name === activeAgentName)?.displayName || defaultLabel;
+  return (
+    agents.find((agent) => agent.name === activeAgentName || agent.displayName === activeAgentName)
+      ?.displayName || defaultLabel
+  );
 }

@@ -99,6 +99,7 @@ export interface PreviousSession {
   name?: string;
   modifiedTime: string;
   cwd?: string; // Original working directory for this session
+  activeAgentName?: string;
   markedForReview?: boolean; // Whether session was marked for follow-up
   reviewNote?: string; // Optional user note
   // Worktree-specific properties (optional, present if session is a worktree)
