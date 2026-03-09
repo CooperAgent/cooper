@@ -165,12 +165,14 @@ const electronAPI = {
           editedFiles?: string[];
           alwaysAllowed?: string[];
           yoloMode?: boolean;
+          activeAgentName?: string;
         }[];
         previousSessions: {
           sessionId: string;
           name?: string;
           modifiedTime: string;
           cwd?: string;
+          activeAgentName?: string;
         }[];
         models: { id: string; name: string; multiplier: number }[];
         clientUnavailable?: boolean;
@@ -187,12 +189,14 @@ const electronAPI = {
             editedFiles?: string[];
             alwaysAllowed?: string[];
             yoloMode?: boolean;
+            activeAgentName?: string;
           }[];
           previousSessions: {
             sessionId: string;
             name?: string;
             modifiedTime: string;
             cwd?: string;
+            activeAgentName?: string;
           }[];
           models: { id: string; name: string; multiplier: number }[];
           clientUnavailable?: boolean;
@@ -211,6 +215,7 @@ const electronAPI = {
           editedFiles?: string[];
           alwaysAllowed?: string[];
           yoloMode?: boolean;
+          activeAgentName?: string;
         };
       }) => void
     ): (() => void) => {
@@ -225,6 +230,7 @@ const electronAPI = {
             editedFiles?: string[];
             alwaysAllowed?: string[];
             yoloMode?: boolean;
+            activeAgentName?: string;
           };
         }
       ): void => callback(data);

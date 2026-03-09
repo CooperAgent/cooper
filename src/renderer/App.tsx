@@ -929,7 +929,15 @@ const App: React.FC = () => {
     window.electronAPI.copilot
       .getActiveAgent(activeTab.id)
       .then((agent) => {
-        setSelectedAgentByTab((prev) => ({ ...prev, [activeTab.id]: agent?.name ?? null }));
+        const activeAgentName = agent?.name ?? null;
+        setSelectedAgentByTab((prev) => ({ ...prev, [activeTab.id]: activeAgentName }));
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === activeTab.id
+              ? { ...tab, activeAgentName: activeAgentName ?? undefined }
+              : tab
+          )
+        );
       })
       .catch((error) => {
         console.error('Failed to fetch active session agent:', error);
@@ -1650,14 +1658,6 @@ const App: React.FC = () => {
             ],
           };
         })
-      );
-    });
-
-    const unsubscribeAgentSelected = window.electronAPI.copilot.onAgentSelected((data) => {
-      const { sessionId, agentName, agentDisplayName } = data;
-      const agentLabel = agentDisplayName || agentName;
-      setTabs((prev) =>
-        prev.map((tab) => (tab.id === sessionId ? { ...tab, activeAgentName: agentLabel } : tab))
       );
     });
 
@@ -2504,7 +2504,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeReady();
       unsubscribeDelta();
       unsubscribeMessage();
-      unsubscribeAgentSelected();
       unsubscribeIdle();
       unsubscribeToolStart();
       unsubscribeToolEnd();
@@ -4152,6 +4151,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               cwd: closingTab.cwd,
               markedForReview: closingTab.markedForReview,
               reviewNote: closingTab.reviewNote,
+              activeAgentName: closingTab.activeAgentName,
             },
             ...prev,
           ]);
@@ -4201,6 +4201,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             cwd: closingTab.cwd,
             markedForReview: closingTab.markedForReview,
             reviewNote: closingTab.reviewNote,
+            activeAgentName: closingTab.activeAgentName,
           },
           ...prev,
         ]);
@@ -4387,7 +4388,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         gitBranchRefresh: 0,
         markedForReview: prevSession.markedForReview,
         reviewNote: prevSession.reviewNote,
-        activeAgentName: prevSession.activeAgentName,
+        activeAgentName: result.activeAgentName ?? prevSession.activeAgentName,
       };
 
       setTabs((prev) => [...prev, newTab]);
@@ -4547,7 +4548,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 ...tab,
                 id: result.sessionId,
                 cwd: result.cwd || tab.cwd,
-                activeAgentName: result.activeAgent?.displayName,
+                activeAgentName: result.activeAgent?.name,
               }
             : tab
         )

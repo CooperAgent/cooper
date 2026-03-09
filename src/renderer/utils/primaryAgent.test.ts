@@ -52,4 +52,13 @@ describe('getActivePrimaryAgentLabel', () => {
     );
     expect(label).toBe('Cooper (default)');
   });
+
+  it('accepts a persisted display label while old selections are being migrated', () => {
+    const label = getActivePrimaryAgentLabel(
+      [{ name: 'sdk-specialist', displayName: 'SDK Specialist' }],
+      'SDK Specialist',
+      'Cooper (default)'
+    );
+    expect(label).toBe('SDK Specialist');
+  });
 });

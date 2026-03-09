@@ -31,3 +31,37 @@ export const mergeSessionCwds = <T extends { sessionId: string; cwd?: string }>(
   }
   return merged;
 };
+
+export const mergeSessionActiveAgents = <
+  T extends { sessionId: string; activeAgentName?: string | null },
+>(
+  existing: Record<string, string>,
+  openSessions: T[]
+): Record<string, string> => {
+  const merged = { ...existing };
+  for (const session of openSessions) {
+    const activeAgentName = session.activeAgentName?.trim();
+    if (activeAgentName) {
+      merged[session.sessionId] = activeAgentName;
+    } else {
+      delete merged[session.sessionId];
+    }
+  }
+  return merged;
+};
+
+export const resolveSessionActiveAgent = ({
+  storedActiveAgentName,
+  persistedActiveAgentName,
+}: {
+  storedActiveAgentName?: string | null;
+  persistedActiveAgentName?: string | null;
+}): string | undefined => {
+  const isUsableAgentName = (value?: string | null): value is string => {
+    return Boolean(value?.trim());
+  };
+
+  if (isUsableAgentName(storedActiveAgentName)) return storedActiveAgentName;
+  if (isUsableAgentName(persistedActiveAgentName)) return persistedActiveAgentName;
+  return undefined;
+};

@@ -89,4 +89,5 @@ export interface CopilotResumePreviousSessionResult {
   alreadyOpen: boolean;
   editedFiles?: string[];
   alwaysAllowed?: string[];
+  activeAgentName?: string;
 }

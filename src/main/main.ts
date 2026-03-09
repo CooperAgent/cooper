@@ -105,7 +105,12 @@ import {
   validateCopilotSetModelArgs,
   validateCopilotSwitchSessionArgs,
 } from './utils/ipcValidation';
-import { mergeSessionCwds, resolveSessionName } from './utils/sessionRestore';
+import {
+  mergeSessionActiveAgents,
+  mergeSessionCwds,
+  resolveSessionActiveAgent,
+  resolveSessionName,
+} from './utils/sessionRestore';
 import { switchSessionModelInPlace } from './utils/modelSwitch';
 import * as worktree from './worktree';
 import * as ptyManager from './pty';
@@ -279,6 +284,7 @@ const store = new Store({
     zoomFactor: DEFAULT_ZOOM_FACTOR, // Window zoom factor (1 = 100%)
     sessionCwds: {} as Record<string, string>, // Persistent map of sessionId -> cwd (survives session close)
     sessionMarks: {} as Record<string, { markedForReview?: boolean; reviewNote?: string }>, // Persistent mark/note state
+    sessionActiveAgents: {} as Record<string, string>, // Persistent primary agent selection by session
     globalSafeCommands: [] as string[], // Globally safe commands that are auto-approved for all sessions
     favoriteModels: [] as string[], // Model IDs marked as favorites (shown at top of model selector)
     hasSeenWelcomeWizard: false as boolean, // Whether user has completed the welcome wizard
@@ -1159,12 +1165,60 @@ interface EarlyResumedSession {
   untrackedFiles?: string[];
   fileViewMode?: 'flat' | 'tree';
   yoloMode?: boolean;
+  activeAgentName?: string;
   messages?: { role: 'user' | 'assistant'; content: string }[]; // Pre-loaded messages
   sourceIssue?: { url: string; number: number; owner: string; repo: string };
 }
 let earlyResumedSessions: EarlyResumedSession[] = [];
 let earlyResumptionComplete = false;
 let earlyResumptionPromise: Promise<void> | null = null;
+
+function persistSessionActiveAgent(sessionId: string, activeAgentName: string | null): void {
+  const sessionActiveAgents = (store.get('sessionActiveAgents') as Record<string, string>) || {};
+  if (activeAgentName) {
+    sessionActiveAgents[sessionId] = activeAgentName;
+  } else {
+    delete sessionActiveAgents[sessionId];
+  }
+  store.set('sessionActiveAgents', sessionActiveAgents);
+
+  const openSessions = (store.get('openSessions') as StoredSession[]) || [];
+  const updatedOpenSessions = openSessions.map((session) =>
+    session.sessionId === sessionId
+      ? { ...session, activeAgentName: activeAgentName || undefined }
+      : session
+  );
+  store.set('openSessions', updatedOpenSessions);
+}
+
+async function normalizeStoredActiveAgentName(
+  sessionId: string,
+  session: CopilotSession,
+  activeAgentName: string | undefined
+): Promise<string | null> {
+  if (!activeAgentName) return null;
+
+  const { agents } = await session.rpc.agent.list();
+  const exactMatch = agents.find((agent) => agent.name === activeAgentName);
+  if (exactMatch) {
+    return exactMatch.name;
+  }
+
+  const displayNameMatch = agents.find((agent) => agent.displayName === activeAgentName);
+  if (displayNameMatch) {
+    log.info(
+      `[${sessionId}] [AgentSelection] migrated stored display label '${activeAgentName}' to canonical name '${displayNameMatch.name}'`
+    );
+    persistSessionActiveAgent(sessionId, displayNameMatch.name);
+    return displayNameMatch.name;
+  }
+
+  log.warn(
+    `[${sessionId}] [AgentSelection] clearing unknown stored agent selection '${activeAgentName}'`
+  );
+  persistSessionActiveAgent(sessionId, null);
+  return null;
+}
 
 function startEarlyClientInit(): void {
   const defaultCwd = app.isPackaged ? app.getPath('home') : process.cwd();
@@ -1178,6 +1232,7 @@ function startEarlyClientInit(): void {
 async function startEarlySessionResumption(): Promise<void> {
   const openSessions = (store.get('openSessions') as StoredSession[]) || [];
   const sessionNames = (store.get('sessionNames') as Record<string, string>) || {};
+  const sessionActiveAgents = (store.get('sessionActiveAgents') as Record<string, string>) || {};
   if (openSessions.length === 0) {
     earlyResumptionComplete = true;
     return;
@@ -1207,6 +1262,11 @@ async function startEarlySessionResumption(): Promise<void> {
       const sessionCwd = cwd || (app.isPackaged ? app.getPath('home') : process.cwd());
       const sessionModel = model || (store.get('model') as string) || 'gpt-5.2';
       const storedAlwaysAllowed = alwaysAllowed || [];
+      const resolvedActiveAgentName =
+        resolveSessionActiveAgent({
+          storedActiveAgentName: storedSession.activeAgentName,
+          persistedActiveAgentName: sessionActiveAgents[sessionId],
+        }) ?? null;
 
       try {
         // Get or create client for this session's cwd
@@ -1337,8 +1397,14 @@ async function startEarlySessionResumption(): Promise<void> {
           allowedPaths: new Set(),
           isProcessing: false,
           yoloMode: yoloMode || false,
-          activeAgentName: null,
+          activeAgentName: await normalizeStoredActiveAgentName(
+            sessionId,
+            session,
+            resolvedActiveAgentName
+          ),
         });
+
+        await enforceSelectedAgent(sessionId, sessions.get(sessionId)!);
 
         console.log(`Early resumed session ${sessionId}`);
 
@@ -1368,6 +1434,7 @@ async function startEarlySessionResumption(): Promise<void> {
           untrackedFiles: untrackedFiles || [],
           fileViewMode: fileViewMode || 'flat',
           yoloMode: yoloMode || false,
+          activeAgentName: sessions.get(sessionId)?.activeAgentName ?? undefined,
           messages,
           sourceIssue,
         };
@@ -2346,6 +2413,7 @@ async function initCopilot(): Promise<void> {
         { markedForReview?: boolean; reviewNote?: string }
       >) || {};
     const sessionNames = (store.get('sessionNames') as Record<string, string>) || {};
+    const sessionActiveAgents = (store.get('sessionActiveAgents') as Record<string, string>) || {};
 
     // Build list of previous sessions (all sessions not in our open list)
     // Use stored session name first (preserves user renames), then SDK summary as fallback
@@ -2359,6 +2427,7 @@ async function initCopilot(): Promise<void> {
         }),
         modifiedTime: s.modifiedTime.toISOString(),
         cwd: sessionCwds[s.sessionId],
+        activeAgentName: sessionActiveAgents[s.sessionId],
         markedForReview: sessionMarks[s.sessionId]?.markedForReview,
         reviewNote: sessionMarks[s.sessionId]?.reviewNote,
       }));
@@ -2371,6 +2440,7 @@ async function initCopilot(): Promise<void> {
       editedFiles?: string[];
       alwaysAllowed?: string[];
       untrackedFiles?: string[];
+      activeAgentName?: string;
     }[] = [];
 
     // Check which sessions were already resumed early
@@ -2507,6 +2577,11 @@ async function initCopilot(): Promise<void> {
 
         // Restore alwaysAllowed set from stored data (normalize legacy ids)
         const alwaysAllowedSet = new Set(storedAlwaysAllowed.map(normalizeAlwaysAllowed));
+        const resolvedActiveAgentName =
+          resolveSessionActiveAgent({
+            storedActiveAgentName: storedSession?.activeAgentName,
+            persistedActiveAgentName: sessionActiveAgents[sessionId],
+          }) ?? null;
         sessions.set(sessionId, {
           session,
           client,
@@ -2516,8 +2591,14 @@ async function initCopilot(): Promise<void> {
           allowedPaths: new Set(),
           isProcessing: false,
           yoloMode: storedSession?.yoloMode || false,
-          activeAgentName: null,
+          activeAgentName: await normalizeStoredActiveAgentName(
+            sessionId,
+            session,
+            resolvedActiveAgentName
+          ),
         });
+
+        await enforceSelectedAgent(sessionId, sessions.get(sessionId)!);
 
         const resumed = {
           sessionId,
@@ -2533,7 +2614,7 @@ async function initCopilot(): Promise<void> {
           untrackedFiles: storedSession?.untrackedFiles || [],
           fileViewMode: storedSession?.fileViewMode || 'flat',
           yoloMode: storedSession?.yoloMode || false,
-          activeAgentName: storedSession?.activeAgentName,
+          activeAgentName: sessions.get(sessionId)?.activeAgentName ?? undefined,
         };
         resumedSessions.push(resumed);
         console.log(
@@ -2581,7 +2662,11 @@ async function initCopilot(): Promise<void> {
         untrackedFiles: storedSession?.untrackedFiles || [],
         fileViewMode: storedSession?.fileViewMode || 'flat',
         yoloMode: storedSession?.yoloMode || false,
-        activeAgentName: storedSession?.activeAgentName,
+        activeAgentName:
+          resolveSessionActiveAgent({
+            storedActiveAgentName: storedSession?.activeAgentName,
+            persistedActiveAgentName: sessionActiveAgents[sessionId],
+          }) ?? undefined,
       };
     });
 
@@ -3248,6 +3333,7 @@ ipcMain.handle(
       );
     }
     sessionState.activeAgentName = agent?.name ?? null;
+    persistSessionActiveAgent(data.sessionId, sessionState.activeAgentName);
     return { sessionId: data.sessionId, model, cwd, activeAgent: agent ?? null };
   }
 );
@@ -3628,6 +3714,10 @@ ipcMain.handle('copilot:deleteSessionFromHistory', async (_event, sessionId: str
     delete sessionCwds[sessionId];
     store.set('sessionCwds', sessionCwds);
 
+    const sessionActiveAgents = (store.get('sessionActiveAgents') as Record<string, string>) || {};
+    delete sessionActiveAgents[sessionId];
+    store.set('sessionActiveAgents', sessionActiveAgents);
+
     console.log(`Deleted session ${sessionId} from history`);
     return { success: true };
   } catch (error) {
@@ -3831,6 +3921,9 @@ ipcMain.handle('copilot:saveOpenSessions', async (_event, openSessions: StoredSe
     }
   }
   store.set('sessionNames', sessionNames);
+
+  const sessionActiveAgents = (store.get('sessionActiveAgents') as Record<string, string>) || {};
+  store.set('sessionActiveAgents', mergeSessionActiveAgents(sessionActiveAgents, openSessions));
 
   console.log(`Saved ${openSessions.length} open sessions with models`);
   return { success: true };
@@ -4402,7 +4495,10 @@ ipcMain.handle('git:checkoutBranch', async (_event, data: { cwd: string; branchN
 // Git operations - merge worktree branch to main/master
 
 function normalizeGitPathForCompare(filePath: string): string {
-  return filePath.replace(/^\.?[\\/]/, '').replace(/\\/g, '/').trim();
+  return filePath
+    .replace(/^\.?[\\/]/, '')
+    .replace(/\\/g, '/')
+    .trim();
 }
 
 function isCooperExcludedFile(gitPath: string, excludedFiles: string[]): boolean {
@@ -4892,12 +4988,19 @@ ipcMain.handle(
     // Check if already resumed
     if (sessions.has(sessionId)) {
       const sessionState = sessions.get(sessionId)!;
-      return { sessionId, model: sessionState.model, cwd: sessionState.cwd, alreadyOpen: true };
+      return {
+        sessionId,
+        model: sessionState.model,
+        cwd: sessionState.cwd,
+        alreadyOpen: true,
+        activeAgentName: sessionState.activeAgentName ?? undefined,
+      };
     }
 
     const sessionModel = (store.get('model') as string) || 'gpt-5.2';
     // Use provided cwd, or look up stored cwd, or fall back to default
     const sessionCwds = (store.get('sessionCwds') as Record<string, string>) || {};
+    const sessionActiveAgents = (store.get('sessionActiveAgents') as Record<string, string>) || {};
     const defaultCwd = app.isPackaged ? app.getPath('home') : process.cwd();
     const sessionCwd = cwd || sessionCwds[sessionId] || defaultCwd;
 
@@ -5052,6 +5155,10 @@ ipcMain.handle(
       }
     });
 
+    const restoredActiveAgentName =
+      (await normalizeStoredActiveAgentName(sessionId, session, sessionActiveAgents[sessionId])) ??
+      null;
+
     sessions.set(sessionId, {
       session,
       client,
@@ -5061,12 +5168,19 @@ ipcMain.handle(
       allowedPaths: new Set(),
       isProcessing: false,
       yoloMode: false,
-      activeAgentName: null,
+      activeAgentName: restoredActiveAgentName,
     });
+    await enforceSelectedAgent(sessionId, sessions.get(sessionId)!);
     activeSessionId = sessionId;
 
     console.log(`Resumed previous session ${sessionId} in ${sessionCwd}`);
-    return { sessionId, model: sessionModel, cwd: sessionCwd, alreadyOpen: false };
+    return {
+      sessionId,
+      model: sessionModel,
+      cwd: sessionCwd,
+      alreadyOpen: false,
+      activeAgentName: restoredActiveAgentName ?? undefined,
+    };
   }
 );
 
@@ -5502,7 +5616,7 @@ app.on('window-all-closed', async () => {
   // Close browser and save state
   await browserManager.closeBrowser();
 
-    // Disconnect all sessions
+  // Disconnect all sessions
   for (const [id, state] of sessions) {
     clearToolStallTimer(id);
     resolvePendingPermissionsForSession(id, {
