@@ -5,6 +5,31 @@ All notable changes to Cooper will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.4
+
+This release makes Cooper faster, more dependable, and better at preserving how you work across sessions.
+
+### Added
+
+- **Persistent agent selection** — Cooper now remembers the active agent for each session, so your preferred workflow is restored when you come back.
+- **Scheduled message queueing** — You can queue prompts to send later, with improved Enter-key behavior when a delay is selected.
+- **Agent-defined MCP servers** — Agents can now declare their own MCP servers via frontmatter, making richer agent setups easier to carry with them.
+
+### Changed
+
+- **Performance and responsiveness** — Improved startup and runtime responsiveness by lazy-loading heavier UI surfaces, deferring non-critical session and MCP data, and reducing unnecessary rerenders during streaming.
+- **Session continuity** — Session-related state handling is more resilient, including better restoration behavior and persistence for settings like YOLO mode.
+- **Copilot SDK and bundled tooling** — Updated Copilot SDK and packaged components to newer versions for better stability and compatibility.
+
+### Fixed
+
+- **Stalled tool execution** — Cooper now detects and aborts tool executions that get stuck instead of leaving sessions hanging indefinitely.
+- **PowerShell and permission-request stalls** — Fixed cases where tool calls could freeze during permission flows or long-running operations.
+- **Session reconnection edge cases** — Improved handling for disconnected or not-yet-resumed sessions.
+- **File editing polish** — Fixed line-number gutter scrolling so it stays aligned with the editor content.
+- **Media and attachments** — Fixed image lightbox behavior and improved attachment handling.
+- **Git/worktree reliability** — Fixed merge-status handling when untracked files are present and improved PTY cleanup behavior.
+
 ## 1.0.3
 
 This release includes all changes currently on `staging` since `main` (`1.0.2`).
