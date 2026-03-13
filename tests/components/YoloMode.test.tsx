@@ -7,21 +7,27 @@ const mockFetchGitHubIssue = vi.fn();
 const mockFetchAzureDevOpsWorkItem = vi.fn();
 const mockCheckGitVersion = vi.fn();
 const mockListBranches = vi.fn();
+const mockGetCurrentOriginBranch = vi.fn();
 const mockOnSessionCreated = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
 
   mockCheckGitVersion.mockResolvedValue({ version: '2.38.0', valid: true });
-  mockListBranches.mockResolvedValue([]);
+  mockListBranches.mockResolvedValue({ success: true, branches: ['main', 'develop'] });
+  mockGetCurrentOriginBranch.mockResolvedValue({ success: true, branch: 'develop' });
 
   window.electronAPI = {
     ...window.electronAPI,
+    git: {
+      ...(window.electronAPI?.git || {}),
+      listBranches: mockListBranches,
+      getCurrentOriginBranch: mockGetCurrentOriginBranch,
+    },
     worktree: {
       fetchGitHubIssue: mockFetchGitHubIssue,
       fetchAzureDevOpsWorkItem: mockFetchAzureDevOpsWorkItem,
       checkGitVersion: mockCheckGitVersion,
-      listBranches: mockListBranches,
       createSession: vi.fn(),
       listSessions: vi.fn().mockResolvedValue([]),
     },

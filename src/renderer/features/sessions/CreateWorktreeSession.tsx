@@ -8,6 +8,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
 } from '../../components/Icons/Icons';
+import { SearchableBranchSelect } from '../../components/SearchableBranchSelect';
 
 export interface IssueComment {
   body: string;
@@ -52,6 +53,9 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [gitSupported, setGitSupported] = useState<boolean | null>(null);
   const [gitVersion, setGitVersion] = useState<string>('');
+  const [baseBranch, setBaseBranch] = useState<string | null>(null);
+  const [baseBranches, setBaseBranches] = useState<string[]>([]);
+  const [isLoadingBaseBranches, setIsLoadingBaseBranches] = useState(false);
   const [issueTitle, setIssueTitle] = useState<string | null>(null);
   const [issueBody, setIssueBody] = useState<string | null>(null);
   const [issueComments, setIssueComments] = useState<IssueComment[] | undefined>(undefined);
@@ -66,6 +70,8 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
     if (isOpen) {
       setBranch('');
       setIssueUrl('');
+      setBaseBranch(null);
+      setBaseBranches([]);
       setError(null);
       setIssueTitle(null);
       setIssueBody(null);
@@ -77,8 +83,41 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
       setYoloMode(false);
       setShowIssueSection(false);
       checkGitVersion();
+      loadBaseBranches();
     }
   }, [isOpen]);
+
+  const loadBaseBranches = async () => {
+    setIsLoadingBaseBranches(true);
+    try {
+      const [branchesResult, currentOriginBranchResult] = await Promise.all([
+        window.electronAPI.git.listBranches(repoPath),
+        window.electronAPI.git.getCurrentOriginBranch(repoPath),
+      ]);
+      if (!branchesResult.success || branchesResult.branches.length === 0) {
+        setError(branchesResult.error || 'No origin branches found for this repository');
+        return;
+      }
+
+      setBaseBranches(branchesResult.branches);
+      const defaultBaseBranch =
+        (currentOriginBranchResult.success &&
+        currentOriginBranchResult.branch &&
+        branchesResult.branches.includes(currentOriginBranchResult.branch)
+          ? currentOriginBranchResult.branch
+          : null) ||
+        (branchesResult.branches.includes('main')
+          ? 'main'
+          : branchesResult.branches.includes('master')
+            ? 'master'
+            : branchesResult.branches[0]);
+      setBaseBranch(defaultBaseBranch);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsLoadingBaseBranches(false);
+    }
+  };
 
   const checkGitVersion = async () => {
     try {
@@ -144,6 +183,10 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
       setError('Branch name is required');
       return;
     }
+    if (!baseBranch) {
+      setError('Base branch is required');
+      return;
+    }
 
     setIsCreating(true);
     setError(null);
@@ -152,6 +195,7 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
       const result = await window.electronAPI.worktree.createSession({
         repoPath,
         branch: branch.trim(),
+        baseBranch,
       });
 
       if (result.success && result.session) {
@@ -187,7 +231,7 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isCreating && branch.trim()) {
+    if (e.key === 'Enter' && !isCreating && branch.trim() && baseBranch) {
       handleCreate();
     }
   };
@@ -212,6 +256,18 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
               <div className="text-sm text-copilot-text font-mono truncate bg-copilot-bg px-2 py-1.5 rounded border border-copilot-border">
                 {repoPath}
               </div>
+            </div>
+
+            <div className="mb-4">
+              <SearchableBranchSelect
+                value={baseBranch}
+                branches={baseBranches}
+                onSelect={setBaseBranch}
+                isLoading={isLoadingBaseBranches}
+                placeholder="Select base branch from origin..."
+                disabled={isCreating}
+                label="Fork From (origin)"
+              />
             </div>
 
             <div className="mb-4">
@@ -358,7 +414,8 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
                 disabled={isCreating}
               />
               <p className="text-xs text-copilot-text-muted mt-1">
-                Creates a new branch if it doesn't exist.
+                Creates a new branch from origin/{baseBranch || '<selected-branch>'} if it doesn't
+                exist.
               </p>
             </div>
 
@@ -418,7 +475,13 @@ export const CreateWorktreeSession: React.FC<CreateWorktreeSessionProps> = ({
           <Button
             variant="primary"
             onClick={handleCreate}
-            disabled={isCreating || !branch.trim() || gitSupported === false}
+            disabled={
+              isCreating ||
+              !branch.trim() ||
+              !baseBranch ||
+              isLoadingBaseBranches ||
+              gitSupported === false
+            }
           >
             {isCreating ? (
               <>

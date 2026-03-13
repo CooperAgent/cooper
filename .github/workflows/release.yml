@@ -189,6 +189,9 @@ jobs:
       - name: Build application
         run: npm run prebuild-info && npx electron-vite build
 
+      - name: Check bundle guardrail
+        run: node scripts/check-bundle-size.js --compare-baseline
+
       - name: Build distributables (macOS)
         if: runner.os == 'macOS'
         run: npx electron-builder --mac --publish never

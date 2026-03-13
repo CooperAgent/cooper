@@ -1,4 +1,23 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import {
+  COPILOT_IPC_CHANNELS,
+  CopilotCreateSessionArgs,
+  CopilotCreateSessionResult,
+  CopilotCloseSessionArgs,
+  CopilotCloseSessionResult,
+  CopilotGetMessagesArgs,
+  CopilotGetMessagesResult,
+  CopilotResumePreviousSessionArgs,
+  CopilotResumePreviousSessionResult,
+  CopilotSendAndWaitArgs,
+  CopilotSendAndWaitResult,
+  CopilotSendArgs,
+  CopilotSendResult,
+  CopilotSetModelArgs,
+  CopilotSetModelResult,
+  CopilotSwitchSessionArgs,
+  CopilotSwitchSessionResult,
+} from '../shared/ipc/contracts';
 
 const electronAPI = {
   // Platform information
@@ -11,33 +30,31 @@ const electronAPI = {
       prompt: string,
       attachments?: { type: 'file'; path: string; displayName?: string }[],
       mode?: 'enqueue' | 'immediate'
-    ): Promise<string> => {
-      return ipcRenderer.invoke('copilot:send', { sessionId, prompt, attachments, mode });
+    ): Promise<CopilotSendResult> => {
+      const args: CopilotSendArgs = { sessionId, prompt, attachments, mode };
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.send, args);
     },
     sendAndWait: (
       sessionId: string,
       prompt: string,
       attachments?: { type: 'file'; path: string; displayName?: string }[]
-    ): Promise<string> => {
-      return ipcRenderer.invoke('copilot:sendAndWait', { sessionId, prompt, attachments });
+    ): Promise<CopilotSendAndWaitResult> => {
+      const args: CopilotSendAndWaitArgs = { sessionId, prompt, attachments };
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.sendAndWait, args);
     },
     generateTitle: (conversation: string): Promise<string> => {
       return ipcRenderer.invoke('copilot:generateTitle', { conversation });
     },
-    getMessages: (
-      sessionId: string
-    ): Promise<{ role: 'user' | 'assistant'; content: string }[]> => {
-      return ipcRenderer.invoke('copilot:getMessages', sessionId);
+    getMessages: (sessionId: CopilotGetMessagesArgs): Promise<CopilotGetMessagesResult> => {
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.getMessages, sessionId);
     },
     abort: (sessionId: string): void => {
       ipcRenderer.send('copilot:abort', sessionId);
     },
 
     // Session management
-    createSession: (options?: {
-      cwd?: string;
-    }): Promise<{ sessionId: string; model: string; cwd: string }> => {
-      return ipcRenderer.invoke('copilot:createSession', options);
+    createSession: (options?: CopilotCreateSessionArgs): Promise<CopilotCreateSessionResult> => {
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.createSession, options);
     },
     getCwd: (): Promise<string> => {
       return ipcRenderer.invoke('copilot:getCwd');
@@ -48,16 +65,16 @@ const electronAPI = {
     checkDirectoryTrust: (dir: string): Promise<{ trusted: boolean; decision: string }> => {
       return ipcRenderer.invoke('copilot:checkDirectoryTrust', dir);
     },
-    closeSession: (sessionId: string): Promise<{ success: boolean; remainingSessions: number }> => {
-      return ipcRenderer.invoke('copilot:closeSession', sessionId);
+    closeSession: (sessionId: CopilotCloseSessionArgs): Promise<CopilotCloseSessionResult> => {
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.closeSession, sessionId);
     },
     deleteSessionFromHistory: (
       sessionId: string
     ): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('copilot:deleteSessionFromHistory', sessionId);
     },
-    switchSession: (sessionId: string): Promise<{ sessionId: string; model: string }> => {
-      return ipcRenderer.invoke('copilot:switchSession', sessionId);
+    switchSession: (sessionId: CopilotSwitchSessionArgs): Promise<CopilotSwitchSessionResult> => {
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.switchSession, sessionId);
     },
     saveOpenSessions: (
       sessions: {
@@ -133,15 +150,9 @@ const electronAPI = {
     resumePreviousSession: (
       sessionId: string,
       cwd?: string
-    ): Promise<{
-      sessionId: string;
-      model: string;
-      cwd: string;
-      alreadyOpen: boolean;
-      editedFiles?: string[];
-      alwaysAllowed?: string[];
-    }> => {
-      return ipcRenderer.invoke('copilot:resumePreviousSession', sessionId, cwd);
+    ): Promise<CopilotResumePreviousSessionResult> => {
+      const args: CopilotResumePreviousSessionArgs = [sessionId, cwd];
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.resumePreviousSession, ...args);
     },
 
     onReady: (
@@ -153,14 +164,18 @@ const electronAPI = {
           name?: string;
           editedFiles?: string[];
           alwaysAllowed?: string[];
+          yoloMode?: boolean;
+          activeAgentName?: string;
         }[];
         previousSessions: {
           sessionId: string;
           name?: string;
           modifiedTime: string;
           cwd?: string;
+          activeAgentName?: string;
         }[];
         models: { id: string; name: string; multiplier: number }[];
+        clientUnavailable?: boolean;
       }) => void
     ): (() => void) => {
       const handler = (
@@ -173,14 +188,18 @@ const electronAPI = {
             name?: string;
             editedFiles?: string[];
             alwaysAllowed?: string[];
+            yoloMode?: boolean;
+            activeAgentName?: string;
           }[];
           previousSessions: {
             sessionId: string;
             name?: string;
             modifiedTime: string;
             cwd?: string;
+            activeAgentName?: string;
           }[];
           models: { id: string; name: string; multiplier: number }[];
+          clientUnavailable?: boolean;
         }
       ): void => callback(data);
       ipcRenderer.on('copilot:ready', handler);
@@ -195,6 +214,8 @@ const electronAPI = {
           name?: string;
           editedFiles?: string[];
           alwaysAllowed?: string[];
+          yoloMode?: boolean;
+          activeAgentName?: string;
         };
       }) => void
     ): (() => void) => {
@@ -208,6 +229,8 @@ const electronAPI = {
             name?: string;
             editedFiles?: string[];
             alwaysAllowed?: string[];
+            yoloMode?: boolean;
+            activeAgentName?: string;
           };
         }
       ): void => callback(data);
@@ -218,15 +241,34 @@ const electronAPI = {
       sessionId: string,
       model: string,
       hasMessages: boolean
-    ): Promise<{ sessionId: string; model: string; cwd?: string; newSession?: boolean }> => {
-      return ipcRenderer.invoke('copilot:setModel', { sessionId, model, hasMessages });
+    ): Promise<CopilotSetModelResult> => {
+      const args: CopilotSetModelArgs = { sessionId, model, hasMessages };
+      return ipcRenderer.invoke(COPILOT_IPC_CHANNELS.setModel, args);
     },
     setActiveAgent: (
       sessionId: string,
       agentName: string | undefined,
       hasMessages: boolean
-    ): Promise<{ sessionId: string; model: string; cwd?: string }> => {
+    ): Promise<{
+      sessionId: string;
+      model: string;
+      cwd?: string;
+      activeAgent?: { name: string; displayName: string; description?: string } | null;
+    }> => {
       return ipcRenderer.invoke('copilot:setActiveAgent', { sessionId, agentName, hasMessages });
+    },
+    getSessionAgents: (
+      sessionId: string
+    ): Promise<Array<{ name: string; displayName: string; description?: string }>> => {
+      return ipcRenderer.invoke('copilot:getSessionAgents', sessionId);
+    },
+    getActiveAgent: (
+      sessionId: string
+    ): Promise<{ name: string; displayName: string; description?: string } | null> => {
+      return ipcRenderer.invoke('copilot:getActiveAgent', sessionId);
+    },
+    compactSession: (sessionId: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('copilot:compactSession', sessionId);
     },
     getModels: (): Promise<{
       models: { id: string; name: string; multiplier: number }[];
@@ -669,6 +711,9 @@ const electronAPI = {
     ): Promise<{ branch: string | null; success: boolean; error?: string }> => {
       return ipcRenderer.invoke('git:getBranch', cwd);
     },
+    getCurrentOriginBranch: (cwd: string): Promise<{ branch: string | null; success: boolean }> => {
+      return ipcRenderer.invoke('git:getCurrentOriginBranch', cwd);
+    },
     listBranches: (
       cwd: string
     ): Promise<{ success: boolean; branches: string[]; error?: string }> => {
@@ -954,6 +999,35 @@ const electronAPI = {
     getConfigPath: (): Promise<{ path: string }> => {
       return ipcRenderer.invoke('mcp:getConfigPath');
     },
+    getDiscoveryMetadata: (options?: {
+      sessionConfig?: Record<string, MCPServerConfig>;
+      projectRoot?: string;
+    }): Promise<{
+      success: boolean;
+      data?: {
+        effectiveServers: Record<string, MCPServerConfig>;
+        allMetadata: Array<{
+          serverName: string;
+          config: MCPServerConfig;
+          source: string;
+          priority: number;
+          effective: boolean;
+          overriddenBy?: string;
+          serverType: string;
+          launchMethod: string;
+        }>;
+        sources: {
+          session?: string;
+          agent?: string;
+          user?: string;
+          repo?: string;
+          default?: string;
+        };
+      };
+      error?: string;
+    }> => {
+      return ipcRenderer.invoke('mcp:getDiscoveryMetadata', options);
+    },
   },
   // Agent Skills Management
   skills: {
@@ -1041,6 +1115,7 @@ const electronAPI = {
     createSession: (data: {
       repoPath: string;
       branch: string;
+      baseBranch: string;
     }): Promise<{
       success: boolean;
       session?: WorktreeSession;
@@ -1246,6 +1321,7 @@ interface MCPServerConfigBase {
   tools: string[];
   type?: string;
   timeout?: number;
+  builtIn?: boolean;
 }
 
 interface MCPLocalServerConfig extends MCPServerConfigBase {

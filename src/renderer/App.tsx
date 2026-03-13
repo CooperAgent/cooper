@@ -35,12 +35,7 @@ import {
   ChoiceSelector,
   PaperclipIcon,
   MicButton,
-  SessionHistory,
-  FilePreviewModal,
-  EnvironmentModal,
-  UpdateAvailableModal,
   SpotlightTour,
-  ReleaseNotesModal,
   CodeBlockWithCopy,
   RepeatIcon,
   StarIcon,
@@ -49,7 +44,6 @@ import {
   SidebarDrawer,
   MenuIcon,
   ZapIcon,
-  SettingsModal,
   SettingsIcon,
   HelpCircleIcon,
   VolumeMuteIcon,
@@ -78,6 +72,7 @@ import {
   FileAttachment,
   PendingConfirmation,
   PendingInjection,
+  ScheduledPrompt,
   TabState,
   DraftInput,
   PreviousSession,
@@ -104,6 +99,11 @@ import { LONG_OUTPUT_LINE_THRESHOLD } from './utils/cliOutputCompression';
 import { isAsciiDiagram, extractTextContent } from './utils/isAsciiDiagram';
 import { isCliCommand } from './utils/isCliCommand';
 import { groupAgents } from './utils/agentPicker';
+import {
+  buildFallbackSessionAgents,
+  getActivePrimaryAgentLabel,
+  type SessionAgentOption,
+} from './utils/primaryAgent';
 import { parseGitHubIssueUrl } from './utils/parseGitHubIssueUrl';
 import { useClickOutside, useResponsive, useVoiceSpeech } from './hooks';
 import buildInfo from './build-info.json';
@@ -149,6 +149,20 @@ const SKILL_TYPE_LABELS: Record<Skill['type'], string> = {
   project: 'Project skills',
 };
 const SKILL_TYPE_ORDER: Skill['type'][] = ['personal', 'project'];
+const SessionHistoryLazy = React.lazy(() => import('./components/SessionHistory/SessionHistory'));
+const EnvironmentModalLazy = React.lazy(
+  () => import('./components/EnvironmentModal/EnvironmentModal')
+);
+const FilePreviewModalLazy = React.lazy(
+  () => import('./components/FilePreviewModal/FilePreviewModal')
+);
+const UpdateAvailableModalLazy = React.lazy(
+  () => import('./components/UpdateAvailableModal/UpdateAvailableModal')
+);
+const ReleaseNotesModalLazy = React.lazy(
+  () => import('./components/ReleaseNotesModal/ReleaseNotesModal')
+);
+const SettingsModalLazy = React.lazy(() => import('./components/SettingsModal/SettingsModal'));
 const App: React.FC = () => {
   const [status, setStatus] = useState<Status>('connecting');
   const [tabs, setTabs] = useState<TabState[]>([]);
@@ -218,6 +232,8 @@ const App: React.FC = () => {
   const { themePreference, activeTheme, availableThemes, setTheme, importTheme } = useTheme();
   // MCP Server state
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>({});
+  const [mcpConfigLoaded, setMcpConfigLoaded] = useState(false);
+  const [mcpConfigLoading, setMcpConfigLoading] = useState(false);
   const [showMcpServers, setShowMcpServers] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [showMcpJsonModal, setShowMcpJsonModal] = useState(false);
@@ -251,6 +267,9 @@ const App: React.FC = () => {
     }
   });
   const [selectedAgentByTab, setSelectedAgentByTab] = useState<Record<string, string | null>>({});
+  const [sessionAgentsByTab, setSessionAgentsByTab] = useState<
+    Record<string, SessionAgentOption[]>
+  >({});
 
   // Copilot Instructions state
   const [instructions, setInstructions] = useState<Instruction[]>([]);
@@ -258,6 +277,8 @@ const App: React.FC = () => {
 
   // Subagents state (for chevron widget in right pane)
   const [showSubagents, setShowSubagents] = useState(false);
+  const [sessionContextLoadedForCwd, setSessionContextLoadedForCwd] = useState<string | null>(null);
+  const [sessionContextLoading, setSessionContextLoading] = useState(false);
 
   const instructionSections = useMemo(() => {
     const grouped = groupBy(instructions, (instruction) => instruction.type);
@@ -418,6 +439,8 @@ const App: React.FC = () => {
 
   // Track user-attached file paths per session for auto-approval
   const userAttachedPathsRef = useRef<Map<string, Set<string>>>(new Map());
+  const scheduledPromptTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const tabsRef = useRef<TabState[]>([]);
 
   // Track last processed idle timestamp per session to prevent duplicate handling
   const lastIdleTimestampRef = useRef<Map<string, number>>(new Map());
@@ -603,18 +626,6 @@ const App: React.FC = () => {
     return cleanup;
   }, []);
 
-  // Check if voice model is already loaded on mount
-  useEffect(() => {
-    if (!window.electronAPI?.voiceServer) return;
-    window.electronAPI.voiceServer.checkModel().then((check) => {
-      if (check.exists && check.binaryExists) {
-        window.electronAPI.voice.loadModel().then((result) => {
-          if (result.success) setVoiceModelLoaded(true);
-        });
-      }
-    });
-  }, []);
-
   // Voice initialization handler for settings page
   const handleInitVoice = useCallback(async () => {
     if (!window.electronAPI?.voiceServer) return;
@@ -665,6 +676,10 @@ const App: React.FC = () => {
   }, [soundEnabled]);
 
   useEffect(() => {
+    if (!showSettingsModal || diagnosticsPaths) {
+      return;
+    }
+
     let isMounted = true;
     const loadDiagnostics = async () => {
       try {
@@ -680,7 +695,7 @@ const App: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [showSettingsModal, diagnosticsPaths]);
 
   // Keep ref in sync with state (update prevActiveTabIdRef BEFORE activeTabIdRef)
   useEffect(() => {
@@ -792,8 +807,24 @@ const App: React.FC = () => {
       setUpdateInfo({ ...defaults, ...info });
       setShowUpdateModal(true);
     };
+    (window as any).showReleaseNotesModal = () => {
+      setShowReleaseNotesModal(true);
+    };
+    (window as any).showSessionHistoryModal = () => {
+      setShowSessionHistory(true);
+    };
+    (window as any).showEnvironmentModal = () => {
+      setShowEnvironmentModal(true);
+    };
+    (window as any).showFilePreviewModal = (filePath?: string) => {
+      setFilePreviewPath(filePath || 'README.md');
+    };
     return () => {
       delete (window as any).showUpdateModal;
+      delete (window as any).showReleaseNotesModal;
+      delete (window as any).showSessionHistoryModal;
+      delete (window as any).showEnvironmentModal;
+      delete (window as any).showFilePreviewModal;
     };
   }, []);
 
@@ -866,6 +897,12 @@ const App: React.FC = () => {
   // Get the active tab (defined early for use in effects below)
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
+  const loadSessionAgents = useCallback(async (sessionId: string) => {
+    const sessionAgents = await window.electronAPI.copilot.getSessionAgents(sessionId);
+    setSessionAgentsByTab((prev) => ({ ...prev, [sessionId]: sessionAgents }));
+    return sessionAgents;
+  }, []);
+
   // Fetch model capabilities when active tab changes
   useEffect(() => {
     if (activeTab && activeTab.model && !modelCapabilities[activeTab.model]) {
@@ -883,6 +920,29 @@ const App: React.FC = () => {
         .catch(console.error);
     }
   }, [activeTab?.model]);
+
+  useEffect(() => {
+    if (!activeTab?.id) return;
+    void loadSessionAgents(activeTab.id).catch((error) => {
+      console.error('Failed to load available session agents:', error);
+    });
+    window.electronAPI.copilot
+      .getActiveAgent(activeTab.id)
+      .then((agent) => {
+        const activeAgentName = agent?.name ?? null;
+        setSelectedAgentByTab((prev) => ({ ...prev, [activeTab.id]: activeAgentName }));
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === activeTab.id
+              ? { ...tab, activeAgentName: activeAgentName ?? undefined }
+              : tab
+          )
+        );
+      })
+      .catch((error) => {
+        console.error('Failed to fetch active session agent:', error);
+      });
+  }, [activeTab?.id, loadSessionAgents]);
 
   // Save draft state to departing tab and restore from arriving tab on tab switch
   useEffect(() => {
@@ -1128,31 +1188,49 @@ const App: React.FC = () => {
     }
   }, [isMobileOrTablet]);
 
-  // Load MCP servers on startup
-  useEffect(() => {
-    const loadMcpConfig = async () => {
+  const loadMcpConfig = useCallback(
+    async (force = false) => {
+      if (!force && (mcpConfigLoaded || mcpConfigLoading)) return;
+      setMcpConfigLoading(true);
       try {
         const config = await window.electronAPI.mcp.getConfig();
         setMcpServers(config.mcpServers || {});
+        setMcpConfigLoaded(true);
       } catch (error) {
         console.error('Failed to load MCP config:', error);
+      } finally {
+        setMcpConfigLoading(false);
       }
-    };
-    loadMcpConfig();
-  }, []);
+    },
+    [mcpConfigLoaded, mcpConfigLoading]
+  );
 
-  // Load skills/agents/instructions together on startup and when active tab changes
   useEffect(() => {
-    let cancelled = false;
-    const loadSessionContext = async () => {
+    if (!activeTabId) return;
+    const timer = setTimeout(() => {
+      void loadMcpConfig();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [activeTabId, loadMcpConfig]);
+
+  useEffect(() => {
+    if (!showMcpServers && !showMcpModal && !showMcpJsonModal && !mcpConfigLoading) return;
+    void loadMcpConfig();
+  }, [showMcpServers, showMcpModal, showMcpJsonModal, mcpConfigLoading, loadMcpConfig]);
+
+  const loadSessionContext = useCallback(
+    async (force = false) => {
+      const cwd = activeTab?.cwd || '';
+      if (!force && (sessionContextLoading || sessionContextLoadedForCwd === cwd)) return;
+
+      setSessionContextLoading(true);
       try {
-        const cwd = activeTab?.cwd;
-        const result = await window.electronAPI.sessionContext.getAll(cwd);
-        if (cancelled) return;
+        const result = await window.electronAPI.sessionContext.getAll(activeTab?.cwd);
 
         setSkills(result.skills.skills || []);
         setAgents(result.agents.agents || []);
         setInstructions(result.instructions.instructions || []);
+        setSessionContextLoadedForCwd(cwd);
 
         if (result.skills.errors?.length > 0) {
           console.warn('Some skills had errors:', result.skills.errors);
@@ -1161,16 +1239,20 @@ const App: React.FC = () => {
           console.warn('Some instructions had errors:', result.instructions.errors);
         }
       } catch (error) {
-        if (!cancelled) {
-          console.error('Failed to load session context:', error);
-        }
+        console.error('Failed to load session context:', error);
+      } finally {
+        setSessionContextLoading(false);
       }
-    };
-    loadSessionContext();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab?.cwd]);
+    },
+    [activeTab?.cwd, sessionContextLoading, sessionContextLoadedForCwd]
+  );
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadSessionContext();
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [activeTab?.cwd, loadSessionContext]);
 
   // Fetch worktree data to map worktree paths to original repo paths
   useEffect(() => {
@@ -1222,6 +1304,10 @@ const App: React.FC = () => {
   const updateTab = useCallback((tabId: string, updates: Partial<TabState>) => {
     setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, ...updates } : tab)));
   }, []);
+
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
 
   // Persist lisaConfig to sessionStorage when it changes
   useEffect(() => {
@@ -1276,6 +1362,19 @@ const App: React.FC = () => {
 
       // If no sessions exist, we need to create one (with trust check)
       if (data.sessions.length === 0) {
+        if (data.clientUnavailable) {
+          setShowCliSetupModal(true);
+          setDataLoaded(true);
+          return;
+        }
+
+        const cliStatus = await window.electronAPI.copilot.checkCliStatus();
+        if (!cliStatus.cliInstalled || !cliStatus.authenticated) {
+          setShowCliSetupModal(true);
+          setDataLoaded(true);
+          return;
+        }
+
         // Check trust for current directory
         const cwd = await window.electronAPI.copilot.getCwd();
         const trustResult = await window.electronAPI.copilot.checkDirectoryTrust(cwd);
@@ -1314,7 +1413,9 @@ const App: React.FC = () => {
           setDataLoaded(true);
         } catch (error) {
           console.error('Failed to create initial session:', error);
-          setStatus('error');
+          setShowCliSetupModal(true);
+          setDataLoaded(true);
+          setStatus('connected');
         }
         return;
       }
@@ -1557,14 +1658,6 @@ const App: React.FC = () => {
             ],
           };
         })
-      );
-    });
-
-    const unsubscribeAgentSelected = window.electronAPI.copilot.onAgentSelected((data) => {
-      const { sessionId, agentName, agentDisplayName } = data;
-      const agentLabel = agentDisplayName || agentName;
-      setTabs((prev) =>
-        prev.map((tab) => (tab.id === sessionId ? { ...tab, activeAgentName: agentLabel } : tab))
       );
     });
 
@@ -2166,11 +2259,30 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       setTabs((prev) =>
         prev.map((tab) => {
           if (tab.id !== sessionId) return tab;
+          const existingSubagents = tab.activeSubagents || [];
+          const existingIndex = existingSubagents.findIndex((s) => s.toolCallId === toolCallId);
+
+          if (existingIndex >= 0) {
+            return {
+              ...tab,
+              activeSubagents: existingSubagents.map((s) =>
+                s.toolCallId === toolCallId
+                  ? {
+                      ...s,
+                      agentName,
+                      agentDisplayName,
+                      agentDescription,
+                      status: 'running',
+                    }
+                  : s
+              ),
+            };
+          }
 
           return {
             ...tab,
             activeSubagents: [
-              ...(tab.activeSubagents || []),
+              ...existingSubagents,
               {
                 toolCallId,
                 agentName,
@@ -2392,7 +2504,6 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeReady();
       unsubscribeDelta();
       unsubscribeMessage();
-      unsubscribeAgentSelected();
       unsubscribeIdle();
       unsubscribeToolStart();
       unsubscribeToolEnd();
@@ -2407,6 +2518,263 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeCompactionStart();
       unsubscribeCompactionComplete();
       unsubscribeYoloModeChanged();
+    };
+  }, []);
+
+  const clearScheduledPromptTimer = useCallback((tabId: string) => {
+    const existingTimer = scheduledPromptTimeoutsRef.current.get(tabId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      scheduledPromptTimeoutsRef.current.delete(tabId);
+    }
+  }, []);
+
+  const buildMessageContent = useCallback(
+    (baseText: string, terminal: { output: string; lineCount: number } | null) => {
+      let messageContent = baseText.trim();
+      if (terminal) {
+        const terminalBlock = `\`\`\`bash\n${terminal.output}\n\`\`\``;
+        messageContent = messageContent
+          ? `${messageContent}\n\nTerminal output:\n${terminalBlock}`
+          : `Terminal output:\n${terminalBlock}`;
+      }
+      return messageContent;
+    },
+    []
+  );
+
+  const sendScheduledPromptNow = useCallback(
+    async (tabId: string, scheduledPromptId: string) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (!tab || !tab.scheduledPrompt || tab.scheduledPrompt.id !== scheduledPromptId) return;
+
+      const scheduledPrompt = tab.scheduledPrompt;
+      const sdkAttachments = [
+        ...(scheduledPrompt.imageAttachments || []).map((img) => ({
+          type: 'file' as const,
+          path: img.path,
+          displayName: img.name,
+        })),
+        ...(scheduledPrompt.fileAttachments || []).map((file) => ({
+          type: 'file' as const,
+          path: file.path,
+          displayName: file.name,
+        })),
+      ];
+
+      if (sdkAttachments.length > 0) {
+        const sessionPaths = userAttachedPathsRef.current.get(tabId) || new Set<string>();
+        sdkAttachments.forEach((att) => sessionPaths.add(att.path));
+        userAttachedPathsRef.current.set(tabId, sessionPaths);
+      }
+
+      clearScheduledPromptTimer(tabId);
+
+      if (tab.isProcessing) {
+        setTabs((prev) =>
+          prev.map((currentTab) =>
+            currentTab.id === tabId
+              ? {
+                  ...currentTab,
+                  messages: currentTab.messages.map((msg) =>
+                    msg.id === scheduledPrompt.messageId
+                      ? {
+                          ...msg,
+                          isScheduled: false,
+                          isPendingInjection: true,
+                          scheduledFor: undefined,
+                        }
+                      : msg
+                  ),
+                  scheduledPrompt: undefined,
+                }
+              : currentTab
+          )
+        );
+
+        try {
+          await window.electronAPI.copilot.send(
+            tabId,
+            scheduledPrompt.content,
+            sdkAttachments.length > 0 ? sdkAttachments : undefined,
+            'enqueue'
+          );
+        } catch (error) {
+          console.error('Scheduled enqueue send error:', error);
+        }
+        return;
+      }
+
+      setTabs((prev) =>
+        prev.map((currentTab) =>
+          currentTab.id === tabId
+            ? {
+                ...currentTab,
+                messages: [
+                  ...currentTab.messages.map((msg) =>
+                    msg.id === scheduledPrompt.messageId
+                      ? {
+                          ...msg,
+                          isScheduled: false,
+                          isPendingInjection: false,
+                          scheduledFor: undefined,
+                        }
+                      : msg
+                  ),
+                  {
+                    id: generateId(),
+                    role: 'assistant',
+                    content: '',
+                    isStreaming: true,
+                    timestamp: Date.now(),
+                  },
+                ],
+                isProcessing: true,
+                activeTools: [],
+                detectedChoices: undefined,
+                scheduledPrompt: undefined,
+              }
+            : currentTab
+        )
+      );
+
+      try {
+        await window.electronAPI.copilot.send(
+          tabId,
+          scheduledPrompt.content,
+          sdkAttachments.length > 0 ? sdkAttachments : undefined
+        );
+      } catch (error) {
+        console.error('Scheduled send error:', error);
+        setTabs((prev) =>
+          prev.map((currentTab) =>
+            currentTab.id === tabId ? { ...currentTab, isProcessing: false } : currentTab
+          )
+        );
+      }
+    },
+    [clearScheduledPromptTimer]
+  );
+
+  const handleCancelScheduledPrompt = useCallback(
+    (tabId?: string) => {
+      const targetTabId = tabId || activeTab?.id;
+      if (!targetTabId) return;
+
+      clearScheduledPromptTimer(targetTabId);
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== targetTabId || !tab.scheduledPrompt) return tab;
+          return {
+            ...tab,
+            scheduledPrompt: undefined,
+            messages: tab.messages.filter((msg) => msg.id !== tab.scheduledPrompt?.messageId),
+          };
+        })
+      );
+    },
+    [activeTab?.id, clearScheduledPromptTimer]
+  );
+
+  const handleScheduleMessage = useCallback(
+    (delayMs: number) => {
+      if (!activeTab) return;
+
+      const inputValue = chatInputRef.current?.getValue() || '';
+      const imageAttachments = chatInputRef.current?.getImageAttachments() || [];
+      const fileAttachments = chatInputRef.current?.getFileAttachments() || [];
+
+      if (
+        !inputValue.trim() &&
+        !terminalAttachment &&
+        imageAttachments.length === 0 &&
+        fileAttachments.length === 0
+      ) {
+        return;
+      }
+
+      const tabId = activeTab.id;
+      const messageId = generateId();
+      const dueAt = Date.now() + delayMs;
+      const content = buildMessageContent(inputValue, terminalAttachment);
+
+      const scheduledPrompt: ScheduledPrompt = {
+        id: generateId(),
+        messageId,
+        content,
+        dueAt,
+        imageAttachments: imageAttachments.length > 0 ? [...imageAttachments] : undefined,
+        fileAttachments: fileAttachments.length > 0 ? [...fileAttachments] : undefined,
+        terminalAttachment: terminalAttachment ? { ...terminalAttachment } : undefined,
+      };
+
+      clearScheduledPromptTimer(tabId);
+
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== tabId) return tab;
+
+          const messagesWithoutPreviousScheduled =
+            tab.scheduledPrompt?.messageId != null
+              ? tab.messages.filter((msg) => msg.id !== tab.scheduledPrompt?.messageId)
+              : tab.messages;
+
+          const scheduledMessage: Message = {
+            id: messageId,
+            role: 'user',
+            content,
+            imageAttachments: scheduledPrompt.imageAttachments,
+            fileAttachments: scheduledPrompt.fileAttachments,
+            isScheduled: true,
+            isPendingInjection: false,
+            scheduledFor: dueAt,
+          };
+
+          return {
+            ...tab,
+            messages: [...messagesWithoutPreviousScheduled, scheduledMessage],
+            draftInput: undefined,
+            scheduledPrompt,
+          };
+        })
+      );
+
+      chatInputRef.current?.clearAll();
+      setTerminalAttachment(null);
+
+      const timeout = setTimeout(
+        () => {
+          void sendScheduledPromptNow(tabId, scheduledPrompt.id);
+        },
+        Math.max(0, delayMs)
+      );
+      scheduledPromptTimeoutsRef.current.set(tabId, timeout);
+    },
+    [
+      activeTab,
+      buildMessageContent,
+      clearScheduledPromptTimer,
+      sendScheduledPromptNow,
+      terminalAttachment,
+    ]
+  );
+
+  useEffect(() => {
+    const activeIds = new Set(tabs.map((tab) => tab.id));
+    for (const [tabId, timer] of scheduledPromptTimeoutsRef.current.entries()) {
+      if (!activeIds.has(tabId)) {
+        clearTimeout(timer);
+        scheduledPromptTimeoutsRef.current.delete(tabId);
+      }
+    }
+  }, [tabs]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of scheduledPromptTimeoutsRef.current.values()) {
+        clearTimeout(timer);
+      }
+      scheduledPromptTimeoutsRef.current.clear();
     };
   }, []);
 
@@ -2492,14 +2860,7 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       });
     }
 
-    // Build message content with terminal attachment if present
-    let messageContent = inputValue.trim();
-    if (terminalAttachment) {
-      const terminalBlock = `\`\`\`bash\n${terminalAttachment.output}\n\`\`\``;
-      messageContent = messageContent
-        ? `${messageContent}\n\nTerminal output:\n${terminalBlock}`
-        : `Terminal output:\n${terminalBlock}`;
-    }
+    const messageContent = buildMessageContent(inputValue, terminalAttachment);
 
     // 👻 GHOST PROTECTION: Detect if user is starting a new task while Ralph is active
     // If the message doesn't look like a continuation/instruction, cancel the Ralph loop
@@ -2819,6 +3180,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     ralphClearContext,
     lisaEnabled,
     terminalAttachment,
+    buildMessageContent,
   ]);
 
   // Keep ref in sync for voice auto-send
@@ -3267,8 +3629,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       }
 
       // Reload config
-      const config = await window.electronAPI.mcp.getConfig();
-      setMcpServers(config.mcpServers || {});
+      await loadMcpConfig(true);
       setShowMcpModal(false);
     } catch (error) {
       console.error('Failed to save MCP server:', error);
@@ -3278,8 +3639,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
   const handleDeleteMcpServer = async (name: string) => {
     try {
       await window.electronAPI.mcp.deleteServer(name);
-      const config = await window.electronAPI.mcp.getConfig();
-      setMcpServers(config.mcpServers || {});
+      await loadMcpConfig(true);
     } catch (error) {
       console.error('Failed to delete MCP server:', error);
     }
@@ -3287,8 +3647,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
   const handleRefreshMcpServers = async () => {
     try {
-      const config = await window.electronAPI.mcp.getConfig();
-      setMcpServers(config.mcpServers || {});
+      await loadMcpConfig(true);
     } catch (error) {
       console.error('Failed to refresh MCP servers:', error);
     }
@@ -3792,6 +4151,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               cwd: closingTab.cwd,
               markedForReview: closingTab.markedForReview,
               reviewNote: closingTab.reviewNote,
+              activeAgentName: closingTab.activeAgentName,
             },
             ...prev,
           ]);
@@ -3841,6 +4201,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             cwd: closingTab.cwd,
             markedForReview: closingTab.markedForReview,
             reviewNote: closingTab.reviewNote,
+            activeAgentName: closingTab.activeAgentName,
           },
           ...prev,
         ]);
@@ -4027,7 +4388,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         gitBranchRefresh: 0,
         markedForReview: prevSession.markedForReview,
         reviewNote: prevSession.reviewNote,
-        activeAgentName: prevSession.activeAgentName,
+        activeAgentName: result.activeAgentName ?? prevSession.activeAgentName,
       };
 
       setTabs((prev) => [...prev, newTab]);
@@ -4139,6 +4500,76 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     }
   };
 
+  const handleAgentChange = async (agentName: string | null): Promise<void> => {
+    if (!activeTab) return;
+    const currentAgentName = selectedAgentByTab[activeTab.id] ?? null;
+    if (currentAgentName === agentName) return;
+
+    setStatus('connecting');
+    try {
+      const previousTabId = activeTab.id;
+      const hasMessages = activeTab.messages.length > 0;
+      console.info(
+        `[AgentSelection][${previousTabId}] request agent=${agentName ?? 'default'} hasMessages=${hasMessages}`
+      );
+      const result = await window.electronAPI.copilot.setActiveAgent(
+        previousTabId,
+        agentName || undefined,
+        hasMessages
+      );
+      console.info(
+        `[AgentSelection][${previousTabId}] response active=${result.activeAgent?.name ?? 'default'} session=${result.sessionId}`
+      );
+      if (agentName && result.activeAgent?.name !== agentName) {
+        throw new Error(
+          `Selected agent '${agentName}' could not be activated (active: ${result.activeAgent?.name ?? 'default'})`
+        );
+      }
+
+      setSelectedAgentByTab((prev) => {
+        const next = { ...prev, [result.sessionId]: result.activeAgent?.name ?? null };
+        if (result.sessionId !== previousTabId) {
+          delete next[previousTabId];
+        }
+        return next;
+      });
+      setSessionAgentsByTab((prev) => {
+        if (result.sessionId === previousTabId || !prev[previousTabId]) {
+          return prev;
+        }
+        const next = { ...prev, [result.sessionId]: prev[previousTabId] };
+        delete next[previousTabId];
+        return next;
+      });
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === previousTabId
+            ? {
+                ...tab,
+                id: result.sessionId,
+                cwd: result.cwd || tab.cwd,
+                activeAgentName: result.activeAgent?.name,
+              }
+            : tab
+        )
+      );
+      setActiveTabId(result.sessionId);
+    } catch (error) {
+      console.error('Failed to change active agent:', error);
+    } finally {
+      setStatus('connected');
+    }
+  };
+
+  const handleCompactSession = async (): Promise<void> => {
+    if (!activeTab || activeTab.compactionStatus === 'compacting') return;
+    try {
+      await window.electronAPI.copilot.compactSession(activeTab.id);
+    } catch (error) {
+      console.error('Failed to compact session:', error);
+    }
+  };
+
   const handleToggleFavoriteModel = async (modelId: string) => {
     const isFavorite = favoriteModels.includes(modelId);
     try {
@@ -4189,14 +4620,20 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     return groupAgents(allAgents, favoriteAgents);
   }, [allAgents, favoriteAgents]);
 
-  const activeAgentPath = activeTab
-    ? (selectedAgentByTab[activeTab.id] ?? COOPER_DEFAULT_AGENT.path)
-    : null;
-  const activeAgent = useMemo(() => {
-    return activeAgentPath
-      ? allAgents.find((agent) => agent.path === activeAgentPath) || null
-      : null;
-  }, [allAgents, activeAgentPath]);
+  const fallbackSessionAgents = useMemo(
+    () => buildFallbackSessionAgents(groupedAgents, COOPER_DEFAULT_AGENT.path),
+    [groupedAgents]
+  );
+
+  const availableSessionAgents = activeTab ? sessionAgentsByTab[activeTab.id] || [] : [];
+  const selectableAgents =
+    availableSessionAgents.length > 0 ? availableSessionAgents : fallbackSessionAgents;
+  const activePrimaryAgentName = activeTab ? (selectedAgentByTab[activeTab.id] ?? null) : null;
+  const activePrimaryAgentLabel = getActivePrimaryAgentLabel(
+    selectableAgents,
+    activePrimaryAgentName,
+    COOPER_DEFAULT_AGENT.name
+  );
 
   // Callbacks for TerminalProvider
   const handleOpenTerminal = useCallback(() => {
@@ -4584,6 +5021,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         {Object.entries(mcpServers).map(([name, server]) => {
                           const isLocal =
                             !server.type || server.type === 'local' || server.type === 'stdio';
+                          const isBuiltIn = server.builtIn === true;
                           const toolCount =
                             server.tools?.[0] === '*' ? 'all' : `${server.tools?.length ?? 0}`;
                           return (
@@ -4594,29 +5032,40 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                                 <GlobeIcon size={12} className="text-copilot-accent" />
                               )}
                               <div className="flex-1 min-w-0">
-                                <div className="text-copilot-text truncate">{name}</div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-copilot-text truncate">{name}</span>
+                                  {isBuiltIn && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-copilot-accent/20 text-copilot-accent font-medium">
+                                      BUILT-IN
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="text-[10px] text-copilot-text-muted">
                                   {toolCount} tools
                                 </div>
                               </div>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEditMcpModal(name, server);
-                                }}
-                                className="p-1.5 text-copilot-accent hover:bg-copilot-surface rounded"
-                              >
-                                <EditIcon size={14} />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteMcpServer(name);
-                                }}
-                                className="p-1.5 text-copilot-error hover:bg-copilot-surface rounded"
-                              >
-                                <CloseIcon size={14} />
-                              </button>
+                              {!isBuiltIn && (
+                                <>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openEditMcpModal(name, server);
+                                    }}
+                                    className="p-1.5 text-copilot-accent hover:bg-copilot-surface rounded"
+                                  >
+                                    <EditIcon size={14} />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteMcpServer(name);
+                                    }}
+                                    className="p-1.5 text-copilot-error hover:bg-copilot-surface rounded"
+                                  >
+                                    <CloseIcon size={14} />
+                                  </button>
+                                </>
+                              )}
                             </div>
                           );
                         })}
@@ -5349,8 +5798,16 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         index={index}
                         lastAssistantIndex={lastAssistantIndex}
                         isVoiceSpeaking={voiceSpeech.isSpeaking}
-                        activeTools={activeTab?.activeTools}
-                        activeSubagents={activeTab?.activeSubagents}
+                        activeTools={
+                          message.role === 'assistant' && message.isStreaming && message.content
+                            ? activeTab?.activeTools
+                            : undefined
+                        }
+                        activeSubagents={
+                          message.role === 'assistant' && message.isStreaming && message.content
+                            ? activeTab?.activeSubagents
+                            : undefined
+                        }
                         onStopSpeaking={voiceSpeech.stopSpeaking}
                         onImageClick={handleImageClick}
                         isHighlighted={isHighlighted}
@@ -5777,6 +6234,9 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 alwaysListening={alwaysListening}
                 voiceAutoSendCountdown={voiceAutoSendCountdown}
                 onSendMessage={handleSendMessage}
+                onScheduleMessage={handleScheduleMessage}
+                scheduledPrompt={activeTab?.scheduledPrompt}
+                onCancelScheduledPrompt={() => handleCancelScheduledPrompt()}
                 onStop={handleStop}
                 onKeyPress={handleKeyPress}
                 onRemoveTerminalAttachment={() => setTerminalAttachment(null)}
@@ -5912,6 +6372,113 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               </React.Fragment>
                             );
                           })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Agents Selector */}
+                    <div className="relative">
+                      <button
+                        onClick={async () => {
+                          const newState = openTopBarSelector === 'agents' ? null : 'agents';
+                          setOpenTopBarSelector(newState);
+                          if (newState === 'agents' && activeTab) {
+                            try {
+                              await loadSessionAgents(activeTab.id);
+                            } catch (error) {
+                              console.error('Failed to refresh session agents:', error);
+                            }
+                          }
+                        }}
+                        className={`flex items-center gap-1.5 px-3 h-[39px] text-xs transition-colors ${
+                          openTopBarSelector === 'agents'
+                            ? 'text-copilot-accent bg-copilot-surface-hover'
+                            : 'text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover'
+                        }`}
+                        title="Select main agent"
+                      >
+                        <ZapIcon size={12} />
+                        <span className="font-medium truncate max-w-[120px]">
+                          {activePrimaryAgentLabel}
+                        </span>
+                        <ChevronDownIcon
+                          size={10}
+                          className={`transition-transform duration-200 ${openTopBarSelector === 'agents' ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                      {openTopBarSelector === 'agents' && (
+                        <div
+                          className="absolute bottom-full left-0 z-50 mb-0.5 w-72 max-h-80 overflow-y-auto bg-copilot-surface border border-copilot-border rounded-lg"
+                          style={{
+                            boxShadow:
+                              '0 -4px 6px -1px rgb(0 0 0 / 0.1), 0 -2px 4px -2px rgb(0 0 0 / 0.1)',
+                          }}
+                        >
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
+                              void handleAgentChange(null);
+                              setOpenTopBarSelector(null);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                void handleAgentChange(null);
+                                setOpenTopBarSelector(null);
+                              }
+                            }}
+                            className={`w-full px-3 py-2 text-xs text-left hover:bg-copilot-surface-hover transition-colors ${
+                              !activePrimaryAgentName
+                                ? 'text-copilot-accent bg-copilot-surface'
+                                : 'text-copilot-text'
+                            }`}
+                          >
+                            {!activePrimaryAgentName && (
+                              <span className="text-copilot-accent">✔ </span>
+                            )}
+                            {COOPER_DEFAULT_AGENT.name}
+                          </div>
+                          {selectableAgents.length > 0 && (
+                            <div className="border-t border-copilot-border">
+                              {selectableAgents.map((agent) => (
+                                <div
+                                  key={agent.name}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => {
+                                    void handleAgentChange(agent.name);
+                                    setOpenTopBarSelector(null);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      void handleAgentChange(agent.name);
+                                      setOpenTopBarSelector(null);
+                                    }
+                                  }}
+                                  className={`w-full px-3 py-2 text-xs hover:bg-copilot-surface-hover transition-colors ${
+                                    activePrimaryAgentName === agent.name
+                                      ? 'text-copilot-accent bg-copilot-surface'
+                                      : 'text-copilot-text'
+                                  }`}
+                                  title={agent.description || agent.displayName}
+                                >
+                                  <div className="truncate">
+                                    {activePrimaryAgentName === agent.name && (
+                                      <span className="text-copilot-accent">✔ </span>
+                                    )}
+                                    {agent.displayName}
+                                  </div>
+                                  {agent.description && (
+                                    <div className="text-[10px] text-copilot-text-muted truncate mt-0.5">
+                                      {agent.description}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -6135,6 +6702,17 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                     {/* Context Usage Tracker */}
                     {activeTab?.contextUsage && (
                       <div className="ml-auto flex items-center gap-2 px-3 h-[39px] text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleCompactSession();
+                          }}
+                          disabled={activeTab.compactionStatus === 'compacting'}
+                          className="px-1.5 py-0.5 rounded border border-copilot-border text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Compact session context"
+                        >
+                          Compact
+                        </button>
                         {activeTab.compactionStatus === 'compacting' ? (
                           <>
                             <span className="text-copilot-warning animate-pulse">
@@ -6491,7 +7069,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                       </div>
                       {showMcpServers && (
                         <div className="max-h-48 overflow-y-auto">
-                          {mcpEntries.length === 0 ? (
+                          {mcpConfigLoading && !mcpConfigLoaded ? (
+                            <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
+                              Loading MCP servers...
+                            </div>
+                          ) : mcpEntries.length === 0 ? (
                             <div className="px-3 py-2 text-[10px] text-copilot-text-muted">
                               No MCP servers configured
                             </div>
@@ -7056,18 +7638,22 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         </Modal>
 
         {/* Session History Modal */}
-        <SessionHistory
-          isOpen={showSessionHistory}
-          onClose={() => setShowSessionHistory(false)}
-          sessions={previousSessions}
-          activeSessions={tabs}
-          activeSessionId={activeTabId}
-          onResumeSession={handleResumePreviousSession}
-          onSwitchToSession={handleSwitchTab}
-          onDeleteSession={handleDeleteSessionFromHistory}
-          onRemoveWorktreeSession={handleRemoveWorktreeSession}
-          onOpenWorktreeSession={handleOpenWorktreeSession}
-        />
+        {showSessionHistory && (
+          <React.Suspense fallback={null}>
+            <SessionHistoryLazy
+              isOpen={showSessionHistory}
+              onClose={() => setShowSessionHistory(false)}
+              sessions={previousSessions}
+              activeSessions={tabs}
+              activeSessionId={activeTabId}
+              onResumeSession={handleResumePreviousSession}
+              onSwitchToSession={handleSwitchTab}
+              onDeleteSession={handleDeleteSessionFromHistory}
+              onRemoveWorktreeSession={handleRemoveWorktreeSession}
+              onOpenWorktreeSession={handleOpenWorktreeSession}
+            />
+          </React.Suspense>
+        )}
 
         {/* Create Worktree Session Modal */}
         <CreateWorktreeSession
@@ -7117,146 +7703,168 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
         )}
 
         {/* Environment Modal */}
-        <EnvironmentModal
-          isOpen={showEnvironmentModal}
-          onClose={() => setShowEnvironmentModal(false)}
-          instructions={instructions}
-          skills={skills}
-          agents={agents}
-          cwd={activeTab?.cwd}
-          initialTab={environmentTab}
-          initialInstructionPath={environmentInstructionPath}
-          initialSkillPath={environmentSkillPath}
-          initialAgentPath={environmentAgentPath}
-          fileViewMode={activeTab?.fileViewMode || 'flat'}
-          onViewModeChange={(mode) => {
-            if (activeTab) {
-              updateTab(activeTab.id, { fileViewMode: mode });
-            }
-          }}
-          onTabChange={(tab) => setEnvironmentTab(tab)}
-        />
+        {showEnvironmentModal && (
+          <React.Suspense fallback={null}>
+            <EnvironmentModalLazy
+              isOpen={showEnvironmentModal}
+              onClose={() => setShowEnvironmentModal(false)}
+              instructions={instructions}
+              skills={skills}
+              agents={agents}
+              cwd={activeTab?.cwd}
+              initialTab={environmentTab}
+              initialInstructionPath={environmentInstructionPath}
+              initialSkillPath={environmentSkillPath}
+              initialAgentPath={environmentAgentPath}
+              fileViewMode={activeTab?.fileViewMode || 'flat'}
+              onViewModeChange={(mode) => {
+                if (activeTab) {
+                  updateTab(activeTab.id, { fileViewMode: mode });
+                }
+              }}
+              onTabChange={(tab) => setEnvironmentTab(tab)}
+            />
+          </React.Suspense>
+        )}
 
         {/* File Preview Modal */}
-        <FilePreviewModal
-          isOpen={!!filePreviewPath}
-          onClose={() => setFilePreviewPath(null)}
-          filePath={filePreviewPath || ''}
-          cwd={activeTab?.cwd}
-          isGitRepo={isGitRepo}
-          editedFiles={activeTab ? getCleanEditedFiles(activeTab.editedFiles) : []}
-          untrackedFiles={activeTab?.untrackedFiles || []}
-          conflictedFiles={commitModal.conflictedFiles}
-          fileViewMode={activeTab?.fileViewMode || 'flat'}
-          onUntrackFile={(filePath) => {
-            if (activeTab) {
-              const newUntracked = [...(activeTab.untrackedFiles || []), filePath];
-              updateTab(activeTab.id, { untrackedFiles: newUntracked });
-            }
-          }}
-          onRetrackFile={(filePath) => {
-            if (activeTab) {
-              const newUntracked = (activeTab.untrackedFiles || []).filter((f) => f !== filePath);
-              updateTab(activeTab.id, { untrackedFiles: newUntracked });
-            }
-          }}
-          onViewModeChange={(mode) => {
-            if (activeTab) {
-              updateTab(activeTab.id, { fileViewMode: mode });
-            }
-          }}
-        />
+        {filePreviewPath && (
+          <React.Suspense fallback={null}>
+            <FilePreviewModalLazy
+              isOpen={!!filePreviewPath}
+              onClose={() => setFilePreviewPath(null)}
+              filePath={filePreviewPath || ''}
+              cwd={activeTab?.cwd}
+              isGitRepo={isGitRepo}
+              editedFiles={activeTab ? getCleanEditedFiles(activeTab.editedFiles) : []}
+              untrackedFiles={activeTab?.untrackedFiles || []}
+              conflictedFiles={commitModal.conflictedFiles}
+              fileViewMode={activeTab?.fileViewMode || 'flat'}
+              onUntrackFile={(filePath) => {
+                if (activeTab) {
+                  const newUntracked = [...(activeTab.untrackedFiles || []), filePath];
+                  updateTab(activeTab.id, { untrackedFiles: newUntracked });
+                }
+              }}
+              onRetrackFile={(filePath) => {
+                if (activeTab) {
+                  const newUntracked = (activeTab.untrackedFiles || []).filter(
+                    (f) => f !== filePath
+                  );
+                  updateTab(activeTab.id, { untrackedFiles: newUntracked });
+                }
+              }}
+              onViewModeChange={(mode) => {
+                if (activeTab) {
+                  updateTab(activeTab.id, { fileViewMode: mode });
+                }
+              }}
+            />
+          </React.Suspense>
+        )}
 
         {/* Update Available Modal */}
-        <UpdateAvailableModal
-          isOpen={showUpdateModal}
-          onClose={() => setShowUpdateModal(false)}
-          currentVersion={updateInfo?.currentVersion || buildInfo.baseVersion}
-          newVersion={updateInfo?.latestVersion || ''}
-          onDontRemind={() => {
-            if (updateInfo?.latestVersion) {
-              window.electronAPI.updates.dismissVersion(updateInfo.latestVersion);
-            }
-          }}
-        />
+        {showUpdateModal && (
+          <React.Suspense fallback={null}>
+            <UpdateAvailableModalLazy
+              isOpen={showUpdateModal}
+              onClose={() => setShowUpdateModal(false)}
+              currentVersion={updateInfo?.currentVersion || buildInfo.baseVersion}
+              newVersion={updateInfo?.latestVersion || ''}
+              onDontRemind={() => {
+                if (updateInfo?.latestVersion) {
+                  window.electronAPI.updates.dismissVersion(updateInfo.latestVersion);
+                }
+              }}
+            />
+          </React.Suspense>
+        )}
 
         {/* Release Notes Modal */}
-        <ReleaseNotesModal
-          isOpen={showReleaseNotesModal}
-          onClose={() => {
-            setShowReleaseNotesModal(false);
-            // Show update modal if there's an update available
-            if (updateInfo) {
-              setShowUpdateModal(true);
-            }
-          }}
-          version={buildInfo.baseVersion}
-          releaseNotes={buildInfo.releaseNotes || ''}
-        />
+        {showReleaseNotesModal && (
+          <React.Suspense fallback={null}>
+            <ReleaseNotesModalLazy
+              isOpen={showReleaseNotesModal}
+              onClose={() => {
+                setShowReleaseNotesModal(false);
+                // Show update modal if there's an update available
+                if (updateInfo) {
+                  setShowUpdateModal(true);
+                }
+              }}
+              version={buildInfo.baseVersion}
+              releaseNotes={buildInfo.releaseNotes || ''}
+            />
+          </React.Suspense>
+        )}
 
         {/* Settings Modal */}
-        <SettingsModal
-          isOpen={showSettingsModal}
-          onClose={() => {
-            setShowSettingsModal(false);
-            setSettingsDefaultSection(undefined);
-          }}
-          soundEnabled={soundEnabled}
-          onSoundEnabledChange={handleSoundEnabledChange}
-          defaultSection={settingsDefaultSection}
-          zoomFactor={zoomFactor}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onResetZoom={handleResetZoom}
-          // Voice settings
-          voiceSupported={voiceSpeech.isSupported}
-          voiceMuted={voiceSpeech.isMuted}
-          onToggleVoiceMute={voiceSpeech.toggleMute}
-          pushToTalk={pushToTalk}
-          onTogglePushToTalk={handleTogglePushToTalk}
-          alwaysListening={alwaysListening}
-          onToggleAlwaysListening={handleToggleAlwaysListening}
-          // Voice status
-          isRecording={voiceSpeech.isRecording}
-          isSpeaking={voiceSpeech.isSpeaking}
-          isModelLoading={voiceModelLoading}
-          modelLoaded={voiceModelLoaded}
-          voiceError={voiceInitError}
-          alwaysListeningError={alwaysListeningError}
-          voiceDownloadProgress={voiceDownloadProgress}
-          onInitVoice={handleInitVoice}
-          availableVoices={voiceSpeech.availableVoices}
-          selectedVoiceURI={voiceSpeech.selectedVoiceURI}
-          onVoiceChange={voiceSpeech.setSelectedVoiceURI}
-          // Global commands
-          globalSafeCommands={globalSafeCommands}
-          onAddGlobalSafeCommand={async (cmd) => {
-            try {
-              await window.electronAPI.copilot.addGlobalSafeCommand(cmd);
-              setGlobalSafeCommands((prev) => [...prev, cmd]);
-            } catch (error) {
-              console.error('Failed to add global safe command:', error);
-            }
-          }}
-          onRemoveGlobalSafeCommand={handleRemoveGlobalSafeCommand}
-          diagnosticsPaths={diagnosticsPaths}
-          recursiveAgentSkillsScan={recursiveAgentSkillsScan}
-          onToggleRecursiveAgentSkillsScan={handleToggleRecursiveAgentSkillsScan}
-          onRevealLogFile={async (pathToReveal) => {
-            try {
-              await window.electronAPI.file.revealInFolder(pathToReveal);
-            } catch (error) {
-              console.error('Failed to reveal log path:', error);
-            }
-          }}
-          onOpenCrashDumps={async (pathToOpen) => {
-            try {
-              await window.electronAPI.file.openFile(pathToOpen);
-            } catch (error) {
-              console.error('Failed to reveal crash dumps path:', error);
-            }
-          }}
-        />
+        {showSettingsModal && (
+          <React.Suspense fallback={null}>
+            <SettingsModalLazy
+              isOpen={showSettingsModal}
+              onClose={() => {
+                setShowSettingsModal(false);
+                setSettingsDefaultSection(undefined);
+              }}
+              soundEnabled={soundEnabled}
+              onSoundEnabledChange={handleSoundEnabledChange}
+              defaultSection={settingsDefaultSection}
+              zoomFactor={zoomFactor}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onResetZoom={handleResetZoom}
+              // Voice settings
+              voiceSupported={voiceSpeech.isSupported}
+              voiceMuted={voiceSpeech.isMuted}
+              onToggleVoiceMute={voiceSpeech.toggleMute}
+              pushToTalk={pushToTalk}
+              onTogglePushToTalk={handleTogglePushToTalk}
+              alwaysListening={alwaysListening}
+              onToggleAlwaysListening={handleToggleAlwaysListening}
+              // Voice status
+              isRecording={voiceSpeech.isRecording}
+              isSpeaking={voiceSpeech.isSpeaking}
+              isModelLoading={voiceModelLoading}
+              modelLoaded={voiceModelLoaded}
+              voiceError={voiceInitError}
+              alwaysListeningError={alwaysListeningError}
+              voiceDownloadProgress={voiceDownloadProgress}
+              onInitVoice={handleInitVoice}
+              availableVoices={voiceSpeech.availableVoices}
+              selectedVoiceURI={voiceSpeech.selectedVoiceURI}
+              onVoiceChange={voiceSpeech.setSelectedVoiceURI}
+              // Global commands
+              globalSafeCommands={globalSafeCommands}
+              onAddGlobalSafeCommand={async (cmd) => {
+                try {
+                  await window.electronAPI.copilot.addGlobalSafeCommand(cmd);
+                  setGlobalSafeCommands((prev) => [...prev, cmd]);
+                } catch (error) {
+                  console.error('Failed to add global safe command:', error);
+                }
+              }}
+              onRemoveGlobalSafeCommand={handleRemoveGlobalSafeCommand}
+              diagnosticsPaths={diagnosticsPaths}
+              recursiveAgentSkillsScan={recursiveAgentSkillsScan}
+              onToggleRecursiveAgentSkillsScan={handleToggleRecursiveAgentSkillsScan}
+              onRevealLogFile={async (pathToReveal) => {
+                try {
+                  await window.electronAPI.file.revealInFolder(pathToReveal);
+                } catch (error) {
+                  console.error('Failed to reveal log path:', error);
+                }
+              }}
+              onOpenCrashDumps={async (pathToOpen) => {
+                try {
+                  await window.electronAPI.file.openFile(pathToOpen);
+                } catch (error) {
+                  console.error('Failed to reveal crash dumps path:', error);
+                }
+              }}
+            />
+          </React.Suspense>
+        )}
 
         {/* Welcome Wizard - Spotlight Tour */}
         <SpotlightTour

@@ -1,0 +1,18 @@
+{
+  "main": {
+    "fileName": "index.js",
+    "sizeBytes": 906250
+  },
+  "preload": {
+    "fileName": "index.js",
+    "sizeBytes": 25452
+  },
+  "renderer-index": {
+    "fileName": "index-dyi9tWUK.js",
+    "sizeBytes": 1286788
+  },
+  "renderer-markdown": {
+    "fileName": "markdown-Bg-GPZTX.js",
+    "sizeBytes": 381774
+  }
+}

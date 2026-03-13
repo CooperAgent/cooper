@@ -92,6 +92,9 @@ jobs:
       - name: Build application
         run: npm run prebuild-info && npx electron-vite build
 
+      - name: Check bundle guardrail
+        run: node scripts/check-bundle-size.js --compare-baseline
+
       - name: Package distributables (macOS, unsigned)
         if: runner.os == 'macOS'
         run: npx electron-builder --mac --publish never
@@ -172,6 +175,9 @@ jobs:
 
       - name: Build application
         run: npm run prebuild-info && npx electron-vite build
+
+      - name: Check bundle guardrail
+        run: node scripts/check-bundle-size.js --compare-baseline
 
       - name: Package AppImage (Fedora)
         run: npx electron-builder --linux AppImage --publish never

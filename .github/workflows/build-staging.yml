@@ -88,6 +88,10 @@ jobs:
         if: needs.changes.outputs.src == 'true'
         run: npm run build
 
+      - name: Check bundle guardrail
+        if: needs.changes.outputs.src == 'true'
+        run: node scripts/check-bundle-size.js --compare-baseline
+
       - name: Start Xvfb (Linux)
         if: needs.changes.outputs.src == 'true' && runner.os == 'Linux'
         run: |

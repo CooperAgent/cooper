@@ -132,6 +132,10 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   // Track current request to prevent race conditions when selectedFile changes rapidly
   const loadRequestRef = useRef<number>(0);
 
+  // Refs for syncing line-number gutter scroll with the textarea
+  const gutterRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   // Determine if this is a full overlay (multiple files) or single file preview
   const isFullOverlay = forceFullOverlay || editedFiles.length > 0;
   const isMarkdownView = contentMode === 'markdown';
@@ -731,8 +735,9 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
             {/* Editor / Diff content */}
             {editMode && selectedFile ? (
               <div className="flex-1 flex min-h-0 min-w-0">
-                {/* Line numbers gutter */}
+                {/* Line numbers gutter — scroll kept in sync with textarea */}
                 <div
+                  ref={gutterRef}
                   className="shrink-0 pt-4 pb-4 pl-3 pr-2 text-right select-none bg-copilot-bg border-r border-copilot-border overflow-hidden"
                   aria-hidden="true"
                 >
@@ -746,8 +751,14 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                   ))}
                 </div>
                 <textarea
+                  ref={textareaRef}
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
+                  onScroll={(e) => {
+                    if (gutterRef.current) {
+                      gutterRef.current.scrollTop = (e.target as HTMLTextAreaElement).scrollTop;
+                    }
+                  }}
                   onKeyDown={(e) => {
                     // Ctrl/Cmd+S to save
                     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
