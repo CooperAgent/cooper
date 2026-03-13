@@ -14,6 +14,8 @@ npm test           # Run unit tests (vitest)
 npm run format     # Format with Prettier
 ```
 
+`npm install` also attempts a best-effort RTK install (set `COOPER_SKIP_RTK_INSTALL=1` to skip).
+
 Pre-commit hooks (husky) run lint-staged (Prettier) and `npm test` automatically. Both must pass.
 
 ## Core Principles

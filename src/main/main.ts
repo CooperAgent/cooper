@@ -21,7 +21,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'fs';
-import { exec, spawn } from 'child_process';
+import { exec, spawn, spawnSync } from 'child_process';
 import { promisify } from 'util';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { createServer, Server } from 'http';
@@ -66,6 +66,7 @@ import {
   CustomAgentConfig,
   PermissionRequest,
   PermissionRequestResult,
+  SessionHooks,
   Tool,
 } from '@github/copilot-sdk';
 import Store from 'electron-store';
@@ -493,6 +494,7 @@ async function getClientForCwd(cwd: string): Promise<CopilotClient> {
     if (app.isPackaged) {
       log.info('Using augmented PATH for packaged app');
     }
+    ensureRtkGlobalHookInitialized();
 
     const client = new CopilotClient({ cwd, cliPath, env });
     await client.start();
@@ -693,6 +695,10 @@ const skillsInFlight = new Map<string, Promise<SkillsResult>>();
 const agentsInFlight = new Map<string, Promise<AgentsResult>>();
 const instructionsInFlight = new Map<string, Promise<InstructionsResult>>();
 const gitRootInFlight = new Map<string, Promise<string | null>>();
+const RTK_AVAILABILITY_TTL_MS = 30_000;
+let rtkAvailabilityCache: { checkedAt: number; available: boolean; binaryPath: string } | null =
+  null;
+let rtkHookBootstrapAttempted = false;
 
 function getCachedValue<T>(cache: Map<string, CacheEntry<T>>, key: string): T | null {
   const cached = cache.get(key);
@@ -756,6 +762,135 @@ function resolveWorkingDir(cwd?: string): string | undefined {
 
 function isRecursiveAgentSkillsScanEnabled(): boolean {
   return store.get('recursiveAgentSkillsScan') === true;
+}
+
+function getRtkBinaryPath(): string {
+  const fromEnv = process.env.COOPER_RTK_BINARY?.trim();
+  return fromEnv && fromEnv.length > 0 ? fromEnv : 'rtk';
+}
+
+function isRtkAvailable(): boolean {
+  const binaryPath = getRtkBinaryPath();
+  const now = Date.now();
+  if (
+    rtkAvailabilityCache &&
+    rtkAvailabilityCache.binaryPath === binaryPath &&
+    now - rtkAvailabilityCache.checkedAt < RTK_AVAILABILITY_TTL_MS
+  ) {
+    return rtkAvailabilityCache.available;
+  }
+
+  const probe = spawnSync(binaryPath, ['--version'], {
+    env: getAugmentedEnv(),
+    timeout: 1500,
+    stdio: 'ignore',
+  });
+  const available = probe.status === 0;
+  rtkAvailabilityCache = { checkedAt: now, available, binaryPath };
+  if (!available) {
+    log.warn(`[RTK] Binary not available at "${binaryPath}". Falling back to native execution.`);
+  }
+  return available;
+}
+
+function rewriteTerminalCommandWithRtk(writeChunk: string): string {
+  if (!isRtkAvailable()) {
+    return writeChunk;
+  }
+  if (writeChunk.includes('\x03') || writeChunk.includes('\x1b')) {
+    return writeChunk;
+  }
+
+  const normalized = writeChunk.replace(/\r\n/g, '\n');
+  if (!normalized.endsWith('\n')) {
+    return writeChunk;
+  }
+
+  const command = normalized.slice(0, -1).trim();
+  if (!command) {
+    return writeChunk;
+  }
+
+  const rewrite = spawnSync(getRtkBinaryPath(), ['rewrite', command], {
+    env: getAugmentedEnv(),
+    encoding: 'utf8',
+    timeout: 1500,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (rewrite.status !== 0) {
+    return writeChunk;
+  }
+
+  const rewritten = (rewrite.stdout || '').trim();
+  if (!rewritten || rewritten === command) {
+    return writeChunk;
+  }
+
+  return `${rewritten}\n`;
+}
+
+function ensureRtkGlobalHookInitialized(): void {
+  if (rtkHookBootstrapAttempted || !isRtkAvailable()) {
+    return;
+  }
+  rtkHookBootstrapAttempted = true;
+  const init = spawnSync(getRtkBinaryPath(), ['init', '-g', '--hook-only', '--auto-patch'], {
+    env: getAugmentedEnv(),
+    timeout: 5000,
+    stdio: 'ignore',
+  });
+  if (init.status !== 0) {
+    log.warn('[RTK] Could not auto-bootstrap RTK global hook; continuing without bootstrap.');
+  }
+}
+
+function getRtkSessionHooks(sessionId: string): SessionHooks | undefined {
+  if (!isRtkAvailable()) {
+    return undefined;
+  }
+
+  return {
+    onPreToolUse: (input) => {
+      const toolName = input.toolName?.toLowerCase();
+      if (toolName !== 'bash' && toolName !== 'shell') {
+        return;
+      }
+
+      if (!input.toolArgs || typeof input.toolArgs !== 'object') {
+        return;
+      }
+
+      const args = input.toolArgs as Record<string, unknown>;
+      const command = typeof args.command === 'string' ? args.command.trim() : '';
+      if (!command) {
+        return;
+      }
+
+      const rewrite = spawnSync(getRtkBinaryPath(), ['rewrite', command], {
+        env: getAugmentedEnv(),
+        encoding: 'utf8',
+        timeout: 1500,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      if (rewrite.status !== 0) {
+        return;
+      }
+
+      const rewritten = (rewrite.stdout || '').trim();
+      if (!rewritten || rewritten === command) {
+        return;
+      }
+
+      log.debug(`[${sessionId}] RTK rewrote ${toolName} command for pre-tool hook.`);
+      return {
+        modifiedArgs: {
+          ...args,
+          command: rewritten,
+        },
+      };
+    },
+  };
 }
 
 async function getCachedGitRoot(workingDir?: string): Promise<string | null> {
@@ -1098,6 +1233,7 @@ async function resumeDisconnectedSession(
     mcpServers: mcpDiscovery.effectiveServers,
     tools: browserTools,
     customAgents,
+    hooks: getRtkSessionHooks(sessionId),
     onPermissionRequest: (request, invocation) =>
       handlePermissionRequest(request, invocation, sessionId),
   });
@@ -1297,6 +1433,7 @@ async function startEarlySessionResumption(): Promise<void> {
           mcpServers: mcpDiscovery.effectiveServers,
           tools: createBrowserTools(sessionId),
           customAgents,
+          hooks: getRtkSessionHooks(sessionId),
           onPermissionRequest: (request, invocation) =>
             handlePermissionRequest(request, invocation, sessionId),
         });
@@ -2200,6 +2337,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     mcpServers: mcpDiscovery.effectiveServers,
     tools: browserTools,
     customAgents,
+    hooks: getRtkSessionHooks(generatedSessionId),
     onPermissionRequest: (request, invocation) =>
       handlePermissionRequest(request, invocation, newSession.sessionId),
     systemMessage: {
@@ -2486,6 +2624,7 @@ async function initCopilot(): Promise<void> {
           mcpServers: mcpDiscovery.effectiveServers,
           tools: createBrowserTools(sessionId),
           customAgents,
+          hooks: getRtkSessionHooks(sessionId),
           onPermissionRequest: (request, invocation) =>
             handlePermissionRequest(request, invocation, sessionId),
         });
@@ -5077,6 +5216,7 @@ ipcMain.handle(
       mcpServers: mcpDiscovery.effectiveServers,
       tools: createBrowserTools(sessionId),
       customAgents,
+      hooks: getRtkSessionHooks(sessionId),
       onPermissionRequest: (request, invocation) =>
         handlePermissionRequest(request, invocation, sessionId),
     });
@@ -5846,7 +5986,8 @@ ipcMain.handle('pty:create', async (_event, data: { sessionId: string; cwd: stri
 });
 
 ipcMain.handle('pty:write', async (_event, data: { sessionId: string; data: string }) => {
-  return ptyManager.writePty(data.sessionId, data.data);
+  const rewrittenData = rewriteTerminalCommandWithRtk(data.data);
+  return ptyManager.writePty(data.sessionId, rewrittenData);
 });
 
 ipcMain.handle(

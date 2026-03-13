@@ -71,6 +71,8 @@ npm run dist
 npm install && npm run dev
 ```
 
+`npm install` now attempts a best-effort RTK install (skippable with `COOPER_SKIP_RTK_INSTALL=1`).
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## Community

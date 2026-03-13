@@ -9,6 +9,7 @@ Thanks for your interest in contributing! Here's how to get started.
    ```bash
    npm install
    ```
+   > Note: this will attempt a best-effort RTK install; set `COOPER_SKIP_RTK_INSTALL=1` to skip.
 3. Start the dev server:
    ```bash
    npm run dev
