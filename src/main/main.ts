@@ -191,6 +191,7 @@ import { AgentMcpServer, getAllAgents, parseAgentFrontmatter, type AgentsResult 
 
 // MCP Discovery - imported from mcpDiscovery module
 import { discoverMcpServers } from './mcpDiscovery';
+import { resolveSessionMcpServers } from './mcpSessionConfig';
 import { registerMcpHandlers } from './mcpHandlers';
 import { registerSessionContextHandlers } from './sessionContextHandlers';
 
@@ -1084,6 +1085,7 @@ async function resumeDisconnectedSession(
   const client = await getClientForCwd(sessionState.cwd);
   const projectRoot = await getProjectRootForCwd(sessionState.cwd);
   const mcpDiscovery = await discoverMcpServers({ projectRoot });
+  const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
   const customAgents = await loadCustomAgents(sessionState.cwd);
 
   // Create browser tools for resumed session
@@ -1095,7 +1097,7 @@ async function resumeDisconnectedSession(
 
   const resumedSession = await client.resumeSession(sessionId, {
     clientName: COOPER_CLIENT_NAME,
-    mcpServers: mcpDiscovery.effectiveServers,
+    ...(sessionMcpServers ? { mcpServers: sessionMcpServers } : {}),
     tools: browserTools,
     customAgents,
     onPermissionRequest: (request, invocation) =>
@@ -1292,9 +1294,10 @@ async function startEarlySessionResumption(): Promise<void> {
         }
         const projectRoot = await getProjectRootForCwd(sessionCwd);
         const mcpDiscovery = await discoverMcpServers({ projectRoot });
+        const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
         const session = await sessionClient.resumeSession(sessionId, {
           clientName: COOPER_CLIENT_NAME,
-          mcpServers: mcpDiscovery.effectiveServers,
+          ...(sessionMcpServers ? { mcpServers: sessionMcpServers } : {}),
           tools: createBrowserTools(sessionId),
           customAgents,
           onPermissionRequest: (request, invocation) =>
@@ -2183,6 +2186,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     agentSource: agentResult.agents.length > 0 ? agentResult.agents[0].path : undefined,
     projectRoot,
   });
+  const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
 
   // Generate session ID upfront so we can pass it to browser tools
   const generatedSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -2197,7 +2201,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     clientName: COOPER_CLIENT_NAME,
     sessionId: generatedSessionId,
     model: sessionModel,
-    mcpServers: mcpDiscovery.effectiveServers,
+    ...(sessionMcpServers ? { mcpServers: sessionMcpServers } : {}),
     tools: browserTools,
     customAgents,
     onPermissionRequest: (request, invocation) =>
@@ -2481,9 +2485,10 @@ async function initCopilot(): Promise<void> {
         }
         const projectRoot = await getProjectRootForCwd(sessionCwd);
         const mcpDiscovery = await discoverMcpServers({ projectRoot });
+        const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
         const session = await client.resumeSession(sessionId, {
           clientName: COOPER_CLIENT_NAME,
-          mcpServers: mcpDiscovery.effectiveServers,
+          ...(sessionMcpServers ? { mcpServers: sessionMcpServers } : {}),
           tools: createBrowserTools(sessionId),
           customAgents,
           onPermissionRequest: (request, invocation) =>
@@ -5070,11 +5075,12 @@ ipcMain.handle(
     // Load MCP servers config
     const projectRoot = await getProjectRootForCwd(sessionCwd);
     const mcpDiscovery = await discoverMcpServers({ projectRoot });
+    const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
     const customAgents = await loadCustomAgents(sessionCwd);
 
     const session = await client.resumeSession(sessionId, {
       clientName: COOPER_CLIENT_NAME,
-      mcpServers: mcpDiscovery.effectiveServers,
+      ...(sessionMcpServers ? { mcpServers: sessionMcpServers } : {}),
       tools: createBrowserTools(sessionId),
       customAgents,
       onPermissionRequest: (request, invocation) =>
