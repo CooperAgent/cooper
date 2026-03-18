@@ -2116,17 +2116,33 @@ async function loadCustomAgents(sessionCwd: string): Promise<CustomAgentConfig[]
 
 async function enforceSelectedAgent(sessionId: string, sessionState: SessionState): Promise<void> {
   if (!sessionState.activeAgentName) return;
-  log.info(`[${sessionId}] [AgentSelection] enforcing agent=${sessionState.activeAgentName}`);
-  await sessionState.session.rpc.agent.select({ name: sessionState.activeAgentName });
+  const selectedAgentName = sessionState.activeAgentName;
+  const { agents } = await sessionState.session.rpc.agent.list();
+  const agentExists = agents.some((agent) => agent.name === selectedAgentName);
+
+  if (!agentExists) {
+    log.warn(
+      `[${sessionId}] [AgentSelection] selected agent '${selectedAgentName}' is unavailable, clearing selection`
+    );
+    sessionState.activeAgentName = null;
+    persistSessionActiveAgent(sessionId, null);
+    await sessionState.session.rpc.agent.deselect();
+    return;
+  }
+
+  log.info(`[${sessionId}] [AgentSelection] enforcing agent=${selectedAgentName}`);
+  await sessionState.session.rpc.agent.select({ name: selectedAgentName });
   const { agent } = await sessionState.session.rpc.agent.getCurrent();
   log.info(
     `[${sessionId}] [AgentSelection] current agent after enforce=${agent?.name ?? 'default'}`
   );
-  if (agent?.name !== sessionState.activeAgentName) {
-    throw new Error(
-      `Selected agent '${sessionState.activeAgentName}' is not active (active: '${agent?.name ?? 'default'}').`
+  if (agent?.name !== selectedAgentName) {
+    log.warn(
+      `[${sessionId}] [AgentSelection] selected agent '${selectedAgentName}' not active after enforce (active: '${agent?.name ?? 'default'}'), reconciling selection`
     );
   }
+  sessionState.activeAgentName = agent?.name ?? null;
+  persistSessionActiveAgent(sessionId, sessionState.activeAgentName);
 }
 
 // Create a new session and return its ID
@@ -3346,6 +3362,7 @@ ipcMain.handle(
         );
       }
       sessionState.activeAgentName = agent?.name ?? null;
+      persistSessionActiveAgent(data.sessionId, sessionState.activeAgentName);
       return { sessionId: data.sessionId, model, cwd, activeAgent: agent ?? null };
     };
 
@@ -3360,9 +3377,6 @@ ipcMain.handle(
       }
       throw error;
     }
-    sessionState.activeAgentName = agent?.name ?? null;
-    persistSessionActiveAgent(data.sessionId, sessionState.activeAgentName);
-    return { sessionId: data.sessionId, model, cwd, activeAgent: agent ?? null };
   }
 );
 
@@ -3397,6 +3411,8 @@ ipcMain.handle('copilot:getActiveAgent', async (_event, sessionId: string) => {
   }
   try {
     const { agent } = await sessionState.session.rpc.agent.getCurrent();
+    sessionState.activeAgentName = agent?.name ?? null;
+    persistSessionActiveAgent(sessionId, sessionState.activeAgentName);
     return agent ?? null;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -3404,6 +3420,8 @@ ipcMain.handle('copilot:getActiveAgent', async (_event, sessionId: string) => {
       log.warn(`[${sessionId}] Session disconnected during getActiveAgent, resuming...`);
       await resumeDisconnectedSession(sessionId, sessionState);
       const { agent } = await sessionState.session.rpc.agent.getCurrent();
+      sessionState.activeAgentName = agent?.name ?? null;
+      persistSessionActiveAgent(sessionId, sessionState.activeAgentName);
       return agent ?? null;
     }
     throw error;
