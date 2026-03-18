@@ -5541,6 +5541,98 @@ nativeTheme.on('updated', () => {
 // App lifecycle - enforce single instance (skip in dev/test mode)
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
 const isTest = process.env.NODE_ENV === 'test';
+const SHUTDOWN_STEP_TIMEOUT_MS = 8000;
+const SHUTDOWN_TOTAL_TIMEOUT_MS = 20000;
+const SHUTDOWN_FORCE_EXIT_MS = 3000;
+let shutdownCleanupPromise: Promise<void> | null = null;
+let shutdownRequested = false;
+
+function runWithTimeout(label: string, task: Promise<void>, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      log.error(`[Shutdown] ${label} timed out after ${timeoutMs}ms`);
+      resolve();
+    }, timeoutMs);
+
+    task
+      .then(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      })
+      .catch((error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        log.error(`[Shutdown] ${label} failed:`, error);
+        resolve();
+      });
+  });
+}
+
+async function cleanupForShutdown(trigger: string): Promise<void> {
+  if (shutdownCleanupPromise) {
+    return shutdownCleanupPromise;
+  }
+
+  shutdownCleanupPromise = (async () => {
+    log.info(`[Shutdown] Starting cleanup from ${trigger}`);
+    stopKeepAlive();
+    ptyManager.closeAllPtys();
+
+    await runWithTimeout(
+      'close browser resources',
+      browserManager.closeBrowser(),
+      SHUTDOWN_STEP_TIMEOUT_MS
+    );
+
+    for (const [id, state] of sessions) {
+      clearToolStallTimer(id);
+      resolvePendingPermissionsForSession(id, {
+        kind: 'denied-no-approval-rule-and-could-not-request-from-user',
+      });
+      await runWithTimeout(
+        `disconnect session ${id}`,
+        state.session.disconnect(),
+        SHUTDOWN_STEP_TIMEOUT_MS
+      );
+    }
+    sessions.clear();
+
+    for (const [cwd, client] of copilotClients) {
+      await runWithTimeout(`stop client for ${cwd}`, client.stop(), SHUTDOWN_STEP_TIMEOUT_MS);
+    }
+    copilotClients.clear();
+    inFlightCopilotClients.clear();
+    log.info('[Shutdown] Cleanup completed');
+  })();
+
+  return shutdownCleanupPromise;
+}
+
+async function requestShutdown(trigger: string): Promise<void> {
+  if (shutdownRequested) {
+    return;
+  }
+  shutdownRequested = true;
+
+  await runWithTimeout(
+    `complete shutdown cleanup (${trigger})`,
+    cleanupForShutdown(trigger),
+    SHUTDOWN_TOTAL_TIMEOUT_MS
+  );
+
+  app.quit();
+  setTimeout(() => {
+    log.error('[Shutdown] app.quit() did not exit in time, forcing app.exit(0)');
+    app.exit(0);
+  }, SHUTDOWN_FORCE_EXIT_MS);
+}
+
 const gotTheLock = isDev || isTest ? true : app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
@@ -5549,9 +5641,11 @@ if (!gotTheLock) {
   if (!isDev && !isTest) {
     app.on('second-instance', () => {
       // Focus existing window if someone tries to open a second instance
-      if (mainWindow) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
         if (mainWindow.isMinimized()) mainWindow.restore();
         mainWindow.focus();
+      } else {
+        createWindow();
       }
     });
   }
@@ -5675,56 +5769,17 @@ if (!gotTheLock) {
   });
 }
 
-app.on('window-all-closed', async () => {
-  // Stop keep-alive timer
-  stopKeepAlive();
-
-  // Close browser and save state
-  await browserManager.closeBrowser();
-
-  // Disconnect all sessions
-  for (const [id, state] of sessions) {
-    clearToolStallTimer(id);
-    resolvePendingPermissionsForSession(id, {
-      kind: 'denied-no-approval-rule-and-could-not-request-from-user',
-    });
-    await state.session.disconnect();
-    console.log(`Disconnected session ${id}`);
-  }
-  sessions.clear();
-
-  // Stop all clients
-  for (const [cwd, client] of copilotClients) {
-    await client.stop();
-    console.log(`Stopped client for ${cwd}`);
-  }
-  copilotClients.clear();
-
-  app.quit();
+app.on('window-all-closed', () => {
+  void requestShutdown('window-all-closed');
 });
 
-app.on('before-quit', async () => {
-  // Close all PTY instances
-  ptyManager.closeAllPtys();
-
-  // Close browser and save state
-  await browserManager.closeBrowser();
-
-  // Disconnect all sessions
-  for (const [id, state] of sessions) {
-    clearToolStallTimer(id);
-    resolvePendingPermissionsForSession(id, {
-      kind: 'denied-no-approval-rule-and-could-not-request-from-user',
-    });
-    await state.session.disconnect();
-  }
-  sessions.clear();
-
-  // Stop all clients
-  for (const [cwd, client] of copilotClients) {
-    await client.stop();
-  }
-  copilotClients.clear();
+app.on('before-quit', () => {
+  shutdownRequested = true;
+  void runWithTimeout(
+    'complete shutdown cleanup (before-quit)',
+    cleanupForShutdown('before-quit'),
+    SHUTDOWN_TOTAL_TIMEOUT_MS
+  );
 });
 
 // ============================================================================
