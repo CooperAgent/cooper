@@ -16,6 +16,7 @@ export const enrichSessionsWithWorktreeData = async (
             id: worktree.id,
             repoPath: worktree.repoPath,
             branch: worktree.branch,
+            baseBranch: worktree.baseBranch,
             worktreePath: worktree.worktreePath,
             status: worktree.status,
             diskUsage: worktree.diskUsage,
