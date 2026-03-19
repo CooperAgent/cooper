@@ -107,6 +107,7 @@ export interface PreviousSession {
     id: string; // Worktree session ID (e.g., "repo--branch")
     repoPath: string; // Original repository path (for grouping worktrees)
     branch: string;
+    baseBranch?: string;
     worktreePath: string;
     status: 'active' | 'idle' | 'orphaned';
     diskUsage?: string;
