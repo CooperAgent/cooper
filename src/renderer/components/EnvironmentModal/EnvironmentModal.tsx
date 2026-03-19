@@ -76,6 +76,11 @@ const resolvePath = (value: string, cwd?: string): string => {
   return `${cwd.replace(/\/$/, '')}/${value}`;
 };
 
+const isMarkdownPath = (value: string): boolean => {
+  const lower = value.toLowerCase();
+  return lower.endsWith('.md') || lower.endsWith('.markdown');
+};
+
 const buildFileTree = (files: string[]): FileTreeNode[] => {
   const root: FileTreeNode[] = [];
   const sortedFiles = [...files].sort((a, b) => a.localeCompare(b));
@@ -280,10 +285,7 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
 
   const selectedFileName = selectedFile?.split(/[/\\]/).pop() || '';
   const isMarkdownFile =
-    activeTab === 'instructions' ||
-    activeTab === 'agents' ||
-    selectedFileName.toLowerCase().endsWith('.md') ||
-    selectedFileName.toLowerCase().endsWith('.markdown');
+    activeTab === 'instructions' || activeTab === 'agents' || isMarkdownPath(selectedFileName);
 
   const ensureDefaultInstructionSelection = useCallback(() => {
     if (instructionPaths.length === 0) {
@@ -569,7 +571,8 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
       const result = await window.electronAPI.file.readContent(resolvedPath);
       setFileContent(result);
 
-      const shouldParseFrontmatter = activeTab === 'agents';
+      const shouldParseFrontmatter =
+        (activeTab === 'agents' || activeTab === 'skills') && isMarkdownPath(selectedFileName);
       if (result.success && result.content && shouldParseFrontmatter) {
         const parsed = parseMarkdownFrontmatter(result.content);
         setFrontmatter(parsed.frontmatter);
