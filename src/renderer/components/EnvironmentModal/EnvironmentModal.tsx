@@ -11,6 +11,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   ChevronRightIcon,
+  RepeatIcon,
 } from '../Icons';
 import { Spinner } from '../Spinner';
 import { CodeBlockWithCopy } from '../CodeBlock';
@@ -34,6 +35,7 @@ export interface EnvironmentModalProps {
   fileViewMode?: 'flat' | 'tree';
   onViewModeChange?: (mode: 'flat' | 'tree') => void;
   onTabChange?: (tab: 'instructions' | 'skills' | 'agents') => void;
+  onRefresh?: () => void | Promise<void>;
 }
 
 interface FileContent {
@@ -203,6 +205,7 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
   fileViewMode = 'flat',
   onViewModeChange,
   onTabChange,
+  onRefresh,
 }) => {
   const [activeTab, setActiveTab] = useState<'instructions' | 'skills' | 'agents'>(initialTab);
   const [selectedInstructionFile, setSelectedInstructionFile] = useState<string | null>(null);
@@ -1018,6 +1021,17 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              {onRefresh && (
+                <button
+                  onClick={() => void onRefresh()}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-bg rounded transition-colors"
+                  title="Refresh environment"
+                  aria-label="Refresh environment"
+                >
+                  <RepeatIcon size={14} />
+                  <span>Refresh</span>
+                </button>
+              )}
               {onViewModeChange && (
                 <button
                   onClick={() => onViewModeChange(fileViewMode === 'flat' ? 'tree' : 'flat')}
