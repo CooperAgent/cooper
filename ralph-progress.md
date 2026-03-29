@@ -2,40 +2,41 @@
 
 ## Task
 
-when forking a worktree from a branch, remember that branch, and in commit & push view, use that branch as the default selection in the branch dropdown (instead of currently defaulting to main)
+I want to be able to refresh and live-load new skills and subagents as they're being written with Cooper, without needing to restart Cooper. please add some refresh mechanism that updates the list on the right pane and on the environment view once expandede.
 
-## Iteration 1 - 2026-03-19T07:36:10.270Z
+## Iteration 1 - 2026-03-27T07:47:29.890Z
 
 ### Status: COMPLETE
 
 ### What I worked on:
 
-- Persisted worktree fork source branch (`baseBranch`) in main process worktree session metadata
-- Propagated `baseBranch` through preload and renderer session-enrichment/types
-- Updated Commit & Push default target-branch resolution to use remembered `baseBranch` when no saved setting exists
-- Added regression tests for main worktree persistence and commit modal default behavior
+- Added force-refresh wiring for session context in renderer (`refreshSessionContext`)
+- Added refresh controls in both right Environment pane variants (desktop + mobile)
+- Added refresh control in `EnvironmentModal` and passed callback from `App.tsx`
+- Triggered refresh when expanding Agent Skills/Subagents sections to live-load newly created items
+- Added regression test coverage for modal refresh callback behavior
 
 ### Completed:
 
-- [x] Created planning/progress artifacts
-- [x] Identified current default-to-main behavior in `useCommitModal`
-- [x] Persisted base branch in worktree session registry
-- [x] Surfaced base branch in renderer worktree data
-- [x] Updated Commit & Push branch defaulting logic
-- [x] Added test coverage for both persistence and UI default behavior
+- [x] Created detailed plan in session plan file
+- [x] Verified existing IPC (`sessionContext:getAll`) rescans from disk (no backend contract change needed)
+- [x] Implemented right pane refresh mechanism and live reload triggers
+- [x] Implemented Environment modal refresh mechanism
+- [x] Added/updated tests (`tests/components/EnvironmentModal.test.tsx`)
 - [x] Ran targeted tests successfully
-- [x] Ran `npm run build` successfully
+- [x] Ran full test suite successfully
+- [x] Ran build successfully
 
 ### Verification:
 
-- `npm run test -- src/main/worktree.test.ts tests/components/useCommitModal.test.tsx tests/components/CommitModal.test.tsx` ✅
-- `npm run test -- tests/components/useCommitModal.test.tsx src/main/worktree.test.ts` ✅
+- `npm test -- tests/components/EnvironmentModal.test.tsx` ✅
 - `npm run build` ✅
+- `npm test` ✅ (499/499 tests passed; pre-existing test warnings only)
 
 ### Final plan checklist:
 
-- [x] Extend WorktreeSession with baseBranch in main/preload/renderer
-- [x] Store sanitized baseBranch during worktree creation
-- [x] Use default order: saved setting -> remembered baseBranch -> main
-- [x] Add/adjust regression tests
-- [x] Validate with build and tests
+- [x] Inspect existing context-loading paths and refresh behavior
+- [x] Implement renderer refresh callback + right pane trigger
+- [x] Add environment modal refresh action and wiring
+- [x] Add test coverage
+- [x] Run targeted tests + build + full tests
