@@ -41,7 +41,6 @@ screenshot*.png
 evidence/
 plan.md
 ralph-progress.md
-*ralph*
 
 # Voice/speech models (downloaded at runtime)
 public/vosk-model/
