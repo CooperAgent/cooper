@@ -7512,12 +7512,18 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
           onCommitMessageChange={commitModal.setCommitMessage}
           onCommitActionChange={commitModal.setCommitAction}
           onRemoveWorktreeChange={commitModal.setRemoveWorktreeAfterMerge}
-          onCommitAndPush={() =>
-            activeTab && commitModal.handleCommitAndPush(activeTab, updateTab, handleCloseTab)
-          }
-          onMergeMainIntoBranch={() =>
-            activeTab && commitModal.handleMergeMainIntoBranch(activeTab, updateTab)
-          }
+          onCommitAndPush={() => {
+            const latestTab = tabsRef.current.find((tab) => tab.id === activeTabId);
+            if (latestTab) {
+              void commitModal.handleCommitAndPush(latestTab, updateTab, handleCloseTab);
+            }
+          }}
+          onMergeMainIntoBranch={() => {
+            const latestTab = tabsRef.current.find((tab) => tab.id === activeTabId);
+            if (latestTab) {
+              void commitModal.handleMergeMainIntoBranch(latestTab, updateTab);
+            }
+          }}
           onTargetBranchSelect={(branch) =>
             activeTab && commitModal.handleTargetBranchSelect(activeTab, branch)
           }
@@ -7526,22 +7532,27 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             commitModal.closeCommitModal();
           }}
           onUntrackFile={(filePath) => {
-            if (activeTab) {
-              const newUntracked = [...(activeTab.untrackedFiles || []), filePath];
-              updateTab(activeTab.id, { untrackedFiles: newUntracked });
+            const latestTab = tabsRef.current.find((tab) => tab.id === activeTabId);
+            if (latestTab) {
+              const newUntracked = [...(latestTab.untrackedFiles || []), filePath];
+              updateTab(latestTab.id, { untrackedFiles: newUntracked });
             }
           }}
           onRestoreFile={(filePath) => {
-            if (activeTab) {
-              const newUntracked = (activeTab.untrackedFiles || []).filter((f) => f !== filePath);
-              updateTab(activeTab.id, { untrackedFiles: newUntracked });
+            const latestTab = tabsRef.current.find((tab) => tab.id === activeTabId);
+            if (latestTab) {
+              const newUntracked = (latestTab.untrackedFiles || []).filter((f) => f !== filePath);
+              updateTab(latestTab.id, { untrackedFiles: newUntracked });
             }
           }}
           onCopyErrorToMessage={handleCopyCommitErrorToMessage}
           onDismissPendingMerge={() => commitModal.setPendingMergeInfo(null)}
-          onMergeNow={() =>
-            activeTab && commitModal.handleMergeNow(activeTab, updateTab, handleCloseTab)
-          }
+          onMergeNow={() => {
+            const latestTab = tabsRef.current.find((tab) => tab.id === activeTabId);
+            if (latestTab) {
+              void commitModal.handleMergeNow(latestTab, updateTab, handleCloseTab);
+            }
+          }}
         />
 
         {/* MCP Server Modal */}
