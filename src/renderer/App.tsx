@@ -1178,15 +1178,6 @@ const App: React.FC = () => {
     }
   }, [isMobileOrTablet]);
 
-  const toggleRightPanel = useCallback(() => {
-    if (isMobileOrTablet) {
-      setRightDrawerOpen((prev) => !prev);
-    } else {
-      userToggledRightRef.current = true;
-      setRightPanelCollapsed((prev) => !prev);
-    }
-  }, [isMobileOrTablet]);
-
   const loadMcpConfig = useCallback(
     async (force = false) => {
       if (!force && (mcpConfigLoaded || mcpConfigLoading)) return;
@@ -1253,6 +1244,31 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [activeTab?.cwd, loadSessionContext]);
 
+  const refreshSessionContext = useCallback(async () => {
+    await loadSessionContext(true);
+  }, [loadSessionContext]);
+
+  const toggleRightPanel = useCallback(() => {
+    if (isMobileOrTablet) {
+      setRightDrawerOpen((prev) => {
+        const next = !prev;
+        if (next) {
+          void refreshSessionContext();
+        }
+        return next;
+      });
+    } else {
+      userToggledRightRef.current = true;
+      setRightPanelCollapsed((prev) => {
+        const next = !prev;
+        if (!next) {
+          void refreshSessionContext();
+        }
+        return next;
+      });
+    }
+  }, [isMobileOrTablet, refreshSessionContext]);
+
   // Fetch worktree data to map worktree paths to original repo paths
   useEffect(() => {
     const fetchWorktrees = async () => {
@@ -1278,6 +1294,7 @@ const App: React.FC = () => {
       event?.stopPropagation();
       setFilePreviewPath(null);
       setEnvironmentTab(tab);
+      void refreshSessionContext();
 
       // Set the appropriate path based on the tab
       if (tab === 'instructions') {
@@ -1296,7 +1313,7 @@ const App: React.FC = () => {
 
       setShowEnvironmentModal(true);
     },
-    []
+    [refreshSessionContext]
   );
 
   // Helper to update a specific tab
@@ -4728,15 +4745,25 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             {/* Drawer Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-copilot-border">
               <span className="text-sm font-medium text-copilot-text">Environment</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRightDrawerOpen(false);
-                }}
-                className="p-2 text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface rounded transition-colors"
-              >
-                <CloseIcon size={20} />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => void refreshSessionContext()}
+                  className="p-2 text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface rounded transition-colors"
+                  title="Refresh environment"
+                  aria-label="Refresh environment"
+                >
+                  <RepeatIcon size={16} />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setRightDrawerOpen(false);
+                  }}
+                  className="p-2 text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface rounded transition-colors"
+                >
+                  <CloseIcon size={20} />
+                </button>
+              </div>
             </div>
 
             {/* Environment Content - Using AccordionSelect for mobile-friendly UI */}
@@ -5036,7 +5063,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   {/* Agent Skills */}
                   <div className="border-b border-copilot-border">
                     <button
-                      onClick={() => setShowSkills(!showSkills)}
+                      onClick={() => {
+                        const next = !showSkills;
+                        setShowSkills(next);
+                        if (next) void refreshSessionContext();
+                      }}
                       className="w-full flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                     >
                       <ChevronRightIcon
@@ -5089,7 +5120,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   {/* Subagents */}
                   <div className="border-b border-copilot-border">
                     <button
-                      onClick={() => setShowSubagents(!showSubagents)}
+                      onClick={() => {
+                        const next = !showSubagents;
+                        setShowSubagents(next);
+                        if (next) void refreshSessionContext();
+                      }}
                       className="w-full flex items-center gap-3 px-4 py-3 text-sm text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                     >
                       <ChevronRightIcon
@@ -6751,6 +6786,14 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                   <ChevronDownIcon size={12} className="-rotate-90" />
                 </button>
                 <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <button
+                    onClick={() => void refreshSessionContext()}
+                    className="shrink-0 p-1 text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface-hover rounded transition-colors"
+                    title="Refresh environment"
+                    aria-label="Refresh environment"
+                  >
+                    <RepeatIcon size={12} />
+                  </button>
                   {activeTab?.isProcessing ? (
                     <>
                       {activeTab?.lisaConfig?.active ? (
@@ -7159,7 +7202,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         {/* Agent Skills */}
                         <div>
                           <button
-                            onClick={() => setShowSkills(!showSkills)}
+                            onClick={() => {
+                              const next = !showSkills;
+                              setShowSkills(next);
+                              if (next) void refreshSessionContext();
+                            }}
                             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                           >
                             <ChevronRightIcon
@@ -7218,7 +7265,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                         {/* Subagents */}
                         <div>
                           <button
-                            onClick={() => setShowSubagents(!showSubagents)}
+                            onClick={() => {
+                              const next = !showSubagents;
+                              setShowSubagents(next);
+                              if (next) void refreshSessionContext();
+                            }}
                             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-surface transition-colors"
                           >
                             <ChevronRightIcon
@@ -7723,6 +7774,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                 }
               }}
               onTabChange={(tab) => setEnvironmentTab(tab)}
+              onRefresh={() => refreshSessionContext()}
             />
           </React.Suspense>
         )}

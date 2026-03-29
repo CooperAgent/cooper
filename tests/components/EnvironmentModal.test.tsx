@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { EnvironmentModal } from '../../src/renderer/components/EnvironmentModal';
 
 describe('Environment modal (markdown preview)', () => {
@@ -119,5 +119,27 @@ Use the helper rules.`;
 
     await waitFor(() => expect(screen.getByText('plain skill notes')).toBeInTheDocument());
     expect(screen.queryByText('Frontmatter')).not.toBeInTheDocument();
+  });
+
+  it('calls onRefresh when refresh button is clicked', async () => {
+    const onRefresh = vi.fn();
+    render(
+      <EnvironmentModal
+        isOpen={true}
+        onClose={vi.fn()}
+        onRefresh={onRefresh}
+        instructions={[]}
+        skills={[]}
+        agents={[{ name: 'Helper', path: agentPath, type: 'personal', source: 'copilot' }]}
+        cwd="/project"
+        initialTab="agents"
+        initialAgentPath={agentPath}
+        fileViewMode="tree"
+      />
+    );
+
+    await waitFor(() => expect(screen.getByText('Helper Agent')).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle('Refresh environment'));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });
