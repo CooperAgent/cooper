@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ActiveTool } from '../../types/session';
 import { formatToolOutput } from '../../utils/session';
+import { MCPOutputRenderer, isMCPRichOutput } from '../mcp';
 
 interface ToolActivitySectionProps {
   tools: ActiveTool[];
@@ -171,9 +172,14 @@ export function ToolActivitySection({ tools, isLive }: ToolActivitySectionProps)
                       )}
                     </div>
                     {tool.status === 'done' && (
-                      <div className="text-copilot-text-muted text-[10px]">
-                        {formatToolOutput(tool.toolName, input, tool.output)}
-                      </div>
+                      <>
+                        <div className="text-copilot-text-muted text-[10px]">
+                          {formatToolOutput(tool.toolName, input, tool.output)}
+                        </div>
+                        {isMCPRichOutput(tool.toolName, tool.output) && (
+                          <MCPOutputRenderer toolName={tool.toolName} output={tool.output} />
+                        )}
+                      </>
                     )}
                     {isEdit && tool.status === 'done' && !!input.old_str && (
                       <div className="mt-0.5 text-[10px] font-mono pl-2 border-l border-copilot-border">

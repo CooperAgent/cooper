@@ -76,5 +76,46 @@ export const formatToolOutput = (
     return 'Input sent';
   }
 
+  // MCP tools: try to extract a meaningful summary from output
+  if (toolName.startsWith('mcp_')) {
+    if (Array.isArray(out)) {
+      const textBlocks = out.filter(
+        (block: unknown) =>
+          block != null &&
+          typeof block === 'object' &&
+          (block as Record<string, unknown>).type === 'text'
+      );
+      const imageBlocks = out.filter(
+        (block: unknown) =>
+          block != null &&
+          typeof block === 'object' &&
+          (block as Record<string, unknown>).type === 'image'
+      );
+
+      const parts: string[] = [];
+      if (textBlocks.length > 0) {
+        const firstText = String((textBlocks[0] as Record<string, unknown>).text || '').slice(
+          0,
+          60
+        );
+        parts.push(firstText + (firstText.length >= 60 ? '...' : ''));
+      }
+      if (imageBlocks.length > 0) {
+        parts.push(`${imageBlocks.length} image${imageBlocks.length !== 1 ? 's' : ''}`);
+      }
+      if (parts.length > 0) return parts.join(' + ');
+    }
+
+    if (typeof out === 'object' && out?.output) {
+      const text = String(out.output).slice(0, 80);
+      return text + (text.length >= 80 ? '...' : '');
+    }
+
+    if (typeof out === 'string') {
+      const text = out.slice(0, 80);
+      return text + (text.length >= 80 ? '...' : '');
+    }
+  }
+
   return 'Done';
 };
