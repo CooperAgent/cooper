@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { CopyIcon, CheckIcon } from '../../../components/Icons';
 
 interface DataRendererProps {
@@ -11,10 +11,10 @@ interface DataRendererProps {
  */
 export const DataRenderer: React.FC<DataRendererProps> = ({ data }) => {
   const [copied, setCopied] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
 
-  const formatted = JSON.stringify(data, null, 2);
-  const lineCount = formatted.split('\n').length;
+  const formatted = useMemo(() => JSON.stringify(data, null, 2), [data]);
+  const lineCount = useMemo(() => formatted.split('\n').length, [formatted]);
   const isLarge = lineCount > 20;
 
   const handleCopy = useCallback(async () => {

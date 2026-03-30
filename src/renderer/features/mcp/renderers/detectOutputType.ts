@@ -50,7 +50,7 @@ function extractImages(output: unknown): MCPImageContent[] {
 /**
  * Try to parse a string as JSON. Returns the parsed value or undefined.
  */
-function tryParseJSON(text: string): unknown | undefined {
+function tryParseJSON(text: string): unknown {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
 
@@ -70,7 +70,7 @@ function tryParseJSON(text: string): unknown | undefined {
  */
 function isTabularData(data: unknown): data is Record<string, unknown>[] {
   if (!Array.isArray(data)) return false;
-  if (data.length < 2) return false;
+  if (data.length < 1) return false;
   if (data.length > 500) return false; // Too large to render as a table
 
   // Every item must be a non-null object (not an array)
@@ -133,7 +133,7 @@ export function detectOutputType(output: unknown): DetectedOutput {
  * with special renderers (not just a text summary).
  */
 export function isMCPRichOutput(toolName: string, output: unknown): boolean {
-  // Only apply rich rendering to MCP tools (prefixed with mcp__ or mcp_)
+  // Only apply rich rendering to MCP tools (prefixed with mcp_)
   if (!toolName.startsWith('mcp_')) return false;
 
   const detected = detectOutputType(output);

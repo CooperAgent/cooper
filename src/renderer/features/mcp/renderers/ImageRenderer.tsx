@@ -37,7 +37,15 @@ export const ImageRenderer: React.FC<ImageRendererProps> = ({ images, caption })
           );
         }
 
-        const src = `data:${img.mimeType};base64,${img.data}`;
+        const ALLOWED_IMAGE_MIME_TYPES = new Set([
+          'image/png',
+          'image/jpeg',
+          'image/gif',
+          'image/webp',
+          'image/svg+xml',
+        ]);
+        const safeMime = ALLOWED_IMAGE_MIME_TYPES.has(img.mimeType) ? img.mimeType : 'image/png';
+        const src = `data:${safeMime};base64,${img.data}`;
 
         return (
           <img

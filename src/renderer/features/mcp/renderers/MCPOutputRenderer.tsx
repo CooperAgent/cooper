@@ -1,5 +1,5 @@
 import React from 'react';
-import { detectOutputType, isMCPRichOutput } from './detectOutputType';
+import { detectOutputType } from './detectOutputType';
 import { ImageRenderer } from './ImageRenderer';
 import { TableRenderer } from './TableRenderer';
 import { DataRenderer } from './DataRenderer';
@@ -17,7 +17,7 @@ interface MCPOutputRendererProps {
  * when the output is plain text or the tool is not an MCP tool.
  */
 export const MCPOutputRenderer: React.FC<MCPOutputRendererProps> = ({ toolName, output }) => {
-  if (!isMCPRichOutput(toolName, output)) {
+  if (!toolName.startsWith('mcp_')) {
     return null;
   }
 
@@ -44,5 +44,3 @@ export const MCPOutputRenderer: React.FC<MCPOutputRendererProps> = ({ toolName, 
     return null;
   }
 };
-
-export { isMCPRichOutput };

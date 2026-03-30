@@ -59,7 +59,7 @@ export const TableRenderer: React.FC<TableRendererProps> = ({ data }) => {
                   <td
                     key={col}
                     className="px-2 py-1 text-copilot-text border border-copilot-border max-w-[200px] truncate"
-                    title={formatCellValue(row[col])}
+                    title={formatCellValue(row[col]).slice(0, 200)}
                   >
                     {formatCellValue(row[col])}
                   </td>

@@ -1,4 +1,5 @@
-export { MCPOutputRenderer, isMCPRichOutput } from './MCPOutputRenderer';
+export { MCPOutputRenderer } from './MCPOutputRenderer';
+export { isMCPRichOutput } from './detectOutputType';
 export { ImageRenderer } from './ImageRenderer';
 export { TableRenderer } from './TableRenderer';
 export { DataRenderer } from './DataRenderer';
