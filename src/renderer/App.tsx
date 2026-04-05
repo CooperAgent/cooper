@@ -199,6 +199,12 @@ const App: React.FC = () => {
   const [diagnosticsPaths, setDiagnosticsPaths] = useState<{
     logFilePath: string;
     crashDumpsPath: string;
+    telemetryFilePath: string;
+  } | null>(null);
+  const [copilotTelemetry, setCopilotTelemetry] = useState<{
+    enabled: boolean;
+    captureContent: boolean;
+    sourceName: string;
   } | null>(null);
 
   // Close allow dropdown when clicking outside
@@ -543,6 +549,17 @@ const App: React.FC = () => {
         }
       })
       .catch((error) => console.error('Failed to load environment settings:', error));
+  }, []);
+
+  useEffect(() => {
+    window.electronAPI.settings
+      .getCopilotTelemetry()
+      .then((result) => {
+        if (result.success) {
+          setCopilotTelemetry(result.telemetry);
+        }
+      })
+      .catch((error) => console.error('Failed to load Copilot telemetry settings:', error));
   }, []);
 
   // Prevent page refresh shortcuts (causes limbo state)
@@ -2465,6 +2482,42 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       }
     );
 
+    const unsubscribeElicitationRequested = window.electronAPI.copilot.onElicitationRequested(
+      (data) => {
+        const { sessionId, message, mode } = data;
+        const warning = `⚠️ Agent requested ${mode || 'interactive'} elicitation, but Cooper currently does not present elicitation dialogs.\n\n${message}`;
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === sessionId
+              ? {
+                  ...tab,
+                  messages: [
+                    ...tab.messages,
+                    {
+                      id: generateId(),
+                      role: 'system',
+                      content: warning,
+                      timestamp: Date.now(),
+                    },
+                  ],
+                }
+              : tab
+          )
+        );
+      }
+    );
+
+    const unsubscribeCapabilitiesChanged = window.electronAPI.copilot.onCapabilitiesChanged(
+      (data) => {
+        const { sessionId, capabilities } = data;
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === sessionId ? { ...tab, sessionCapabilities: capabilities } : tab
+          )
+        );
+      }
+    );
+
     const unsubscribeYoloModeChanged = window.electronAPI.copilot.onYoloModeChanged((data) => {
       if (data.enabled && data.flushedCount > 0) {
         // Clear pending confirmations that were flushed by the backend
@@ -2493,6 +2546,8 @@ Only output ${RALPH_COMPLETION_SIGNAL} when ALL items above are verified complet
       unsubscribeUsageInfo();
       unsubscribeCompactionStart();
       unsubscribeCompactionComplete();
+      unsubscribeElicitationRequested();
+      unsubscribeCapabilitiesChanged();
       unsubscribeYoloModeChanged();
     };
   }, []);
@@ -4093,6 +4148,21 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
     }
   };
 
+  const handleUpdateCopilotTelemetry = async (updates: {
+    enabled?: boolean;
+    captureContent?: boolean;
+    sourceName?: string;
+  }) => {
+    try {
+      const result = await window.electronAPI.settings.setCopilotTelemetry(updates);
+      if (result.success && result.telemetry) {
+        setCopilotTelemetry(result.telemetry);
+      }
+    } catch (error) {
+      console.error('Failed to update Copilot telemetry settings:', error);
+    }
+  };
+
   const handleCloseTab = async (tabId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
 
@@ -4116,8 +4186,8 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
 
       // Add closed session to previous sessions
       if (closingTab) {
-        setPreviousSessions((prev) => [
-          {
+        setPreviousSessions((prev) => {
+          const nextSession: PreviousSession = {
             sessionId: closingTab.id,
             name: closingTab.name,
             modifiedTime: new Date().toISOString(),
@@ -4125,9 +4195,10 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
             markedForReview: closingTab.markedForReview,
             reviewNote: closingTab.reviewNote,
             activeAgentName: closingTab.activeAgentName,
-          },
-          ...prev,
-        ]);
+          };
+
+          return [nextSession, ...prev.filter((session) => session.sessionId !== closingTab.id)];
+        });
       }
 
       // If closing the active tab, switch to another one
@@ -4318,7 +4389,11 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
       setActiveTabId(result.sessionId);
 
       // Remove from previous sessions list
-      setPreviousSessions((prev) => prev.filter((s) => s.sessionId !== prevSession.sessionId));
+      setPreviousSessions((prev) =>
+        prev.filter(
+          (s) => s.sessionId !== prevSession.sessionId && s.sessionId !== result.sessionId
+        )
+      );
 
       // Load message history and attachments
       const [messagesResult, attachmentsResult] = await Promise.all([
@@ -7909,6 +7984,14 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
               }}
               onRemoveGlobalSafeCommand={handleRemoveGlobalSafeCommand}
               diagnosticsPaths={diagnosticsPaths}
+              copilotTelemetry={
+                copilotTelemetry || {
+                  enabled: false,
+                  captureContent: false,
+                  sourceName: 'cooper-local',
+                }
+              }
+              onUpdateCopilotTelemetry={handleUpdateCopilotTelemetry}
               recursiveAgentSkillsScan={recursiveAgentSkillsScan}
               onToggleRecursiveAgentSkillsScan={handleToggleRecursiveAgentSkillsScan}
               onRevealLogFile={async (pathToReveal) => {
