@@ -5090,6 +5090,9 @@ ipcMain.handle(
     cwd?: CopilotResumePreviousSessionArgs[1]
   ): Promise<CopilotResumePreviousSessionResult> => {
     validateCopilotResumePreviousSessionArgs(sessionId, cwd);
+    const openSessions = (store.get('openSessions') as StoredSession[]) || [];
+    const storedSession = openSessions.find((s) => s.sessionId === sessionId);
+
     // Check if already resumed
     if (sessions.has(sessionId)) {
       const sessionState = sessions.get(sessionId)!;
@@ -5098,6 +5101,10 @@ ipcMain.handle(
         model: sessionState.model,
         cwd: sessionState.cwd,
         alreadyOpen: true,
+        editedFiles: storedSession?.editedFiles || [],
+        alwaysAllowed: storedSession?.alwaysAllowed || [],
+        untrackedFiles: storedSession?.untrackedFiles || [],
+        fileViewMode: storedSession?.fileViewMode || 'flat',
         activeAgentName: sessionState.activeAgentName ?? undefined,
       };
     }
@@ -5152,6 +5159,10 @@ ipcMain.handle(
         model: replacement.model,
         cwd: replacement.cwd,
         alreadyOpen: false,
+        editedFiles: [],
+        alwaysAllowed: [],
+        untrackedFiles: [],
+        fileViewMode: 'flat',
         activeAgentName: replacement.activeAgentName ?? undefined,
       };
     }
@@ -5181,6 +5192,10 @@ ipcMain.handle(
       model: sessionModel,
       cwd: sessionCwd,
       alreadyOpen: false,
+      editedFiles: storedSession?.editedFiles || [],
+      alwaysAllowed: storedSession?.alwaysAllowed || [],
+      untrackedFiles: storedSession?.untrackedFiles || [],
+      fileViewMode: storedSession?.fileViewMode || 'flat',
       activeAgentName: restoredActiveAgentName ?? undefined,
     };
   }
