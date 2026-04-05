@@ -8,7 +8,7 @@
 
 // Use dynamic import for ESM module
 async function main() {
-  const { CopilotClient } = await import('@github/copilot-sdk');
+  const { CopilotClient, approveAll } = await import('@github/copilot-sdk');
 
   // Replicating the detection logic from main.ts
   const QUICK_TASKS_MODEL_PREFERENCES = ['gpt-4.1', 'gpt-5-mini', 'claude-haiku-4.5'];
@@ -47,6 +47,7 @@ async function main() {
 
       const tempSession = await client.createSession({
         model: quickModel,
+        onPermissionRequest: approveAll,
         systemMessage: {
           mode: 'replace' as const,
           content: `You analyze messages to detect if they ask the user to choose between options.
