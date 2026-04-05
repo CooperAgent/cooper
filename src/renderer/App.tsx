@@ -505,6 +505,9 @@ const App: React.FC = () => {
   const activeTabIdRef = useRef<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef<boolean>(true);
+  const saveOpenSessionsTimeoutRef = useRef<number | null>(null);
+  const saveMessageAttachmentsTimeoutRef = useRef<number | null>(null);
+  const lastSavedLisaConfigRef = useRef<Map<string, string>>(new Map());
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   // Find in chat state
@@ -1004,43 +1007,70 @@ const App: React.FC = () => {
   // Save open sessions with models and cwd whenever tabs change
   useEffect(() => {
     if (!dataLoaded) return;
-    const openSessions = tabs.map((t) => ({
-      sessionId: t.id,
-      model: t.model,
-      cwd: t.cwd,
-      name: t.name,
-      editedFiles: t.editedFiles,
-      alwaysAllowed: t.alwaysAllowed,
-      markedForReview: t.markedForReview,
-      reviewNote: t.reviewNote,
-      untrackedFiles: t.untrackedFiles,
-      fileViewMode: t.fileViewMode,
-      yoloMode: t.yoloMode,
-      activeAgentName: t.activeAgentName,
-      sourceIssue: t.sourceIssue,
-    }));
-    window.electronAPI.copilot.saveOpenSessions(openSessions);
+
+    if (saveOpenSessionsTimeoutRef.current) {
+      window.clearTimeout(saveOpenSessionsTimeoutRef.current);
+    }
+
+    saveOpenSessionsTimeoutRef.current = window.setTimeout(() => {
+      const openSessions = tabs.map((t) => ({
+        sessionId: t.id,
+        model: t.model,
+        cwd: t.cwd,
+        name: t.name,
+        editedFiles: t.editedFiles,
+        alwaysAllowed: t.alwaysAllowed,
+        markedForReview: t.markedForReview,
+        reviewNote: t.reviewNote,
+        untrackedFiles: t.untrackedFiles,
+        fileViewMode: t.fileViewMode,
+        yoloMode: t.yoloMode,
+        activeAgentName: t.activeAgentName,
+        sourceIssue: t.sourceIssue,
+      }));
+      window.electronAPI.copilot.saveOpenSessions(openSessions);
+      saveOpenSessionsTimeoutRef.current = null;
+    }, 250);
+
+    return () => {
+      if (saveOpenSessionsTimeoutRef.current) {
+        window.clearTimeout(saveOpenSessionsTimeoutRef.current);
+      }
+    };
   }, [tabs, dataLoaded]);
 
   // Save message attachments whenever tabs/messages change
   useEffect(() => {
-    tabs.forEach((tab) => {
-      const attachments = tab.messages
-        .map((msg, index) => ({
-          messageIndex: index,
-          imageAttachments: msg.imageAttachments,
-          fileAttachments: msg.fileAttachments,
-        }))
-        .filter(
-          (a) =>
-            (a.imageAttachments && a.imageAttachments.length > 0) ||
-            (a.fileAttachments && a.fileAttachments.length > 0)
-        );
+    if (saveMessageAttachmentsTimeoutRef.current) {
+      window.clearTimeout(saveMessageAttachmentsTimeoutRef.current);
+    }
 
-      if (attachments.length > 0) {
-        window.electronAPI.copilot.saveMessageAttachments(tab.id, attachments);
+    saveMessageAttachmentsTimeoutRef.current = window.setTimeout(() => {
+      tabs.forEach((tab) => {
+        const attachments = tab.messages
+          .map((msg, index) => ({
+            messageIndex: index,
+            imageAttachments: msg.imageAttachments,
+            fileAttachments: msg.fileAttachments,
+          }))
+          .filter(
+            (a) =>
+              (a.imageAttachments && a.imageAttachments.length > 0) ||
+              (a.fileAttachments && a.fileAttachments.length > 0)
+          );
+
+        if (attachments.length > 0) {
+          window.electronAPI.copilot.saveMessageAttachments(tab.id, attachments);
+        }
+      });
+      saveMessageAttachmentsTimeoutRef.current = null;
+    }, 350);
+
+    return () => {
+      if (saveMessageAttachmentsTimeoutRef.current) {
+        window.clearTimeout(saveMessageAttachmentsTimeoutRef.current);
       }
-    });
+    };
   }, [tabs]);
 
   const scrollToBottom = (instant?: boolean) => {
@@ -1344,11 +1374,24 @@ const App: React.FC = () => {
 
   // Persist lisaConfig to sessionStorage when it changes
   useEffect(() => {
+    const activeTabIds = new Set<string>();
+
     tabs.forEach((tab) => {
+      activeTabIds.add(tab.id);
       if (tab.lisaConfig) {
-        sessionStorage.setItem(`lisaConfig-${tab.id}`, JSON.stringify(tab.lisaConfig));
+        const serializedConfig = JSON.stringify(tab.lisaConfig);
+        if (lastSavedLisaConfigRef.current.get(tab.id) !== serializedConfig) {
+          sessionStorage.setItem(`lisaConfig-${tab.id}`, serializedConfig);
+          lastSavedLisaConfigRef.current.set(tab.id, serializedConfig);
+        }
       }
     });
+
+    for (const tabId of lastSavedLisaConfigRef.current.keys()) {
+      if (!activeTabIds.has(tabId)) {
+        lastSavedLisaConfigRef.current.delete(tabId);
+      }
+    }
   }, [tabs]);
 
   // Set up IPC listeners
