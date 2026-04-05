@@ -206,6 +206,12 @@ button,
   user-select: text;
 }
 
+/* Reduce offscreen chat rendering work in long sessions */
+.message-item-perf {
+  content-visibility: auto;
+  contain-intrinsic-size: 220px;
+}
+
 /* Window shadow when focused */
 #root > div {
   box-shadow:
