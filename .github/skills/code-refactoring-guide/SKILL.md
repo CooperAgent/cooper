@@ -1,8 +1,3 @@
----
-name: code-refactoring-guide
-description: Evaluate code quality and suggest refactoring opportunities before committing. Ensure Cooper's codebase stays clean and maintainable.
----
-
 # Code Refactoring Guide
 
 ## Purpose

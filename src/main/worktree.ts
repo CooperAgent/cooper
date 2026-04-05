@@ -84,7 +84,6 @@ interface WorktreeSession {
   id: string; // Format: <repo-name>--<branch-name>
   repoPath: string; // Original repository path
   branch: string; // Branch name
-  baseBranch?: string; // Origin branch the worktree branch was forked from
   worktreePath: string; // Full path to worktree directory
   createdAt: string; // ISO timestamp
   lastAccessedAt: string; // ISO timestamp
@@ -388,7 +387,6 @@ export async function createWorktreeSession(
     id: sessionId,
     repoPath,
     branch: sanitizedBranch,
-    baseBranch: sanitizedBaseBranch,
     worktreePath,
     createdAt: new Date().toISOString(),
     lastAccessedAt: new Date().toISOString(),

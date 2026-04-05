@@ -1,8 +1,3 @@
----
-name: copilot-sdk-integration
-description: Define patterns for integrating with the Copilot SDK in Cooper. Cover session management, model switching, tool execution, event handling, and agent support.
----
-
 # Copilot SDK Integration
 
 ## Purpose

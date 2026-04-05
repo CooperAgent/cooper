@@ -60,16 +60,6 @@ import { FixedSizeList } from 'react-window'
 - Avoid synchronous IPC (`ipcRenderer.sendSync` — never use)
 - Throttle frequent events (resize, scroll)
 
-### SDK Telemetry Correlation
-
-Use local SDK telemetry traces alongside Cooper logs to quantify latency:
-
-- App log file: `diagnostics.logFilePath`
-- SDK telemetry JSONL: `diagnostics.telemetryFilePath`
-
-Correlate tool start/end, session events, and request lifecycles to distinguish renderer bottlenecks
-from main-process/SDK/CLI latency.
-
 ### 4. Memory Management
 
 **Strategies:**

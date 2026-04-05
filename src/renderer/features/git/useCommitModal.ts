@@ -108,7 +108,6 @@ export function useCommitModal(): UseCommitModalReturn {
         // Load branches and persisted target branch in parallel with other checks
         const branchesPromise = window.electronAPI.git.listBranches(activeTab.cwd);
         const savedTargetBranchPromise = window.electronAPI.settings.getTargetBranch(activeTab.cwd);
-        const worktreeSessionsPromise = window.electronAPI.worktree.listSessions();
 
         // Get ALL changed files in the repo, not just the ones we tracked
         const changedResult = await window.electronAPI.git.getChangedFiles(
@@ -137,33 +136,18 @@ export function useCommitModal(): UseCommitModalReturn {
         }
         setIsLoadingBranches(false);
 
-        // Resolve default target branch:
-        // 1) persisted per-worktree selection
-        // 2) remembered fork source branch (baseBranch) from worktree metadata
-        // 3) fallback main
+        // Load persisted target branch first, then check if it's ahead
         let effectiveTargetBranch = 'main';
-        let rememberedBaseBranch: string | null = null;
-        try {
-          const worktreeSessionsResult = await worktreeSessionsPromise;
-          const matchingWorktree = worktreeSessionsResult.sessions.find(
-            (session) => session.worktreePath === activeTab.cwd
-          );
-          rememberedBaseBranch = matchingWorktree?.baseBranch || null;
-        } catch {
-          // Ignore worktree metadata loading errors
-        }
         try {
           const savedTargetResult = await savedTargetBranchPromise;
           if (savedTargetResult.success && savedTargetResult.targetBranch) {
             effectiveTargetBranch = savedTargetResult.targetBranch;
             setTargetBranch(savedTargetResult.targetBranch);
           } else {
-            effectiveTargetBranch = rememberedBaseBranch || 'main';
-            setTargetBranch(effectiveTargetBranch);
+            setTargetBranch('main');
           }
         } catch {
-          effectiveTargetBranch = rememberedBaseBranch || 'main';
-          setTargetBranch(effectiveTargetBranch);
+          setTargetBranch('main');
         }
 
         // Now check if target branch is ahead using the persisted target branch
