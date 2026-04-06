@@ -11,6 +11,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   ChevronRightIcon,
+  RepeatIcon,
 } from '../Icons';
 import { Spinner } from '../Spinner';
 import { CodeBlockWithCopy } from '../CodeBlock';
@@ -34,6 +35,7 @@ export interface EnvironmentModalProps {
   fileViewMode?: 'flat' | 'tree';
   onViewModeChange?: (mode: 'flat' | 'tree') => void;
   onTabChange?: (tab: 'instructions' | 'skills' | 'agents') => void;
+  onRefresh?: () => void | Promise<void>;
 }
 
 interface FileContent {
@@ -74,6 +76,11 @@ const resolvePath = (value: string, cwd?: string): string => {
   if (!value) return value;
   if (isAbsolutePath(value) || !cwd) return value;
   return `${cwd.replace(/\/$/, '')}/${value}`;
+};
+
+const isMarkdownPath = (value: string): boolean => {
+  const lower = value.toLowerCase();
+  return lower.endsWith('.md') || lower.endsWith('.markdown');
 };
 
 const buildFileTree = (files: string[]): FileTreeNode[] => {
@@ -198,6 +205,7 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
   fileViewMode = 'flat',
   onViewModeChange,
   onTabChange,
+  onRefresh,
 }) => {
   const [activeTab, setActiveTab] = useState<'instructions' | 'skills' | 'agents'>(initialTab);
   const [selectedInstructionFile, setSelectedInstructionFile] = useState<string | null>(null);
@@ -280,10 +288,7 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
 
   const selectedFileName = selectedFile?.split(/[/\\]/).pop() || '';
   const isMarkdownFile =
-    activeTab === 'instructions' ||
-    activeTab === 'agents' ||
-    selectedFileName.toLowerCase().endsWith('.md') ||
-    selectedFileName.toLowerCase().endsWith('.markdown');
+    activeTab === 'instructions' || activeTab === 'agents' || isMarkdownPath(selectedFileName);
 
   const ensureDefaultInstructionSelection = useCallback(() => {
     if (instructionPaths.length === 0) {
@@ -569,7 +574,8 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
       const result = await window.electronAPI.file.readContent(resolvedPath);
       setFileContent(result);
 
-      const shouldParseFrontmatter = activeTab === 'agents';
+      const shouldParseFrontmatter =
+        (activeTab === 'agents' || activeTab === 'skills') && isMarkdownPath(selectedFileName);
       if (result.success && result.content && shouldParseFrontmatter) {
         const parsed = parseMarkdownFrontmatter(result.content);
         setFrontmatter(parsed.frontmatter);
@@ -1015,6 +1021,17 @@ export const EnvironmentModal: React.FC<EnvironmentModalProps> = ({
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              {onRefresh && (
+                <button
+                  onClick={() => void onRefresh()}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs text-copilot-text-muted hover:text-copilot-text hover:bg-copilot-bg rounded transition-colors"
+                  title="Refresh environment"
+                  aria-label="Refresh environment"
+                >
+                  <RepeatIcon size={14} />
+                  <span>Refresh</span>
+                </button>
+              )}
               {onViewModeChange && (
                 <button
                   onClick={() => onViewModeChange(fileViewMode === 'flat' ? 'tree' : 'flat')}
