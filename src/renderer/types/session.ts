@@ -249,4 +249,5 @@ export interface TabState {
   reviewNote?: string; // Optional user note displayed at bottom of conversation
   yoloMode?: boolean; // Auto-approve all permission requests without prompting
   sourceIssue?: SourceIssue; // GitHub issue this session was created from (for PR linking)
+  sessionCapabilities?: { ui?: { elicitation?: boolean } }; // SDK session capabilities (dynamic)
 }

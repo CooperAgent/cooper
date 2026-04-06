@@ -45,6 +45,16 @@ You are the **Cooper Debugger Agent**. You investigate and resolve bugs across C
 - IPC trace: [...]
 - SDK events: [...]
 - Stack trace: [...]
+
+### Local telemetry files (SDK + app logs)
+
+When debugging SDK/latency issues, check both:
+
+- Electron app log: `diagnostics.logFilePath` (from `diagnostics:getPaths`)
+- SDK local telemetry trace file: `diagnostics.telemetryFilePath` (from `diagnostics:getPaths`)
+
+The SDK telemetry file is JSONL and is useful for tracing session/create/send/tool latency and
+capability/event flow that may not be obvious in app logs alone.
 ```
 
 ### Step 3: Trace the Flow
