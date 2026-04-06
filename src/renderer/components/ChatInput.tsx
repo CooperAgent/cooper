@@ -20,7 +20,6 @@ import { Status, ImageAttachment, FileAttachment, ScheduledPrompt } from '../typ
 
 export interface ChatInputProps {
   status: Status;
-  disabled?: boolean;
   isProcessing: boolean;
   activeTabModel: string;
   modelCapabilities: Record<string, { supportsVision: boolean }>;
@@ -64,7 +63,6 @@ export interface ChatInputHandle {
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>((props, ref) => {
   const {
     status,
-    disabled = false,
     isProcessing,
     activeTabModel,
     modelCapabilities,
@@ -431,11 +429,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>((props, ref
     e.target.value = '';
   }, []);
 
-  const isInteractionDisabled = disabled || status !== 'connected';
-
-  const placeholder = disabled
-    ? 'Create or resume a session to start chatting...'
-    : isDraggingImage || isDraggingFile
+  const placeholder =
+    isDraggingImage || isDraggingFile
       ? 'Drop files here...'
       : isProcessing
         ? isMobile
@@ -608,9 +603,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>((props, ref
 
       <div
         className={`relative flex flex-col bg-copilot-bg border border-copilot-border focus-within:border-copilot-accent transition-colors ${terminalAttachment || imageAttachments.length > 0 || fileAttachments.length > 0 || (imageAttachments.length > 0 && activeTabModel && modelCapabilities[activeTabModel] && !modelCapabilities[activeTabModel].supportsVision) ? 'rounded-b-lg' : 'rounded-lg'} ${isDraggingImage || isDraggingFile ? 'border-copilot-accent border-dashed bg-copilot-accent/5' : ''}`}
-        onDragOver={isInteractionDisabled ? undefined : handleDragOver}
-        onDragLeave={isInteractionDisabled ? undefined : handleDragLeave}
-        onDrop={isInteractionDisabled ? undefined : handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
         <div
           className={`flex items-center ${hasQueuedMessage ? 'opacity-60 bg-copilot-surface' : ''}`}
@@ -656,7 +651,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>((props, ref
               onPaste={handlePaste}
               placeholder={placeholder}
               className="flex-1 bg-transparent py-2.5 pl-3 pr-2 text-copilot-text placeholder-copilot-text-muted outline-none text-sm resize-none min-h-[40px] max-h-[200px]"
-              disabled={isInteractionDisabled}
+              disabled={status !== 'connected'}
               autoFocus
               rows={1}
               style={{ height: 'auto' }}
@@ -679,7 +674,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>((props, ref
                   }
                   setShowScheduleMenu((prev) => !prev);
                 }}
-                disabled={isInteractionDisabled || hasQueuedMessage}
+                disabled={status !== 'connected' || hasQueuedMessage}
                 className={`shrink-0 p-1.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
                   scheduledPrompt || selectedDelayMs
                     ? 'text-copilot-warning'
@@ -717,14 +712,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>((props, ref
               onAlwaysListeningError={onAlwaysListeningError}
               onAbortDetected={onAbortDetected}
               onOpenSettings={onOpenSettings}
-              disabled={isInteractionDisabled || hasQueuedMessage}
+              disabled={hasQueuedMessage}
             />
           )}
           {/* File Attach Button */}
           {!isProcessing && (
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={isInteractionDisabled || hasQueuedMessage}
+              disabled={hasQueuedMessage}
               className={`shrink-0 p-1.5 transition-colors ${
                 fileAttachments.length > 0
                   ? 'text-copilot-accent'
@@ -739,7 +734,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>((props, ref
           {!isProcessing && (
             <button
               onClick={() => imageInputRef.current?.click()}
-              disabled={isInteractionDisabled || hasQueuedMessage}
+              disabled={hasQueuedMessage}
               className={`shrink-0 p-1.5 transition-colors ${
                 imageAttachments.length > 0
                   ? 'text-copilot-accent'
@@ -756,7 +751,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>((props, ref
               {hasContent && (
                 <button
                   onClick={onSendMessage}
-                  disabled={isInteractionDisabled}
+                  disabled={status !== 'connected'}
                   className="shrink-0 px-3 py-2.5 text-copilot-warning hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors"
                   title="Send message (will be queued until agent finishes)"
                 >
@@ -785,7 +780,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>((props, ref
                     onSendMessage();
                   }
                 }}
-                disabled={!hasContent || isInteractionDisabled || hasQueuedMessage}
+                disabled={!hasContent || status !== 'connected' || hasQueuedMessage}
                 className={`shrink-0 px-4 py-2.5 hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium transition-colors ${
                   voiceAutoSendCountdown !== null ? 'text-copilot-success' : 'text-copilot-accent'
                 }`}

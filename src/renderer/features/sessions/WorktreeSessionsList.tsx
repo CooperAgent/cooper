@@ -7,7 +7,6 @@ interface WorktreeSession {
   id: string;
   repoPath: string;
   branch: string;
-  baseBranch?: string;
   worktreePath: string;
   createdAt: string;
   lastAccessedAt: string;

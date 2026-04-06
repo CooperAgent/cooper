@@ -136,17 +136,4 @@ describe('ChatInput scheduled prompt behavior', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onCancelScheduledPrompt).toHaveBeenCalledTimes(1);
   });
-
-  it('disables session-bound controls when no session is active', async () => {
-    const props = createProps({ disabled: true });
-    render(<ChatInput {...props} />);
-
-    expect(screen.getByRole('textbox')).toBeDisabled();
-    expect(
-      screen.getByPlaceholderText('Create or resume a session to start chatting...')
-    ).toBeInTheDocument();
-    expect(screen.getByTitle('Schedule message')).toBeDisabled();
-    expect(screen.getByTitle('Attach file (or drag & drop, or paste)')).toBeDisabled();
-    expect(screen.getByTitle('Attach image (or drag & drop, or paste)')).toBeDisabled();
-  });
 });
