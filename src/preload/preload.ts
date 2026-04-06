@@ -358,6 +358,46 @@ const electronAPI = {
       ipcRenderer.on('copilot:subagent-failed', handler);
       return () => ipcRenderer.removeListener('copilot:subagent-failed', handler);
     },
+    onElicitationRequested: (
+      callback: (data: {
+        sessionId: string;
+        message: string;
+        mode?: 'form' | 'url';
+        elicitationSource?: string;
+        url?: string;
+        requestedSchema?: unknown;
+      }) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionId: string;
+          message: string;
+          mode?: 'form' | 'url';
+          elicitationSource?: string;
+          url?: string;
+          requestedSchema?: unknown;
+        }
+      ): void => callback(data);
+      ipcRenderer.on('copilot:elicitationRequested', handler);
+      return () => ipcRenderer.removeListener('copilot:elicitationRequested', handler);
+    },
+    onCapabilitiesChanged: (
+      callback: (data: {
+        sessionId: string;
+        capabilities: { ui?: { elicitation?: boolean } };
+      }) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionId: string;
+          capabilities: { ui?: { elicitation?: boolean } };
+        }
+      ): void => callback(data);
+      ipcRenderer.on('copilot:capabilitiesChanged', handler);
+      return () => ipcRenderer.removeListener('copilot:capabilitiesChanged', handler);
+    },
     onIdle: (callback: (data: { sessionId: string }) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string }): void =>
         callback(data);
@@ -929,6 +969,24 @@ const electronAPI = {
     ): Promise<{ success: boolean; error?: string }> => {
       return ipcRenderer.invoke('settings:setRecursiveAgentSkillsScan', enabled);
     },
+    getCopilotTelemetry: (): Promise<{
+      success: boolean;
+      telemetry: { enabled: boolean; captureContent: boolean; sourceName: string };
+      error?: string;
+    }> => {
+      return ipcRenderer.invoke('settings:getCopilotTelemetry');
+    },
+    setCopilotTelemetry: (telemetry: {
+      enabled?: boolean;
+      captureContent?: boolean;
+      sourceName?: string;
+    }): Promise<{
+      success: boolean;
+      telemetry?: { enabled: boolean; captureContent: boolean; sourceName: string };
+      error?: string;
+    }> => {
+      return ipcRenderer.invoke('settings:setCopilotTelemetry', telemetry);
+    },
   },
   // Theme management
   theme: {
@@ -1252,7 +1310,11 @@ const electronAPI = {
     },
   },
   diagnostics: {
-    getPaths: (): Promise<{ logFilePath: string; crashDumpsPath: string }> => {
+    getPaths: (): Promise<{
+      logFilePath: string;
+      crashDumpsPath: string;
+      telemetryFilePath: string;
+    }> => {
       return ipcRenderer.invoke('diagnostics:getPaths');
     },
   },
@@ -1383,6 +1445,7 @@ interface WorktreeSession {
   id: string;
   repoPath: string;
   branch: string;
+  baseBranch?: string;
   worktreePath: string;
   createdAt: string;
   lastAccessedAt: string;

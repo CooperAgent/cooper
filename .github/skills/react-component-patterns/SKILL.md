@@ -1,3 +1,8 @@
+---
+name: react-component-patterns
+description: Define React, TypeScript, and Tailwind conventions for Cooper's renderer process. Ensure consistent, accessible, and maintainable UI components.
+---
+
 # React Component Patterns
 
 ## Purpose

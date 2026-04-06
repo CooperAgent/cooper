@@ -228,6 +228,7 @@ describe('worktree module', () => {
       const result = await createWorktreeSession('/tmp/repo', 'feature/new-branch', 'release/1.2');
 
       expect(result.success).toBe(true);
+      expect(result.session?.baseBranch).toBe('release/1.2');
       expect(executedCommands).toContain('git fetch origin "release/1.2"');
       expect(
         executedCommands.some(
@@ -260,6 +261,7 @@ describe('worktree module', () => {
       const result = await createWorktreeSession('/tmp/repo', 'feature/existing', 'main');
 
       expect(result.success).toBe(true);
+      expect(result.session?.baseBranch).toBe('main');
       expect(executedCommands).not.toContain('git fetch origin "main"');
       expect(
         executedCommands.some(
