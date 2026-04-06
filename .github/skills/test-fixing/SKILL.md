@@ -1,8 +1,3 @@
----
-name: test-fixing
-description: Fix failing tests, prevent regressions when modifying logic, and maintain test coverage. Cooper uses Vitest for unit tests and Playwright for E2E tests.
----
-
 # Test Fixing
 
 ## Purpose

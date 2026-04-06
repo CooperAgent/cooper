@@ -89,7 +89,5 @@ export interface CopilotResumePreviousSessionResult {
   alreadyOpen: boolean;
   editedFiles?: string[];
   alwaysAllowed?: string[];
-  untrackedFiles?: string[];
-  fileViewMode?: 'flat' | 'tree';
   activeAgentName?: string;
 }

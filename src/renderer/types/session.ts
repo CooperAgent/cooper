@@ -107,7 +107,6 @@ export interface PreviousSession {
     id: string; // Worktree session ID (e.g., "repo--branch")
     repoPath: string; // Original repository path (for grouping worktrees)
     branch: string;
-    baseBranch?: string;
     worktreePath: string;
     status: 'active' | 'idle' | 'orphaned';
     diskUsage?: string;
@@ -249,5 +248,4 @@ export interface TabState {
   reviewNote?: string; // Optional user note displayed at bottom of conversation
   yoloMode?: boolean; // Auto-approve all permission requests without prompting
   sourceIssue?: SourceIssue; // GitHub issue this session was created from (for PR linking)
-  sessionCapabilities?: { ui?: { elicitation?: boolean } }; // SDK session capabilities (dynamic)
 }

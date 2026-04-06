@@ -64,23 +64,9 @@ export interface SettingsModalProps {
   onZoomIn?: () => Promise<void> | void;
   onZoomOut?: () => Promise<void> | void;
   onResetZoom?: () => Promise<void> | void;
-  diagnosticsPaths?: {
-    logFilePath: string;
-    crashDumpsPath: string;
-    telemetryFilePath: string;
-  } | null;
+  diagnosticsPaths?: { logFilePath: string; crashDumpsPath: string } | null;
   onRevealLogFile?: (path: string) => Promise<void>;
   onOpenCrashDumps?: (path: string) => Promise<void>;
-  copilotTelemetry?: {
-    enabled: boolean;
-    captureContent: boolean;
-    sourceName: string;
-  };
-  onUpdateCopilotTelemetry?: (updates: {
-    enabled?: boolean;
-    captureContent?: boolean;
-    sourceName?: string;
-  }) => Promise<void> | void;
   recursiveAgentSkillsScan?: boolean;
   onToggleRecursiveAgentSkillsScan?: (enabled: boolean) => Promise<void> | void;
 }
@@ -123,8 +109,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   diagnosticsPaths = null,
   onRevealLogFile,
   onOpenCrashDumps,
-  copilotTelemetry = { enabled: false, captureContent: false, sourceName: 'cooper-local' },
-  onUpdateCopilotTelemetry,
   recursiveAgentSkillsScan = false,
   onToggleRecursiveAgentSkillsScan,
 }) => {
@@ -674,154 +658,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
 
   const renderDiagnosticsSection = () => (
-    <div className="space-y-4">
-      <div>
-        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-copilot-text-muted mb-1">
-          Local SDK Telemetry
-        </h4>
-        <p className="text-xs text-copilot-text-muted mb-3">
-          Optional local trace file for SDK/CLI latency debugging. Data stays on this machine.
-        </p>
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="text-sm text-copilot-text">Enable local telemetry</span>
-              <p className="text-xs text-copilot-text-muted">
-                Writes Copilot SDK traces to a local JSONL file.
-              </p>
-            </div>
-            <button
-              onClick={() => onUpdateCopilotTelemetry?.({ enabled: !copilotTelemetry.enabled })}
-              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                copilotTelemetry.enabled ? 'bg-copilot-accent' : 'bg-copilot-border'
-              }`}
-            >
-              <span
-                className="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform"
-                style={{
-                  transform: copilotTelemetry.enabled ? 'translateX(18px)' : 'translateX(4px)',
-                }}
-              />
-            </button>
-          </div>
-
-          <div
-            className={`flex items-center justify-between ${!copilotTelemetry.enabled ? 'opacity-60' : ''}`}
-          >
-            <div>
-              <span className="text-sm text-copilot-text">Capture prompt/response content</span>
-              <p className="text-xs text-copilot-text-muted">
-                Includes message content in traces. Keep off unless needed for debugging.
-              </p>
-            </div>
-            <button
-              onClick={() =>
-                onUpdateCopilotTelemetry?.({
-                  captureContent: !copilotTelemetry.captureContent,
-                })
-              }
-              disabled={!copilotTelemetry.enabled}
-              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                !copilotTelemetry.enabled
-                  ? 'bg-copilot-border/50 cursor-not-allowed'
-                  : copilotTelemetry.captureContent
-                    ? 'bg-copilot-accent'
-                    : 'bg-copilot-border'
-              }`}
-            >
-              <span
-                className="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform"
-                style={{
-                  transform:
-                    copilotTelemetry.enabled && copilotTelemetry.captureContent
-                      ? 'translateX(18px)'
-                      : 'translateX(4px)',
-                }}
-              />
-            </button>
-          </div>
-
+    <div>
+      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-copilot-text-muted mb-1">
+        Crash Diagnostics
+      </h4>
+      <p className="text-xs text-copilot-text-muted mb-3">
+        Crash reports are stored locally only. Use the buttons below to open their locations.
+      </p>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <label className="text-sm text-copilot-text block mb-1">Telemetry source name</label>
-            <input
-              type="text"
-              value={copilotTelemetry.sourceName}
-              disabled={!copilotTelemetry.enabled}
-              onChange={(e) => onUpdateCopilotTelemetry?.({ sourceName: e.target.value })}
-              className="w-full px-2 py-1.5 text-xs bg-copilot-surface border border-copilot-border rounded text-copilot-text placeholder:text-copilot-text-muted focus:outline-none focus:border-copilot-accent disabled:opacity-60 disabled:cursor-not-allowed"
-              placeholder="cooper-local"
-            />
+            <div className="text-sm text-copilot-text">Logs</div>
+            <div className="text-xs text-copilot-text-muted break-all">
+              {diagnosticsPaths?.logFilePath ?? 'Loading...'}
+            </div>
           </div>
+          <button
+            onClick={() => {
+              if (diagnosticsPaths?.logFilePath) {
+                onRevealLogFile?.(diagnosticsPaths.logFilePath);
+              }
+            }}
+            className="shrink-0 px-2 py-1.5 text-xs bg-copilot-surface text-copilot-text border border-copilot-border rounded hover:bg-copilot-surface-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!diagnosticsPaths?.logFilePath}
+          >
+            Reveal
+          </button>
         </div>
-      </div>
-
-      <div className="border-t border-copilot-border opacity-30" />
-
-      <div>
-        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-copilot-text-muted mb-1">
-          Crash Diagnostics
-        </h4>
-        <p className="text-xs text-copilot-text-muted mb-3">
-          Crash reports are stored locally only. Use the buttons below to open their locations.
-        </p>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm text-copilot-text">Logs</div>
-              <div className="text-xs text-copilot-text-muted break-all">
-                {diagnosticsPaths?.logFilePath ?? 'Loading...'}
-              </div>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm text-copilot-text">Crash dumps</div>
+            <div className="text-xs text-copilot-text-muted break-all">
+              {diagnosticsPaths?.crashDumpsPath ?? 'Loading...'}
             </div>
-            <button
-              onClick={() => {
-                if (diagnosticsPaths?.logFilePath) {
-                  onRevealLogFile?.(diagnosticsPaths.logFilePath);
-                }
-              }}
-              className="shrink-0 px-2 py-1.5 text-xs bg-copilot-surface text-copilot-text border border-copilot-border rounded hover:bg-copilot-surface-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!diagnosticsPaths?.logFilePath}
-            >
-              Reveal
-            </button>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm text-copilot-text">Crash dumps</div>
-              <div className="text-xs text-copilot-text-muted break-all">
-                {diagnosticsPaths?.crashDumpsPath ?? 'Loading...'}
-              </div>
-            </div>
-            <button
-              onClick={() => {
-                if (diagnosticsPaths?.crashDumpsPath) {
-                  onOpenCrashDumps?.(diagnosticsPaths.crashDumpsPath);
-                }
-              }}
-              className="shrink-0 px-2 py-1.5 text-xs bg-copilot-surface text-copilot-text border border-copilot-border rounded hover:bg-copilot-surface-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!diagnosticsPaths?.crashDumpsPath}
-            >
-              Reveal
-            </button>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm text-copilot-text">SDK telemetry</div>
-              <div className="text-xs text-copilot-text-muted break-all">
-                {diagnosticsPaths?.telemetryFilePath ?? 'Loading...'}
-              </div>
-            </div>
-            <button
-              onClick={() => {
-                if (diagnosticsPaths?.telemetryFilePath) {
-                  onRevealLogFile?.(diagnosticsPaths.telemetryFilePath);
-                }
-              }}
-              className="shrink-0 px-2 py-1.5 text-xs bg-copilot-surface text-copilot-text border border-copilot-border rounded hover:bg-copilot-surface-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!diagnosticsPaths?.telemetryFilePath}
-            >
-              Reveal
-            </button>
-          </div>
+          <button
+            onClick={() => {
+              if (diagnosticsPaths?.crashDumpsPath) {
+                onOpenCrashDumps?.(diagnosticsPaths.crashDumpsPath);
+              }
+            }}
+            className="shrink-0 px-2 py-1.5 text-xs bg-copilot-surface text-copilot-text border border-copilot-border rounded hover:bg-copilot-surface-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!diagnosticsPaths?.crashDumpsPath}
+          >
+            Reveal
+          </button>
         </div>
       </div>
     </div>
