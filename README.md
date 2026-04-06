@@ -10,48 +10,29 @@ A native desktop GUI for GitHub Copilot, built on the [Copilot SDK](https://gith
 
 ## Prerequisites
 
+- **Node.js 22+**
 - A **[GitHub Copilot](https://github.com/features/copilot)** subscription
 - **[GitHub CLI](https://cli.github.com/)** installed and authenticated — run `gh auth login` if you haven't already
 
 ## Installation
 
-Download the latest release from the **[Releases page](https://github.com/CooperAgent/cooper/releases/latest)**:
-
-| Platform                  | File                                  | Notes                |
-| ------------------------- | ------------------------------------- | -------------------- |
-| **macOS** (Apple Silicon) | `Cooper-<version>-mac-arm64.dmg`      | Signed and notarized |
-| **Windows** (x64)         | `Cooper-<version>-win-x64-Setup.exe`  | Installer            |
-| **Linux** (x64)           | `Cooper-<version>-linux-x64.AppImage` | Experimental         |
-| **Linux** (Debian/Ubuntu) | `Cooper-<version>-linux-x64.deb`      | Experimental         |
-
-> **Note:** Cooper is an open-source project, so release executables are not officially code-signed. Your OS may show a warning on first launch. If you prefer, you can [build from source](#build-from-source) below.
-
-<details>
-<summary><b>Build from source</b></summary>
-
-Requires **Node.js 22+**.
-
-**macOS:**
+Clone the repo, then:
 
 ```bash
-git clone https://github.com/CooperAgent/cooper.git && cd cooper && npm run dist
-```
-
-**Windows:**
-
-```powershell
-git clone https://github.com/CooperAgent/cooper.git; cd cooper; pwsh -NoProfile -File .\scripts\setup-windows.ps1; npm run dist
-```
-
-**Linux:**
-
-```bash
-git clone https://github.com/CooperAgent/cooper.git && cd cooper
-sudo ./scripts/install-linux-deps.sh  # auto-detects distro
 npm run dist
 ```
 
-</details>
+This installs dependencies, runs tests, builds the app, and packages it. The output goes to the `release/` directory:
+
+| Platform    | Output                                        |
+| ----------- | --------------------------------------------- |
+| **macOS**   | `release/Cooper-<version>-mac-arm64.dmg`      |
+| **Windows** | `release/Cooper-<version>-win-x64-Setup.exe`  |
+| **Linux**   | `release/Cooper-<version>-linux-x64.AppImage` |
+
+> **Windows:** Run `pwsh -NoProfile -File .\scripts\setup-windows.ps1` before `npm run dist` to set up build dependencies.
+>
+> **Linux:** Run `sudo ./scripts/install-linux-deps.sh` before `npm run dist` to install native dependencies.
 
 ## Features
 
