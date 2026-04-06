@@ -44,7 +44,7 @@ export const MessageItem = memo<MessageItemProps>(
     return (
       <div
         id={`message-${message.id}`}
-        className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}
+        className={`message-item-perf flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}
       >
         <div
           className={`max-w-[85%] rounded-lg px-4 py-2.5 overflow-hidden relative transition-all ${
