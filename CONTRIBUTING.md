@@ -67,13 +67,13 @@ node scripts/bump-version.js [major|minor|patch]
 
 ### Testing from a feature branch
 
-Open a PR to `staging`. The **Build Check** workflow will build and package the app on macOS and Windows (unsigned), and upload the artifacts. Download them from the PR's workflow run in the Actions tab — they're kept for 3 days.
+Open a PR to `staging`. The **Build Check** workflow will run tests, build the app, and check bundle sizes on macOS, Windows, and Linux.
 
 ## CI
 
 ### Pull request checks
 
-Every PR to `main` or `staging` runs the **Build Check** workflow (`.github/workflows/build-pr.yml`). It builds and packages the app on macOS and Windows — the same platforms as the release — but without code signing. Unsigned artifacts (DMG, Setup installer) are uploaded and kept for 3 days so reviewers can test the build. Doc-only changes (`*.md`, `docs/**`) are skipped.
+Every PR to `main` or `staging` runs the **Build Check** workflow (`.github/workflows/build-pr.yml`). It runs tests, builds the app with `electron-vite build`, and checks the bundle size guardrail on macOS, Windows, and Linux. Doc-only changes (`*.md`, `docs/**`) are skipped.
 
 ### Release workflow
 

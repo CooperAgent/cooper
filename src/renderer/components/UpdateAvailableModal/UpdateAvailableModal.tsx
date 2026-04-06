@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 
@@ -10,6 +10,8 @@ export interface UpdateAvailableModalProps {
   onDontRemind: () => void;
 }
 
+const UPDATE_COMMAND = 'git pull && npm run dist';
+
 export const UpdateAvailableModal: React.FC<UpdateAvailableModalProps> = ({
   isOpen,
   onClose,
@@ -17,15 +19,21 @@ export const UpdateAvailableModal: React.FC<UpdateAvailableModalProps> = ({
   newVersion,
   onDontRemind,
 }) => {
+  const [copied, setCopied] = useState(false);
+
   const handleDontRemind = () => {
     onDontRemind();
     onClose();
   };
 
-  const handleOpenReleases = () => {
-    window.electronAPI.updates.openDownloadUrl(
-      'https://github.com/CooperAgent/cooper/releases/latest'
-    );
+  const handleCopyCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(UPDATE_COMMAND);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API may not be available
+    }
   };
 
   return (
@@ -71,8 +79,24 @@ export const UpdateAvailableModal: React.FC<UpdateAvailableModalProps> = ({
           </div>
 
           <p className="text-copilot-text-muted text-xs text-center">
-            Visit the releases page to download the latest version.
+            Run the following command in your Cooper directory to update:
           </p>
+
+          <div className="relative group">
+            <button
+              onClick={handleCopyCommand}
+              className="w-full bg-copilot-background rounded-lg p-3 font-mono text-sm text-copilot-text text-center cursor-pointer hover:bg-copilot-border/30 transition-colors"
+              title="Click to copy"
+              data-testid="copy-update-command"
+            >
+              {UPDATE_COMMAND}
+            </button>
+            <span
+              className={`absolute top-1 right-2 text-xs transition-opacity ${copied ? 'text-green-500 opacity-100' : 'text-copilot-text-muted opacity-0 group-hover:opacity-100'}`}
+            >
+              {copied ? 'Copied!' : 'Click to copy'}
+            </span>
+          </div>
         </div>
       </Modal.Body>
       <Modal.Footer className="p-4 border-t border-copilot-border">
@@ -81,8 +105,8 @@ export const UpdateAvailableModal: React.FC<UpdateAvailableModalProps> = ({
             <Button variant="ghost" onClick={onClose}>
               Later
             </Button>
-            <Button variant="primary" onClick={handleOpenReleases}>
-              Open Releases
+            <Button variant="primary" onClick={handleCopyCommand}>
+              {copied ? 'Copied!' : 'Copy Command'}
             </Button>
           </div>
           <div className="flex justify-center">

@@ -6013,47 +6013,21 @@ ipcMain.handle('diagnostics:getPaths', async () => {
 const GITHUB_REPO_OWNER = 'CooperAgent';
 const GITHUB_REPO_NAME = 'cooper';
 
-interface GitHubRelease {
-  tag_name: string;
-  name: string;
-  body: string;
-  html_url: string;
-  published_at: string;
-  prerelease: boolean;
-  assets: Array<{ name: string; browser_download_url: string }>;
-}
-
-// Check for updates from GitHub releases
+// Check for updates by comparing local version with package.json on main branch
 ipcMain.handle('updates:checkForUpdate', async () => {
   try {
-    // Fetch release list so we can skip non-semver tags (e.g. the "assets" release)
+    // Fetch package.json from the main branch to get the latest version
     const response = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases?per_page=10`,
-      {
-        headers: {
-          Accept: 'application/vnd.github.v3+json',
-          'User-Agent': 'Cooper',
-        },
-      }
+      `https://raw.githubusercontent.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/main/package.json`,
+      { headers: { 'User-Agent': 'Cooper' } }
     );
 
     if (!response.ok) {
-      if (response.status === 404) {
-        return { hasUpdate: false, error: 'No releases found' };
-      }
-      throw new Error(`GitHub API error: ${response.status}`);
+      throw new Error(`GitHub raw content error: ${response.status}`);
     }
 
-    const releases = (await response.json()) as GitHubRelease[];
-    // Find the first non-prerelease release with a semver tag
-    const semverRegex = /^v?\d+\.\d+\.\d+$/;
-    const release = releases.find((r) => !r.prerelease && semverRegex.test(r.tag_name));
-
-    if (!release) {
-      return { hasUpdate: false, error: 'No semver releases found' };
-    }
-
-    const latestVersion = release.tag_name.replace(/^v/, '');
+    const remotePkg = (await response.json()) as { version: string };
+    const latestVersion = remotePkg.version.split('+')[0].split('-')[0];
 
     // Get current version from package.json
     const pkgPath = join(__dirname, '..', '..', 'package.json');
@@ -6079,19 +6053,10 @@ ipcMain.handle('updates:checkForUpdate', async () => {
     // Compare versions (simple comparison, assumes semver)
     const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
 
-    // Pick a platform-appropriate download asset
-    const isWindows = process.platform === 'win32';
-    const installerAsset = release.assets.find((a) =>
-      isWindows ? a.name.endsWith('.exe') : a.name.endsWith('.dmg')
-    );
-
     return {
       hasUpdate: hasUpdate && latestVersion !== (store.get('dismissedUpdateVersion', '') as string),
       currentVersion,
       latestVersion,
-      releaseNotes: release.body || '',
-      releaseUrl: release.html_url,
-      downloadUrl: installerAsset?.browser_download_url || release.html_url,
     };
   } catch (error) {
     console.error('Failed to check for updates:', error);

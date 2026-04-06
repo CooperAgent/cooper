@@ -1262,9 +1262,6 @@ const electronAPI = {
       hasUpdate: boolean;
       currentVersion?: string;
       latestVersion?: string;
-      releaseNotes?: string;
-      releaseUrl?: string;
-      downloadUrl?: string;
       error?: string;
     }> => {
       return ipcRenderer.invoke('updates:checkForUpdate');
