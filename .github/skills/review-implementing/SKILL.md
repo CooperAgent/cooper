@@ -1,8 +1,3 @@
----
-name: review-implementing
-description: Validate proposed changes against requirements before execution. Detect scope creep, ensure alignment with Cooper conventions, and verify no breaking changes to IPC contracts.
----
-
 # Review Implementing
 
 ## Purpose

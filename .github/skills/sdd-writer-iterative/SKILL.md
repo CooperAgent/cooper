@@ -1,8 +1,3 @@
----
-name: sdd-writer-iterative
-description: Generate comprehensive Software Design Documents through a systematic, iterative review process with exactly 2 loops of 20 critique points each.
----
-
 # SDD Writer (Iterative)
 
 ## Purpose

@@ -1,8 +1,3 @@
----
-name: security-review
-description: Review Electron security, IPC isolation, preload bridge safety, and input validation. Prevent common Electron security vulnerabilities in Cooper.
----
-
 # Security Review
 
 ## Purpose

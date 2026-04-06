@@ -1,8 +1,3 @@
----
-name: git-pushing
-description: Create atomic commits with descriptive messages. Maintain clean git history for the Cooper project.
----
-
 # Git Pushing
 
 ## Purpose

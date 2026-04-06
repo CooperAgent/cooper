@@ -211,7 +211,6 @@ describe('SettingsModal Diagnostics Section', () => {
         diagnosticsPaths={{
           logFilePath: 'C:\\logs\\main.log',
           crashDumpsPath: 'C:\\crash-dumps',
-          telemetryFilePath: 'C:\\diag\\copilot-sdk-telemetry.jsonl',
         }}
         onRevealLogFile={onRevealLogFile}
         onOpenCrashDumps={onOpenCrashDumps}
@@ -227,44 +226,9 @@ describe('SettingsModal Diagnostics Section', () => {
     const revealButtons = screen.getAllByText('Reveal');
     fireEvent.click(revealButtons[0]);
     fireEvent.click(revealButtons[1]);
-    fireEvent.click(revealButtons[2]);
 
     expect(onRevealLogFile).toHaveBeenCalledWith('C:\\logs\\main.log');
     expect(onOpenCrashDumps).toHaveBeenCalledWith('C:\\crash-dumps');
-    expect(onRevealLogFile).toHaveBeenCalledWith('C:\\diag\\copilot-sdk-telemetry.jsonl');
-  });
-});
-
-describe('SettingsModal Telemetry Section', () => {
-  it('renders telemetry controls and invokes update callback', () => {
-    const onUpdateCopilotTelemetry = vi.fn();
-    render(
-      <SettingsModal
-        isOpen={true}
-        onClose={vi.fn()}
-        soundEnabled={true}
-        onSoundEnabledChange={vi.fn()}
-        diagnosticsPaths={{
-          logFilePath: '/tmp/cooper.log',
-          crashDumpsPath: '/tmp/crash-dumps',
-          telemetryFilePath: '/tmp/copilot-sdk-telemetry.jsonl',
-        }}
-        copilotTelemetry={{ enabled: false, captureContent: false, sourceName: 'cooper-local' }}
-        onUpdateCopilotTelemetry={onUpdateCopilotTelemetry}
-      />
-    );
-
-    fireEvent.click(screen.getByText('Diagnostics'));
-
-    expect(screen.getByText('Local SDK Telemetry')).toBeInTheDocument();
-    expect(screen.getByText('Enable local telemetry')).toBeInTheDocument();
-    expect(screen.getByText('Capture prompt/response content')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('cooper-local')).toBeInTheDocument();
-
-    const telemetryRow = screen.getByText('Enable local telemetry').closest('div')?.parentElement;
-    const toggle = telemetryRow?.querySelector('button');
-    if (toggle) fireEvent.click(toggle);
-    expect(onUpdateCopilotTelemetry).toHaveBeenCalled();
   });
 });
 
