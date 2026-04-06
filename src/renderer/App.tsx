@@ -476,7 +476,6 @@ const App: React.FC = () => {
   const [updateInfo, setUpdateInfo] = useState<{
     currentVersion: string;
     latestVersion: string;
-    downloadUrl: string;
   } | null>(null);
   const [showReleaseNotesModal, setShowReleaseNotesModal] = useState(false);
 
@@ -791,11 +790,10 @@ const App: React.FC = () => {
 
         // Check for newer updates available
         const updateResult = await window.electronAPI.updates.checkForUpdate();
-        if (updateResult.hasUpdate && updateResult.latestVersion && updateResult.downloadUrl) {
+        if (updateResult.hasUpdate && updateResult.latestVersion) {
           setUpdateInfo({
             currentVersion: updateResult.currentVersion || currentVersion,
             latestVersion: updateResult.latestVersion,
-            downloadUrl: updateResult.downloadUrl,
           });
           // Show update modal after release notes (if any) are dismissed
           if (!buildInfo.releaseNotes || lastSeenVersion === currentVersion) {
@@ -817,12 +815,10 @@ const App: React.FC = () => {
     (window as any).showUpdateModal = (info?: {
       currentVersion?: string;
       latestVersion?: string;
-      downloadUrl?: string;
     }) => {
       const defaults = {
         currentVersion: buildInfo.baseVersion,
         latestVersion: '99.0.0',
-        downloadUrl: 'https://github.com/CooperAgent/cooper/releases',
       };
       setUpdateInfo({ ...defaults, ...info });
       setShowUpdateModal(true);
