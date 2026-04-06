@@ -1,3 +1,8 @@
+---
+name: planning-and-scoping
+description: Decompose tasks into sub-tasks, assess risk, and create implementation checklists before starting work on Cooper features.
+---
+
 # Planning and Scoping
 
 ## Purpose

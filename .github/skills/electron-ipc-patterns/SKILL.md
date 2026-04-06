@@ -1,3 +1,8 @@
+---
+name: electron-ipc-patterns
+description: Define and enforce IPC communication patterns between Cooper's main process, preload bridge, and renderer. Ensure all cross-process communication follows the secure, typed preload bridge pattern.
+---
+
 # Electron IPC Patterns
 
 ## Purpose
