@@ -1,3 +1,8 @@
+---
+name: context-engineering
+description: Build comprehensive task context before making changes. Track constraints, dependencies, and execution order across multi-file work in Cooper's Electron architecture.
+---
+
 # Context Engineering
 
 ## Purpose
