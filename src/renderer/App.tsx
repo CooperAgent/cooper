@@ -116,6 +116,37 @@ const COOPER_DEFAULT_AGENT: Agent = {
   source: 'copilot',
 };
 
+type McpRuntimeServerStatus =
+  | 'connected'
+  | 'failed'
+  | 'needs-auth'
+  | 'pending'
+  | 'disabled'
+  | 'not_configured';
+
+interface McpRuntimeServerState {
+  status: McpRuntimeServerStatus;
+  source?: string;
+  error?: string;
+}
+
+const getMcpStatusDotClass = (status?: McpRuntimeServerStatus): string => {
+  switch (status) {
+    case 'connected':
+      return 'bg-copilot-success';
+    case 'pending':
+      return 'bg-copilot-warning animate-pulse';
+    case 'failed':
+    case 'needs-auth':
+      return 'bg-copilot-error';
+    case 'disabled':
+    case 'not_configured':
+      return 'bg-copilot-text-muted';
+    default:
+      return 'bg-copilot-text-muted/50';
+  }
+};
+
 const groupBy = <T, K extends string>(items: T[], keyFn: (item: T) => K): Record<K, T[]> => {
   return items.reduce(
     (acc, item) => {
@@ -238,6 +269,9 @@ const App: React.FC = () => {
   const { themePreference, activeTheme, availableThemes, setTheme, importTheme } = useTheme();
   // MCP Server state
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>({});
+  const [mcpRuntimeStatusBySession, setMcpRuntimeStatusBySession] = useState<
+    Record<string, Record<string, McpRuntimeServerState>>
+  >({});
   const [mcpConfigLoaded, setMcpConfigLoaded] = useState(false);
   const [mcpConfigLoading, setMcpConfigLoading] = useState(false);
   const [showMcpServers, setShowMcpServers] = useState(false);
@@ -913,6 +947,10 @@ const App: React.FC = () => {
   // Get the active tab (defined early for use in effects below)
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const hasActiveSession = activeTab !== undefined;
+  const activeMcpRuntimeStatus = useMemo(
+    () => (activeTabId ? mcpRuntimeStatusBySession[activeTabId] || {} : {}),
+    [activeTabId, mcpRuntimeStatusBySession]
+  );
 
   const loadSessionAgents = useCallback(async (sessionId: string) => {
     const sessionAgents = await window.electronAPI.copilot.getSessionAgents(sessionId);
@@ -1238,6 +1276,32 @@ const App: React.FC = () => {
     [mcpConfigLoaded, mcpConfigLoading]
   );
 
+  const loadMcpSessionStatus = useCallback(
+    async (sessionId?: string) => {
+      const targetSessionId = sessionId || activeTabId || undefined;
+      if (!targetSessionId) return;
+      try {
+        const result = await window.electronAPI.mcp.getSessionStatus(targetSessionId);
+        if (!result.success || !result.servers) return;
+        const statusByName: Record<string, McpRuntimeServerState> = {};
+        for (const server of result.servers) {
+          statusByName[server.name] = {
+            status: server.status,
+            source: server.source,
+            error: server.error,
+          };
+        }
+        setMcpRuntimeStatusBySession((prev) => ({
+          ...prev,
+          [targetSessionId]: statusByName,
+        }));
+      } catch (error) {
+        console.error('Failed to load MCP runtime status:', error);
+      }
+    },
+    [activeTabId]
+  );
+
   useEffect(() => {
     if (!activeTabId) return;
     const timer = setTimeout(() => {
@@ -1250,6 +1314,15 @@ const App: React.FC = () => {
     if (!showMcpServers && !showMcpModal && !showMcpJsonModal && !mcpConfigLoading) return;
     void loadMcpConfig();
   }, [showMcpServers, showMcpModal, showMcpJsonModal, mcpConfigLoading, loadMcpConfig]);
+
+  useEffect(() => {
+    if (!activeTabId || !showMcpServers) return;
+    void loadMcpSessionStatus(activeTabId);
+    const timer = setInterval(() => {
+      void loadMcpSessionStatus(activeTabId);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [activeTabId, showMcpServers, loadMcpSessionStatus]);
 
   const loadSessionContext = useCallback(
     async (force = false) => {
@@ -3718,6 +3791,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
   const handleRefreshMcpServers = async () => {
     try {
       await loadMcpConfig(true);
+      await loadMcpSessionStatus(activeTabId || undefined);
     } catch (error) {
       console.error('Failed to refresh MCP servers:', error);
     }
@@ -5082,6 +5156,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                               const isBuiltIn = server.builtIn === true;
                               const toolCount =
                                 server.tools?.[0] === '*' ? 'all' : `${server.tools?.length ?? 0}`;
+                              const runtimeStatus = activeMcpRuntimeStatus[name];
                               return (
                                 <div key={name} className="flex items-center gap-2 text-xs">
                                   {isLocal ? (
@@ -5091,6 +5166,14 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                                   )}
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
+                                      <span
+                                        className={`inline-block h-1.5 w-1.5 rounded-full ${getMcpStatusDotClass(runtimeStatus?.status)}`}
+                                        title={
+                                          runtimeStatus
+                                            ? `Status: ${runtimeStatus.status}`
+                                            : 'Status: unknown'
+                                        }
+                                      />
                                       <span className="text-copilot-text truncate">{name}</span>
                                       {isBuiltIn && (
                                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-copilot-accent/20 text-copilot-accent font-medium">
@@ -7211,6 +7294,7 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                                       !server.type ||
                                       server.type === 'local' ||
                                       server.type === 'stdio';
+                                    const runtimeStatus = activeMcpRuntimeStatus[name];
                                     return (
                                       <div
                                         key={name}
@@ -7229,8 +7313,18 @@ Only when ALL the above are verified complete, output exactly: ${RALPH_COMPLETIO
                                             />
                                           )}
                                           <div className="flex-1 min-w-0">
-                                            <div className="text-xs text-copilot-text truncate">
-                                              {name}
+                                            <div className="flex items-center gap-1.5">
+                                              <span
+                                                className={`inline-block h-1.5 w-1.5 rounded-full ${getMcpStatusDotClass(runtimeStatus?.status)}`}
+                                                title={
+                                                  runtimeStatus
+                                                    ? `Status: ${runtimeStatus.status}`
+                                                    : 'Status: unknown'
+                                                }
+                                              />
+                                              <div className="text-xs text-copilot-text truncate">
+                                                {name}
+                                              </div>
                                             </div>
                                           </div>
                                           <div className="shrink-0 opacity-0 group-hover:opacity-100 flex gap-1">
