@@ -1057,6 +1057,21 @@ const electronAPI = {
     getConfigPath: (): Promise<{ path: string }> => {
       return ipcRenderer.invoke('mcp:getConfigPath');
     },
+    getSessionStatus: (
+      sessionId?: string
+    ): Promise<{
+      success: boolean;
+      sessionId?: string;
+      servers?: Array<{
+        name: string;
+        status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled' | 'not_configured';
+        source?: string;
+        error?: string;
+      }>;
+      error?: string;
+    }> => {
+      return ipcRenderer.invoke('mcp:getSessionStatus', sessionId);
+    },
     getDiscoveryMetadata: (options?: {
       sessionConfig?: Record<string, MCPServerConfig>;
       projectRoot?: string;

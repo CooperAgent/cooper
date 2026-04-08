@@ -1,9 +1,21 @@
 import { ipcMain } from 'electron';
+import type { CopilotSession } from '@github/copilot-sdk';
 
 import { MCPConfigFile, MCPServerConfig } from './mcpConfig';
 import { getMcpDiscoveryMetadata, discoverMcpServers } from './mcpDiscovery';
 
-type SessionStateForMcp = { cwd: string };
+type McpSessionServerStatus =
+  | 'connected'
+  | 'failed'
+  | 'needs-auth'
+  | 'pending'
+  | 'disabled'
+  | 'not_configured';
+
+type SessionStateForMcp = {
+  cwd: string;
+  session: Pick<CopilotSession, 'rpc'>;
+};
 
 interface RegisterMcpHandlersOptions {
   getActiveSessionId: () => string | null;
@@ -69,6 +81,38 @@ export function registerMcpHandlers(options: RegisterMcpHandlersOptions): void {
 
   ipcMain.handle('mcp:getConfigPath', async () => {
     return { path: options.getMcpConfigPath() };
+  });
+
+  ipcMain.handle('mcp:getSessionStatus', async (_event, sessionId?: string) => {
+    const targetSessionId = sessionId || options.getActiveSessionId();
+    if (!targetSessionId) {
+      return { success: false, error: 'No active session' };
+    }
+
+    const sessionState = options.sessions.get(targetSessionId);
+    if (!sessionState) {
+      return { success: false, error: 'Session not found' };
+    }
+
+    try {
+      const result = await sessionState.session.rpc.mcp.list();
+      return {
+        success: true,
+        sessionId: targetSessionId,
+        servers: result.servers as Array<{
+          name: string;
+          status: McpSessionServerStatus;
+          source?: string;
+          error?: string;
+        }>,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        sessionId: targetSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   });
 
   ipcMain.handle(
