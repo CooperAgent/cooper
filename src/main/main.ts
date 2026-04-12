@@ -525,11 +525,14 @@ async function getClientForCwd(cwd: string): Promise<CopilotClient> {
 
     // Use augmented PATH so CLI can find gh for authentication
     const env = getAugmentedEnv();
-    // Copilot CLI exits in headless mode when XDG overrides point to the isolated dev home on Windows.
-    // Keep XDG overrides for Cooper internals, but do not pass them to the CLI subprocess.
-    delete env.XDG_CONFIG_HOME;
-    delete env.XDG_STATE_HOME;
-    delete env.COPILOT_SESSIONS_HOME;
+    // Copilot CLI can exit in headless mode on Windows when XDG overrides point to isolated paths.
+    // Only strip XDG/session overrides on Windows so other platforms keep MCP/config path parity
+    // between Cooper discovery and the CLI subprocess.
+    if (process.platform === 'win32') {
+      delete env.XDG_CONFIG_HOME;
+      delete env.XDG_STATE_HOME;
+      delete env.COPILOT_SESSIONS_HOME;
+    }
     if (app.isPackaged) {
       log.info('Using augmented PATH for packaged app');
     }
@@ -1180,7 +1183,7 @@ async function resumeDisconnectedSession(
   const projectRoot = await getProjectRootForCwd(sessionState.cwd);
   const mcpDiscovery = await discoverMcpServers({ projectRoot });
   const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
-  const customAgents = await loadCustomAgents(sessionState.cwd);
+  const customAgents = await loadCustomAgents(sessionState.cwd, sessionMcpServers);
 
   // Create browser tools for resumed session
   const browserTools = createBrowserTools(sessionId);
@@ -1412,27 +1415,10 @@ async function startEarlySessionResumption(): Promise<void> {
         // Get or create client for this session's cwd
         const sessionClient = await getClientForCwd(sessionCwd);
 
-        const agentResult = await getAllAgents(undefined, sessionCwd);
-        const customAgents: CustomAgentConfig[] = [];
-        for (const agent of agentResult.agents) {
-          if (agent.source === 'codex') continue;
-          try {
-            const content = await readFile(agent.path, 'utf-8');
-            const metadata = parseAgentFrontmatter(content);
-            customAgents.push({
-              name: metadata.name || agent.name,
-              displayName: agent.name,
-              description: metadata.description,
-              tools: null,
-              prompt: content,
-            });
-          } catch (error) {
-            log.warn('Failed to load agent prompt:', agent.path, error);
-          }
-        }
         const projectRoot = await getProjectRootForCwd(sessionCwd);
         const mcpDiscovery = await discoverMcpServers({ projectRoot });
         const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
+        const customAgents = await loadCustomAgents(sessionCwd, sessionMcpServers);
         const session = await sessionClient.resumeSession(
           sessionId,
           buildSessionConfig(sessionId, {
@@ -2149,7 +2135,10 @@ async function getProjectRootForCwd(cwd: string): Promise<string | undefined> {
   return gitRoot || undefined;
 }
 
-async function loadCustomAgents(sessionCwd: string): Promise<CustomAgentConfig[]> {
+async function loadCustomAgents(
+  sessionCwd: string,
+  defaultMcpServers?: Record<string, MCPServerConfig>
+): Promise<CustomAgentConfig[]> {
   const agentResult = await getAllAgents(undefined, sessionCwd);
   const customAgents: CustomAgentConfig[] = [];
   for (const agent of agentResult.agents) {
@@ -2157,12 +2146,26 @@ async function loadCustomAgents(sessionCwd: string): Promise<CustomAgentConfig[]
     try {
       const content = await readFile(agent.path, 'utf-8');
       const metadata = parseAgentFrontmatter(content);
+      const agentMcpServers: Record<string, MCPServerConfig> = {};
+      if (metadata.mcpServers) {
+        for (const [serverName, serverConfig] of Object.entries(metadata.mcpServers)) {
+          const convertedConfig = toMcpServerConfig(serverConfig);
+          if (convertedConfig) {
+            agentMcpServers[serverName] = convertedConfig;
+          }
+        }
+      }
+      const mergedMcpServers = {
+        ...(defaultMcpServers || {}),
+        ...(Object.keys(agentMcpServers).length > 0 ? agentMcpServers : {}),
+      };
       customAgents.push({
         name: metadata.name || agent.name,
         displayName: agent.name,
         description: metadata.description,
         tools: null,
         prompt: content,
+        ...(Object.keys(mergedMcpServers).length > 0 ? { mcpServers: mergedMcpServers } : {}),
       });
     } catch (error) {
       log.warn('Failed to load agent prompt:', agent.path, error);
@@ -2225,12 +2228,24 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     try {
       const content = await readFile(agent.path, 'utf-8');
       const metadata = parseAgentFrontmatter(content);
+      const agentSpecificMcpServers: Record<string, MCPServerConfig> = {};
+      if (metadata.mcpServers) {
+        for (const [serverName, serverConfig] of Object.entries(metadata.mcpServers)) {
+          const convertedConfig = toMcpServerConfig(serverConfig);
+          if (convertedConfig) {
+            agentSpecificMcpServers[serverName] = convertedConfig;
+          }
+        }
+      }
       customAgents.push({
         name: metadata.name || agent.name,
         displayName: agent.name,
         description: metadata.description,
         tools: null,
         prompt: content,
+        ...(Object.keys(agentSpecificMcpServers).length > 0
+          ? { mcpServers: agentSpecificMcpServers }
+          : {}),
       });
 
       // Collect agent-level MCP servers (first agent wins if multiple define same server)
@@ -2260,6 +2275,15 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
     projectRoot,
   });
   const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
+  const customAgentsWithSessionMcp = customAgents.map((agent) => ({
+    ...agent,
+    ...((sessionMcpServers || agent.mcpServers) && {
+      mcpServers: {
+        ...(sessionMcpServers || {}),
+        ...(agent.mcpServers || {}),
+      },
+    }),
+  }));
 
   // Generate session ID upfront so we can pass it to browser tools
   const generatedSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -2277,7 +2301,7 @@ async function createNewSession(model?: string, cwd?: string): Promise<string> {
       model: sessionModel,
       ...(sessionMcpServers ? { mcpServers: sessionMcpServers } : {}),
       tools: browserTools,
-      customAgents,
+      customAgents: customAgentsWithSessionMcp,
       onPermissionRequest: (request, invocation) =>
         handlePermissionRequest(request, invocation, generatedSessionId),
       systemMessage: {
@@ -2540,27 +2564,10 @@ async function initCopilot(): Promise<void> {
         // Get or create client for this session's cwd
         const client = await getClientForCwd(sessionCwd);
 
-        const agentResult = await getAllAgents(undefined, sessionCwd);
-        const customAgents: CustomAgentConfig[] = [];
-        for (const agent of agentResult.agents) {
-          if (agent.source === 'codex') continue;
-          try {
-            const content = await readFile(agent.path, 'utf-8');
-            const metadata = parseAgentFrontmatter(content);
-            customAgents.push({
-              name: metadata.name || agent.name,
-              displayName: agent.name,
-              description: metadata.description,
-              tools: null,
-              prompt: content,
-            });
-          } catch (error) {
-            log.warn('Failed to load agent prompt:', agent.path, error);
-          }
-        }
         const projectRoot = await getProjectRootForCwd(sessionCwd);
         const mcpDiscovery = await discoverMcpServers({ projectRoot });
         const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
+        const customAgents = await loadCustomAgents(sessionCwd, sessionMcpServers);
         const session = await client.resumeSession(
           sessionId,
           buildSessionConfig(sessionId, {
@@ -5123,7 +5130,7 @@ ipcMain.handle(
     const projectRoot = await getProjectRootForCwd(sessionCwd);
     const mcpDiscovery = await discoverMcpServers({ projectRoot });
     const sessionMcpServers = resolveSessionMcpServers(mcpDiscovery);
-    const customAgents = await loadCustomAgents(sessionCwd);
+    const customAgents = await loadCustomAgents(sessionCwd, sessionMcpServers);
 
     let session: CopilotSession;
     try {
@@ -6030,47 +6037,21 @@ ipcMain.handle('diagnostics:getPaths', async () => {
 const GITHUB_REPO_OWNER = 'CooperAgent';
 const GITHUB_REPO_NAME = 'cooper';
 
-interface GitHubRelease {
-  tag_name: string;
-  name: string;
-  body: string;
-  html_url: string;
-  published_at: string;
-  prerelease: boolean;
-  assets: Array<{ name: string; browser_download_url: string }>;
-}
-
-// Check for updates from GitHub releases
+// Check for updates by comparing local version with package.json on main branch
 ipcMain.handle('updates:checkForUpdate', async () => {
   try {
-    // Fetch release list so we can skip non-semver tags (e.g. the "assets" release)
+    // Fetch package.json from the main branch to get the latest version
     const response = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases?per_page=10`,
-      {
-        headers: {
-          Accept: 'application/vnd.github.v3+json',
-          'User-Agent': 'Cooper',
-        },
-      }
+      `https://raw.githubusercontent.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/main/package.json`,
+      { headers: { 'User-Agent': 'Cooper' } }
     );
 
     if (!response.ok) {
-      if (response.status === 404) {
-        return { hasUpdate: false, error: 'No releases found' };
-      }
-      throw new Error(`GitHub API error: ${response.status}`);
+      throw new Error(`GitHub raw content error: ${response.status}`);
     }
 
-    const releases = (await response.json()) as GitHubRelease[];
-    // Find the first non-prerelease release with a semver tag
-    const semverRegex = /^v?\d+\.\d+\.\d+$/;
-    const release = releases.find((r) => !r.prerelease && semverRegex.test(r.tag_name));
-
-    if (!release) {
-      return { hasUpdate: false, error: 'No semver releases found' };
-    }
-
-    const latestVersion = release.tag_name.replace(/^v/, '');
+    const remotePkg = (await response.json()) as { version: string };
+    const latestVersion = remotePkg.version.split('+')[0].split('-')[0];
 
     // Get current version from package.json
     const pkgPath = join(__dirname, '..', '..', 'package.json');
@@ -6096,19 +6077,10 @@ ipcMain.handle('updates:checkForUpdate', async () => {
     // Compare versions (simple comparison, assumes semver)
     const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
 
-    // Pick a platform-appropriate download asset
-    const isWindows = process.platform === 'win32';
-    const installerAsset = release.assets.find((a) =>
-      isWindows ? a.name.endsWith('.exe') : a.name.endsWith('.dmg')
-    );
-
     return {
       hasUpdate: hasUpdate && latestVersion !== (store.get('dismissedUpdateVersion', '') as string),
       currentVersion,
       latestVersion,
-      releaseNotes: release.body || '',
-      releaseUrl: release.html_url,
-      downloadUrl: installerAsset?.browser_download_url || release.html_url,
     };
   } catch (error) {
     console.error('Failed to check for updates:', error);

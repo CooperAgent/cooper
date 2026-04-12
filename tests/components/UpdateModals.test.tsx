@@ -4,16 +4,13 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { UpdateAvailableModal } from '../../src/renderer/components/UpdateAvailableModal';
 import { ReleaseNotesModal } from '../../src/renderer/components/ReleaseNotesModal';
 
-// Mock the electronAPI
-const mockOpenDownloadUrl = vi.fn();
+// Mock clipboard API
+const mockClipboardWriteText = vi.fn().mockResolvedValue(undefined);
 
 beforeEach(() => {
-  // @ts-expect-error - mocking electron API
-  window.electronAPI = {
-    updates: {
-      openDownloadUrl: mockOpenDownloadUrl,
-    },
-  };
+  Object.assign(navigator, {
+    clipboard: { writeText: mockClipboardWriteText },
+  });
 });
 
 describe('UpdateAvailableModal', () => {
@@ -47,6 +44,31 @@ describe('UpdateAvailableModal', () => {
     });
   });
 
+  it('displays the update command', async () => {
+    render(<UpdateAvailableModal {...defaultProps} />);
+    await waitFor(() => {
+      expect(screen.getByText('git pull && npm run dist')).toBeInTheDocument();
+    });
+  });
+
+  it('copies command to clipboard when copy button is clicked', async () => {
+    render(<UpdateAvailableModal {...defaultProps} />);
+    await waitFor(() => expect(screen.getByText('Copy Command')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Copy Command'));
+    await waitFor(() => {
+      expect(mockClipboardWriteText).toHaveBeenCalledWith('git pull && npm run dist');
+    });
+  });
+
+  it('copies command when the command block is clicked', async () => {
+    render(<UpdateAvailableModal {...defaultProps} />);
+    await waitFor(() => expect(screen.getByTestId('copy-update-command')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('copy-update-command'));
+    await waitFor(() => {
+      expect(mockClipboardWriteText).toHaveBeenCalledWith('git pull && npm run dist');
+    });
+  });
+
   it('calls onClose when Later button is clicked', async () => {
     render(<UpdateAvailableModal {...defaultProps} />);
     await waitFor(() => expect(screen.getByText('Later')).toBeInTheDocument());
@@ -62,22 +84,6 @@ describe('UpdateAvailableModal', () => {
     fireEvent.click(screen.getByText("Don't remind me about this version"));
     expect(defaultProps.onDontRemind).toHaveBeenCalled();
     expect(defaultProps.onClose).toHaveBeenCalled();
-  });
-
-  it('opens releases page when Open Releases button is clicked', async () => {
-    render(<UpdateAvailableModal {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Open Releases')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByText('Open Releases'));
-
-    await waitFor(() => {
-      expect(mockOpenDownloadUrl).toHaveBeenCalledWith(
-        'https://github.com/CooperAgent/cooper/releases/latest'
-      );
-    });
   });
 });
 
