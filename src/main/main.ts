@@ -199,6 +199,7 @@ import { discoverMcpServers } from './mcpDiscovery';
 import { resolveSessionMcpServers } from './mcpSessionConfig';
 import { registerMcpHandlers } from './mcpHandlers';
 import { registerSessionContextHandlers } from './sessionContextHandlers';
+import { expandLocalPathShorthand, normalizeLocalPathPlatform } from '../shared/localPathSupport';
 
 // Copilot Instructions - imported from instructions module
 import { getAllInstructions, getGitRoot, type InstructionsResult } from './instructions';
@@ -5965,7 +5966,13 @@ ipcMain.handle(
   async (_event, { filePath, cwd }: { filePath: string; cwd?: string }) => {
     try {
       // Resolve to absolute path if cwd is provided and filePath is relative
-      const absolutePath = cwd && !path.isAbsolute(filePath) ? path.join(cwd, filePath) : filePath;
+      const resolvedPath = expandLocalPathShorthand(
+        filePath,
+        normalizeLocalPathPlatform(process.platform),
+        app.getPath('home')
+      );
+      const absolutePath =
+        cwd && !path.isAbsolute(resolvedPath) ? path.join(cwd, resolvedPath) : resolvedPath;
       if (!existsSync(absolutePath)) {
         return { success: false, error: 'File not found' };
       }
@@ -5980,10 +5987,15 @@ ipcMain.handle(
 
 ipcMain.handle('file:openFile', async (_event, filePath: string) => {
   try {
-    if (!existsSync(filePath)) {
+    const resolvedPath = expandLocalPathShorthand(
+      filePath,
+      normalizeLocalPathPlatform(process.platform),
+      app.getPath('home')
+    );
+    if (!existsSync(resolvedPath)) {
       return { success: false, error: 'File not found' };
     }
-    const result = await shell.openPath(filePath);
+    const result = await shell.openPath(resolvedPath);
     if (result) {
       return { success: false, error: result };
     }

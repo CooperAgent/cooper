@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { homedir } from 'os';
 import {
   COPILOT_IPC_CHANNELS,
   CopilotCreateSessionArgs,
@@ -22,6 +23,7 @@ import {
 const electronAPI = {
   // Platform information
   platform: process.platform,
+  homePath: homedir(),
 
   // Copilot communication
   copilot: {
