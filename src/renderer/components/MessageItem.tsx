@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ClockIcon, FileIcon, VolumeMuteIcon, CodeBlockWithCopy } from './';
@@ -7,7 +7,9 @@ import { SubagentActivitySection } from '../features/chat/SubagentActivitySectio
 import { extractTextContent } from '../utils/isAsciiDiagram';
 import { isAsciiDiagram } from '../utils/isAsciiDiagram';
 import { isCliCommand } from '../utils/isCliCommand';
+import { isLocalAbsolutePath, toFileHref, tokenizeLocalPathText } from '../utils/localPathLinks';
 import { Message, ActiveTool, ImageAttachment, FileAttachment } from '../types';
+import { LocalPathPlatform, normalizeLocalPathPlatform } from '../../shared/localPathSupport';
 
 interface MessageItemProps {
   message: Message;
@@ -40,6 +42,16 @@ export const MessageItem = memo<MessageItemProps>(
           minute: '2-digit',
         })
       : null;
+    const platform = normalizeLocalPathPlatform(window.electronAPI.platform);
+    const homePath = window.electronAPI.homePath;
+    const userMarkdownComponents = useMemo(
+      () => createUserMarkdownComponents(platform, homePath),
+      [platform, homePath]
+    );
+    const assistantMarkdownComponents = useMemo(
+      () => createAssistantMarkdownComponents(platform, homePath),
+      [platform, homePath]
+    );
 
     return (
       <div
@@ -122,7 +134,9 @@ export const MessageItem = memo<MessageItemProps>(
                     {message.content}
                   </ReactMarkdown>
                 ) : (
-                  <span className="whitespace-pre-wrap break-words">{message.content}</span>
+                  <span className="whitespace-pre-wrap break-words">
+                    {renderLinkedTextChildren(message.content, platform, homePath, 'user')}
+                  </span>
                 )}
               </>
             ) : (
@@ -189,107 +203,266 @@ export const MessageItem = memo<MessageItemProps>(
 
 MessageItem.displayName = 'MessageItem';
 
-// Memoized markdown components for user messages
-const userMarkdownComponents = {
-  p: ({ children }: any) => <p className="mb-2 last:mb-0">{children}</p>,
-  code: ({ className, children }: any) => {
-    const textContent = String(children).replace(/\n$/, '');
-    const hasLanguageClass = className?.startsWith('language-');
-    const isMultiLine = textContent.includes('\n');
-    const isBlock = hasLanguageClass || isMultiLine;
+function createUserMarkdownComponents(platform: LocalPathPlatform, homePath?: string) {
+  return {
+    p: ({ children }: any) => (
+      <p className="mb-2 last:mb-0">
+        {renderLinkedTextChildren(children, platform, homePath, 'user')}
+      </p>
+    ),
+    code: ({ className, children }: any) => {
+      const textContent = String(children).replace(/\n$/, '');
+      const hasLanguageClass = className?.startsWith('language-');
+      const isMultiLine = textContent.includes('\n');
+      const isBlock = hasLanguageClass || isMultiLine;
 
-    if (isBlock) {
-      return (
-        <CodeBlockWithCopy isDiagram={false} textContent={textContent} isCliCommand={false}>
-          {children}
-        </CodeBlockWithCopy>
-      );
-    } else {
+      if (isBlock) {
+        return (
+          <CodeBlockWithCopy isDiagram={false} textContent={textContent} isCliCommand={false}>
+            {children}
+          </CodeBlockWithCopy>
+        );
+      }
+
+      if (isLocalAbsolutePath(textContent, platform)) {
+        return (
+          <FilePathLink
+            path={textContent}
+            platform={platform}
+            homePath={homePath}
+            tone="user"
+            variant="code"
+          />
+        );
+      }
+
       return (
         <code className="bg-copilot-bg px-1 py-0.5 rounded text-copilot-warning text-xs break-all">
           {children}
         </code>
       );
-    }
-  },
-  pre: ({ children }: any) => <div className="overflow-x-auto max-w-full">{children}</div>,
-};
-
-// Memoized markdown components for assistant messages
-const assistantMarkdownComponents = {
-  p: ({ children }: any) => <p className="mb-2 last:mb-0">{children}</p>,
-  strong: ({ children }: any) => (
-    <strong className="font-semibold text-copilot-text">{children}</strong>
-  ),
-  em: ({ children }: any) => <em className="italic">{children}</em>,
-  ul: ({ children }: any) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
-  ol: ({ children }: any) => (
-    <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>
-  ),
-  li: ({ children }: any) => <li className="ml-2">{children}</li>,
-  code: ({ children, className }: any) => {
-    const textContent = extractTextContent(children);
-    const hasLanguageClass = className?.includes('language-');
-    const isMultiLine = textContent.includes('\n');
-    const isBlock = hasLanguageClass || isMultiLine;
-    const isDiagram = isAsciiDiagram(textContent);
-    const isCliCmd = isCliCommand(className, textContent);
-
-    if (isBlock) {
-      return (
-        <CodeBlockWithCopy isDiagram={isDiagram} textContent={textContent} isCliCommand={isCliCmd}>
-          {children}
-        </CodeBlockWithCopy>
-      );
-    } else {
-      return (
-        <code className="bg-copilot-bg px-1 py-0.5 rounded text-copilot-warning text-xs break-all">
-          {children}
-        </code>
-      );
-    }
-  },
-  pre: ({ children }: any) => <div className="overflow-x-auto max-w-full">{children}</div>,
-  a: ({ href, children }: any) => (
-    <a
-      href={href}
-      className="text-copilot-accent hover:underline"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      {children}
-    </a>
-  ),
-  h1: ({ children }: any) => (
-    <h1 className="text-lg font-bold mb-2 text-copilot-text">{children}</h1>
-  ),
-  h2: ({ children }: any) => (
-    <h2 className="text-base font-bold mb-2 text-copilot-text">{children}</h2>
-  ),
-  h3: ({ children }: any) => (
-    <h3 className="text-sm font-bold mb-1 text-copilot-text">{children}</h3>
-  ),
-  blockquote: ({ children }: any) => (
-    <blockquote className="border-l-2 border-copilot-border pl-3 my-2 text-copilot-text-muted italic">
-      {children}
-    </blockquote>
-  ),
-  table: ({ children }: any) => (
-    <div className="overflow-x-auto my-2">
-      <table className="min-w-full border-collapse border border-copilot-border text-sm">
+    },
+    pre: ({ children }: any) => <div className="overflow-x-auto max-w-full">{children}</div>,
+    a: ({ href, children }: any) => (
+      <a href={href} className={getLinkClassName('user')} target="_blank" rel="noopener noreferrer">
         {children}
-      </table>
-    </div>
-  ),
-  thead: ({ children }: any) => <thead className="bg-copilot-bg">{children}</thead>,
-  tbody: ({ children }: any) => <tbody>{children}</tbody>,
-  tr: ({ children }: any) => <tr className="border-b border-copilot-border">{children}</tr>,
-  th: ({ children }: any) => (
-    <th className="px-3 py-2 text-left font-semibold text-copilot-text border border-copilot-border">
-      {children}
-    </th>
-  ),
-  td: ({ children }: any) => (
-    <td className="px-3 py-2 text-copilot-text border border-copilot-border">{children}</td>
-  ),
-};
+      </a>
+    ),
+  };
+}
+
+function createAssistantMarkdownComponents(platform: LocalPathPlatform, homePath?: string) {
+  return {
+    p: ({ children }: any) => (
+      <p className="mb-2 last:mb-0">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </p>
+    ),
+    strong: ({ children }: any) => (
+      <strong className="font-semibold text-copilot-text">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </strong>
+    ),
+    em: ({ children }: any) => (
+      <em className="italic">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </em>
+    ),
+    ul: ({ children }: any) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+    ol: ({ children }: any) => (
+      <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>
+    ),
+    li: ({ children }: any) => (
+      <li className="ml-2">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </li>
+    ),
+    code: ({ children, className }: any) => {
+      const textContent = extractTextContent(children);
+      const hasLanguageClass = className?.includes('language-');
+      const isMultiLine = textContent.includes('\n');
+      const isBlock = hasLanguageClass || isMultiLine;
+      const isDiagram = isAsciiDiagram(textContent);
+      const isCliCmd = isCliCommand(className, textContent);
+
+      if (isBlock) {
+        return (
+          <CodeBlockWithCopy
+            isDiagram={isDiagram}
+            textContent={textContent}
+            isCliCommand={isCliCmd}
+          >
+            {children}
+          </CodeBlockWithCopy>
+        );
+      }
+
+      if (isLocalAbsolutePath(textContent, platform)) {
+        return (
+          <FilePathLink
+            path={textContent}
+            platform={platform}
+            homePath={homePath}
+            tone="assistant"
+            variant="code"
+          />
+        );
+      }
+
+      return (
+        <code className="bg-copilot-bg px-1 py-0.5 rounded text-copilot-warning text-xs break-all">
+          {children}
+        </code>
+      );
+    },
+    pre: ({ children }: any) => <div className="overflow-x-auto max-w-full">{children}</div>,
+    a: ({ href, children }: any) => (
+      <a
+        href={href}
+        className="text-copilot-accent hover:underline"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {children}
+      </a>
+    ),
+    h1: ({ children }: any) => (
+      <h1 className="text-lg font-bold mb-2 text-copilot-text">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </h1>
+    ),
+    h2: ({ children }: any) => (
+      <h2 className="text-base font-bold mb-2 text-copilot-text">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </h2>
+    ),
+    h3: ({ children }: any) => (
+      <h3 className="text-sm font-bold mb-1 text-copilot-text">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </h3>
+    ),
+    blockquote: ({ children }: any) => (
+      <blockquote className="border-l-2 border-copilot-border pl-3 my-2 text-copilot-text-muted italic">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </blockquote>
+    ),
+    table: ({ children }: any) => (
+      <div className="overflow-x-auto my-2">
+        <table className="min-w-full border-collapse border border-copilot-border text-sm">
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({ children }: any) => <thead className="bg-copilot-bg">{children}</thead>,
+    tbody: ({ children }: any) => <tbody>{children}</tbody>,
+    tr: ({ children }: any) => <tr className="border-b border-copilot-border">{children}</tr>,
+    th: ({ children }: any) => (
+      <th className="px-3 py-2 text-left font-semibold text-copilot-text border border-copilot-border">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </th>
+    ),
+    td: ({ children }: any) => (
+      <td className="px-3 py-2 text-copilot-text border border-copilot-border">
+        {renderLinkedTextChildren(children, platform, homePath, 'assistant')}
+      </td>
+    ),
+  };
+}
+
+function renderLinkedTextChildren(
+  children: React.ReactNode,
+  platform: LocalPathPlatform,
+  homePath?: string,
+  tone: 'assistant' | 'user' = 'assistant'
+): React.ReactNode {
+  if (typeof children === 'string') {
+    return renderLinkedText(children, platform, homePath, tone);
+  }
+
+  return React.Children.map(children, (child, index) => {
+    if (typeof child === 'string') {
+      return renderLinkedText(child, platform, homePath, tone, `text-${index}`);
+    }
+
+    return child;
+  });
+}
+
+function renderLinkedText(
+  text: string,
+  platform: LocalPathPlatform,
+  homePath?: string,
+  tone: 'assistant' | 'user' = 'assistant',
+  keyPrefix = 'path'
+): React.ReactNode {
+  const tokens = tokenizeLocalPathText(text, platform);
+
+  return tokens.map((token, index) =>
+    token.type === 'path' ? (
+      <FilePathLink
+        key={`${keyPrefix}-${token.value}-${index}`}
+        path={token.value}
+        platform={platform}
+        homePath={homePath}
+        tone={tone}
+      />
+    ) : (
+      <React.Fragment key={`${keyPrefix}-text-${index}`}>{token.value}</React.Fragment>
+    )
+  );
+}
+
+interface FilePathLinkProps {
+  path: string;
+  platform: LocalPathPlatform;
+  homePath?: string;
+  tone?: 'assistant' | 'user';
+  variant?: 'default' | 'code';
+}
+
+function FilePathLink({
+  path,
+  platform,
+  homePath,
+  tone = 'assistant',
+  variant = 'default',
+}: FilePathLinkProps): React.ReactElement {
+  const className = getLinkClassName(tone, variant);
+
+  return (
+    <a
+      href={toFileHref(path, platform, homePath)}
+      className={className}
+      title={`Open ${path}`}
+      onClick={async (event) => {
+        event.preventDefault();
+
+        try {
+          const result = await window.electronAPI.file.openFile(path);
+          if (!result.success) {
+            console.error(`Failed to open file from message: ${result.error ?? path}`);
+          }
+        } catch (error) {
+          console.error('Failed to open file from message:', error);
+        }
+      }}
+    >
+      {path}
+    </a>
+  );
+}
+
+function getLinkClassName(
+  tone: 'assistant' | 'user',
+  variant: 'default' | 'code' = 'default'
+): string {
+  if (tone === 'user') {
+    return variant === 'code'
+      ? 'bg-black/15 px-1 py-0.5 rounded text-amber-100 text-xs break-all underline decoration-amber-100/80 underline-offset-2 hover:text-white'
+      : 'text-amber-100 underline decoration-amber-100/80 underline-offset-2 break-all hover:text-white';
+  }
+
+  return variant === 'code'
+    ? 'bg-copilot-bg px-1 py-0.5 rounded text-copilot-accent text-xs break-all hover:underline'
+    : 'text-copilot-accent hover:underline break-all';
+}
